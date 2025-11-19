@@ -20,4 +20,4 @@ sudo apt-get install -y openjdk-17-jdk > /dev/null 2>&1
 
 # Verify the version for confirmation
 JAVA_VERSION=$(java -version 2>&1 | awk '/version/ {print $3}')
-echo "✅ Environment Ready. Java version: $JAVA_VERSION"
+echo "Environment Ready. Java version: $JAVA_VERSION"
