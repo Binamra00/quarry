@@ -38,11 +38,11 @@ def count_loc(repo_path):
 
 def run_metrics_report():
     """Generates and prints the project statistics."""
-    print("\n--- 📊 Project Metrics Analysis ---")
+    print("\n--- Project Metrics Analysis ---")
     repo = config.TOY_PROJECT_PATH
 
     if not repo.exists():
-        print(f"❌ Error: Repository not found at {repo}")
+        print(f"Error: Repository not found at {repo}")
         return
 
     commits = count_commits(repo)
