@@ -6,7 +6,7 @@ from pathlib import Path
 # --- 1. DEFINE CORE PATHS ---
 # These paths point to locations inside your Google Drive structure
 # We use Path objects for robust cross-platform compatibility
-DRIVE_PATH = Path("/content/drive/My Drive/Thesis_Project")
+DRIVE_PATH = Path("/content/drive/My Drive/Thesis Project")
 TOOLS_PATH = DRIVE_PATH / "tools"
 REPOS_PATH = DRIVE_PATH / "repos"
 OUTPUTS_PATH = DRIVE_PATH / "outputs"
