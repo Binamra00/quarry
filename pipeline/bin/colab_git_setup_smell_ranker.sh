@@ -1,29 +1,30 @@
 #!/bin/bash
 
-# --- Master Pipeline Orchestrator (git_smell_ranker_setup.sh) ---
-# This is the single entry point for running the entire experiment.
-# It ensures sync, environment setup, and pipeline execution run in sequence.
+# --- Repository Sync Script (Layer 2: Synchronization) ---
+# ROLE: Performs the initial CLONE or the subsequent PULL of the repository.
 
-# Define variables needed for execution, relative to the current working directory (SCRIPT_ROOT)
-SETUP_SCRIPT="./pipeline/bin/colab_env_setup.sh"  # Assuming you renamed the env setup script
-MAIN_PYTHON_MODULE="pipeline.main"
+# $1 is the first argument passed to this script, which MUST be the Git URL.
+GIT_REPO_URL="$1"
 
-# --- 1. Synchronize Code ---
-# This pulls the latest code (including this script itself) from GitHub.
-echo "--- 1. Synchronizing Code from GitHub ---"
-# We explicitly allow failure here due to known external server issues (500).
-git pull || echo "Git pull failed (server or initial clone issue). Using existing local files."
+echo "--- Synchronizing Code from GitHub ---"
 
-# --- 2. Execute Runtime Setup ---
-# Runs the environment setup (Mount Drive, Install Java)
-echo "--- 2. Initializing Runtime Environment (Java/Mount) ---"
-# Ensure the setup script is executable
-chmod +x "$SETUP_SCRIPT"
-bash "$SETUP_SCRIPT"
+# Check if the repository has been initialized yet (if .git folder exists)
+if [ ! -d ".git" ]; then
+    echo "🚨 Repository not initialized. Performing initial CLONE."
 
-# --- 3. EXECUTE THE PIPELINE ---
-echo "--- 3. Starting Pipeline Execution ---"
-# Execute the Python module using the installed package name 'pipeline'
-/usr/bin/python3 -m "$MAIN_PYTHON_MODULE"
+    # Clone the repository using the URL passed from the master script.
+    # The clone action creates the .git/config file that permanently stores the URL.
+    git clone "$GIT_REPO_URL" .
 
-echo "✅ Pipeline Orchestration Complete."
+    if [ $? -ne 0 ]; then
+        echo "❌ Initial clone FAILED. Check URL and PAT."
+        exit 1
+    fi
+else
+    # Repository is already initialized, just pull the latest changes.
+    echo "Pulling latest changes..."
+    # FIX: Use the robust pull command.
+    git pull origin main || echo "Git pull failed (using existing local files)."
+fi
+
+echo "✅ Code Sync Complete."
