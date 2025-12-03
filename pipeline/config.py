@@ -1,4 +1,4 @@
-# This file holds all configuration, paths, and settings for your pipeline.
+# This file holds all configuration, paths, and settings for our pipeline.
 # It is imported by main.py and other modules.
 
 from pathlib import Path

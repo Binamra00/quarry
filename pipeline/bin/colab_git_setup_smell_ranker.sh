@@ -22,7 +22,7 @@ if [ ! -d ".git" ]; then
     git fetch origin
 
     # Reset the current directory to match the remote main branch
-    # This overwrites existing files with the versions from GitHub, which is what we want.
+    # This overwrites existing files with the versions from GitHub.
     git reset --hard origin/main
 
     # Set the upstream tracking information
