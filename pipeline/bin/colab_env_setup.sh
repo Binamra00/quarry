@@ -2,7 +2,7 @@
 
 # --- Runtime Initialization Script ---
 # This script handles mounting Google Drive and installing core dependencies
-# needed by the pipeline tools (RefactoringMiner, PMD).
+# needed by the pipeline tools (RefactoringMiner, PMD, PyDriller).
 
 # 1. Mount Google Drive (if not already mounted)
 if [ ! -d "/content/drive/My Drive" ]; then
@@ -18,6 +18,13 @@ echo "Initializing Environment (Java 17)..."
 sudo apt-get update > /dev/null 2>&1
 sudo apt-get install -y openjdk-17-jdk > /dev/null 2>&1
 
-# Verify the version for confirmation
+# 3. Install Python Dependencies (PyDriller)
+# We need this for the Phase 0 'repo_metrics.py' mining script.
+echo "Installing Python libraries (pydriller)..."
+pip install pydriller > /dev/null 2>&1
+
+# Verify the versions for confirmation
 JAVA_VERSION=$(java -version 2>&1 | awk '/version/ {print $3}')
-echo "Environment Ready. Java version: $JAVA_VERSION"
+echo "Environment Ready."
+echo " - Java version: $JAVA_VERSION"
+echo " - PyDriller installed."
