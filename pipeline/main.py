@@ -5,7 +5,7 @@ from pipeline import repo_metrics
 # Import our new adapters
 # NOTE: Using the specific names you created: refm_adapt and pmd_adapt
 from pipeline.adapters import refm_adapt
-
+from pipeline.adapters import pmd_adapt
 
 
 def main():
@@ -36,18 +36,18 @@ def main():
         print(f"❌ RefactoringMiner Exception: {e}")
         rm_success = False
 
-    # # Step 3: PMD Smoke Test (Darun's Task)
-    # print("\n--- Step 3: PMD Smoke Test ---")
-    # try:
-    #     # We wrap this in a try/except specifically for NotImplementedError or missing attributes
-    #     # so the pipeline doesn't crash while Darun is still working on it.
-    #     pmd_success = pmd_adapt.run_pmd_smoke_test()
-    # except AttributeError:
-    #     print("⚠️ PMD adapter function not implemented yet (Waiting for Darun).")
-    #     pmd_success = False
-    # except Exception as e:
-    #     print(f"❌ PMD Exception: {e}")
-    #     pmd_success = False
+    # Step 3: PMD Smoke Test (Darun's Task)
+    print("\n--- Step 3: PMD Smoke Test ---")
+    try:
+        # We wrap this in a try/except specifically for NotImplementedError or missing attributes
+        # so the pipeline doesn't crash while Darun is still working on it.
+        pmd_success = pmd_adapt.run_pmd_smoke_test()
+    except AttributeError:
+        print("⚠️ PMD adapter function not implemented yet (Waiting for Darun).")
+        pmd_success = False
+    except Exception as e:
+        print(f"❌ PMD Exception: {e}")
+        pmd_success = False
 
     # Step 4: Final Status
     print("\n--- 🏁 Pipeline Completion Report ---")
