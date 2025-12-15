@@ -52,8 +52,17 @@ else
     exit 1
 fi
 
-# --- 3. EXECUTE THE PIPELINE ---
-echo "--- 3. Starting Pipeline Execution ---"
+# --- 3. ENFORCE TOOL PERMISSIONS (CRITICAL FIX) ---
+# We must ensure RefactoringMiner and PMD are executable
+# Note: These paths assume standard structure relative to Drive root
+# We use a wildcard to catch the specific version folder
+echo "--- 3. Enforcing Tool Permissions ---"
+chmod +x ../tools/RefactoringMiner_v3/bin/RefactoringMiner || echo "Warning: Could not chmod RefactoringMiner"
+chmod +x ../tools/pmd-bin-*/bin/pmd || echo "Warning: Could not chmod PMD"
+
+
+# --- 4. EXECUTE THE PIPELINE ---
+echo "--- 4. Starting Pipeline Execution ---"
 # We run the module using the package syntax (-m pipeline.main)
 /usr/bin/python3 -m "$MAIN_PYTHON_MODULE"
 
