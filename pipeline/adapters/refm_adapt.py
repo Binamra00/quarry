@@ -18,7 +18,6 @@ def run_rm_smoke_test():
         str(config.RM_PATH),  # The executable
         "-a",  # Analyze all commits
         str(config.TOY_PROJECT_PATH),  # The target repo
-        "master",  # The branch (toy repo uses master)
         "-json",  # Output format
         str(json_output)  # Output file
     ]
