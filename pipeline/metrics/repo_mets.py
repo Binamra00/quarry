@@ -1,4 +1,5 @@
 import os
+import json
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -8,7 +9,7 @@ except ImportError:
     print("CRITICAL ERROR: PyDriller not installed. Run '!pip install pydriller' in Colab.")
     raise
 
-from pipeline import config  # Assumes pipeline/config.py exists and has TOY_PROJECT_PATH
+from pipeline import config
 
 # --- HEURISTIC KEYWORDS ---
 FIX_KEYWORDS = ['fix', 'bug', 'issue', 'close', 'resolv', 'crash', 'fail', 'error', 'defect']
@@ -36,45 +37,34 @@ def analyze_repo_metrics(repo_path):
     file_authors = defaultdict(set)
     pair_coupling = Counter()
 
-    # 2. Iterate through Commits (The Mining Step)
-    # traverse_commits() is a generator, so it processes one by one (memory efficient)
+    # 2. Iterate through Commits
     for commit in Repository(str(repo_path)).traverse_commits():
         stats["total_commits"] += 1
         stats["authors"].add(commit.author.name)
 
-        # A. Date Tracking
         if stats["start_date"] is None:
             stats["start_date"] = commit.committer_date
         stats["end_date"] = commit.committer_date
 
-        # B. Message Analysis (Heuristics)
         msg_lower = commit.msg.lower()
         if any(kw in msg_lower for kw in FIX_KEYWORDS):
             stats["fix_commits"] += 1
         if any(kw in msg_lower for kw in REFACTOR_KEYWORDS):
             stats["refactor_commits"] += 1
 
-        # C. File Analysis
         modified_java_files = []
         for file in commit.modified_files:
-            # Global File Type Count (count every file touched)
             ext = os.path.splitext(file.filename)[1] if file.filename else ".no_ext"
             stats["file_types"][ext] += 1
 
             if file.filename.endswith('.java'):
                 modified_java_files.append(file.filename)
-
-                # Churn = Added + Deleted (Lines modified count as both add+del in git)
                 churn = file.added_lines + file.deleted_lines
                 stats["total_churn"] += churn
-
-                # Ownership (Bus Factor tracking)
                 file_authors[file.filename].add(commit.author.name)
 
-        # D. Coupling Analysis (Files changed together)
         if len(modified_java_files) > 1:
             modified_java_files.sort()
-            # Create pairs of all files in this commit
             for i in range(len(modified_java_files)):
                 for j in range(i + 1, len(modified_java_files)):
                     pair = (modified_java_files[i], modified_java_files[j])
@@ -85,8 +75,7 @@ def analyze_repo_metrics(repo_path):
 
 def run_metrics_report():
     """
-    Generates and prints the project statistics in Tree Format.
-    Returns: total_commits (int) for use in other parts of the pipeline.
+    Generates report, SAVES it to JSON, and prints to console.
     """
     repo = config.TOY_PROJECT_PATH
 
@@ -94,10 +83,9 @@ def run_metrics_report():
         print(f"Error: Repository not found at {repo}")
         return 0
 
-    # Run the Mining
     stats, file_authors, pair_coupling = analyze_repo_metrics(repo)
 
-    # Calculate Aggregates
+    # --- CALCULATIONS ---
     if stats["total_commits"] > 0:
         project_age_days = (stats["end_date"] - stats["start_date"]).days
         avg_churn = stats["total_churn"] / stats["total_commits"]
@@ -109,10 +97,8 @@ def run_metrics_report():
         fix_ratio = 0
         refactor_ratio = 0
 
-    # Bus Factor: Average number of unique authors per file
     avg_bus_factor = sum(len(a) for a in file_authors.values()) / len(file_authors) if file_authors else 0
 
-    # Top Coupled Pair
     top_coupled = pair_coupling.most_common(1)
     if top_coupled:
         top_pair_name = f"{Path(top_coupled[0][0][0]).name} + {Path(top_coupled[0][0][1]).name}"
@@ -121,9 +107,38 @@ def run_metrics_report():
         top_pair_name = "None"
         top_pair_count = 0
 
-    # Main File Type
     top_file_type = stats["file_types"].most_common(1)
     main_lang = top_file_type[0][0] if top_file_type else "Unknown"
+
+    # --- SAVE TO JSON ---
+    output_data = {
+        "project_name": repo.name,
+        "history": {
+            "total_commits": stats["total_commits"],
+            "age_days": project_age_days,
+            "start_date": str(stats["start_date"]),
+            "end_date": str(stats["end_date"])
+        },
+        "content": {
+            "main_language": main_lang,
+            "java_file_count": len(file_authors),
+            "total_churn": stats["total_churn"],
+            "avg_churn_per_commit": round(avg_churn, 2)
+        },
+        "heuristics": {
+            "bug_fix_ratio": round(fix_ratio, 2),
+            "refactor_ratio": round(refactor_ratio, 2),
+            "bus_factor": round(avg_bus_factor, 2),
+            "top_coupling": top_pair_name
+        }
+    }
+
+    # Dynamic filename: repo_metrics_toy_project.json
+    json_path = config.OUTPUTS_PATH / f"repo_metrics_{repo.name}.json"
+
+    with open(json_path, 'w') as f:
+        json.dump(output_data, f, indent=2)
+    print(f"📄 Repo metrics saved to: {json_path.name}")
 
     # --- PRINT REPORT ---
     print("\n--- Project Metrics Analysis (Phase 0) ---")
