@@ -19,7 +19,7 @@ sudo apt-get update > /dev/null 2>&1
 sudo apt-get install -y openjdk-17-jdk > /dev/null 2>&1
 
 # 3. Install Python Dependencies (PyDriller)
-# We need this for the Phase 0 'repo_metrics.py' mining script.
+# We need this for the Phase 0 'repo_mets.py' mining script.
 echo "Installing Python libraries (pydriller)..."
 pip install pydriller > /dev/null 2>&1
 

@@ -16,7 +16,7 @@ PMD_PATH = TOOLS_PATH / "pmd-bin-7.18.0" / "bin" / "pmd"
 RM_PATH = TOOLS_PATH / "RefactoringMiner_v3" / "bin" / "RefactoringMiner"
 
 # --- 3. DEFINE TOY PROJECT ---
-# This is the variable your repo_metrics.py script is looking for!
+# This is the variable your repo_mets.py script is looking for!
 TOY_PROJECT_PATH = REPOS_PATH / "toy_project"
 
 # --- 4. ESCAPED PATHS (FOR SHELL EXECUTION) ---
