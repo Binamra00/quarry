@@ -32,8 +32,9 @@ def run_refm_smoke_test():
     """
     print("--- ⚡ Starting RefactoringMiner Smoke Test (Whole History) ---")
 
-    # 1. Define Output Path
-    json_output_path = config.OUTPUTS_PATH / "refactorings.json"
+    # 1. Define Output Path (Dynamic based on repo name)
+    project_name = config.TOY_PROJECT_PATH.name
+    json_output_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
     # 2. Get All Commits
     commits = get_all_commits(config.TOY_PROJECT_PATH)
