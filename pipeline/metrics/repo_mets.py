@@ -8,7 +8,7 @@ except ImportError:
     print("CRITICAL ERROR: PyDriller not installed. Run '!pip install pydriller' in Colab.")
     raise
 
-from . import config  # Assumes pipeline/config.py exists and has TOY_PROJECT_PATH
+from pipeline import config  # Assumes pipeline/config.py exists and has TOY_PROJECT_PATH
 
 # --- HEURISTIC KEYWORDS ---
 FIX_KEYWORDS = ['fix', 'bug', 'issue', 'close', 'resolv', 'crash', 'fail', 'error', 'defect']

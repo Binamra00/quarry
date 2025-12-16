@@ -1,10 +1,9 @@
 import sys
-import importlib.util
 from pipeline import config
-from pipeline import repo_metrics
 # Import our new adapters
 # NOTE: Using the specific names you created: refm_adapt and pmd_adapt
 from pipeline.adapters import refm_adapt
+from pipeline.metrics import refm_mets, repo_mets
 from pipeline.adapters import pmd_adapt
 
 
@@ -20,7 +19,7 @@ def main():
     # We run the metrics again to confirm the repo is accessible and healthy
     print("\n--- Step 1: Repository Verification ---")
     try:
-        repo_metrics.run_metrics_report()
+        repo_mets.run_metrics_report()
     except Exception as e:
         print(f"⚠️ Metrics calculation failed: {e}")
         # We don't stop here, we try to run the tools anyway
@@ -28,7 +27,7 @@ def main():
     # Step 2: RefactoringMiner Smoke Test (Your Task)
     print("\n--- Step 2: RefactoringMiner Smoke Test ---")
     try:
-        rm_success = refm_adapt.run_rm_smoke_test()
+        rm_success = refm_adapt.run_refm_smoke_test()
     except AttributeError:
         print("⚠️ RefactoringMiner adapter function not found. Check function naming in refm_adapt.py")
         rm_success = False
@@ -54,6 +53,8 @@ def main():
 
     if rm_success:
         print("✅ RefactoringMiner: OPERATIONAL")
+        # CALL METRICS HERE
+        refm_mets.calculate_refm_metrics()
     else:
         print("❌ RefactoringMiner: FAILED (or Pending)")
 
