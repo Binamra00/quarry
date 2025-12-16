@@ -84,12 +84,15 @@ def analyze_repo_metrics(repo_path):
 
 
 def run_metrics_report():
-    """Generates and prints the project statistics in Tree Format."""
+    """
+    Generates and prints the project statistics in Tree Format.
+    Returns: total_commits (int) for use in other parts of the pipeline.
+    """
     repo = config.TOY_PROJECT_PATH
 
     if not repo.exists():
         print(f"Error: Repository not found at {repo}")
-        return
+        return 0
 
     # Run the Mining
     stats, file_authors, pair_coupling = analyze_repo_metrics(repo)
@@ -137,6 +140,8 @@ def run_metrics_report():
     print(f"├── [Heuristic] Bus Factor:     {avg_bus_factor:.2f} authors/file")
     print(f"└── [Heuristic] Top Coupling:   {top_pair_name} ({top_pair_count} shared commits)")
     print("------------------------------------------\n")
+
+    return stats["total_commits"]
 
 
 if __name__ == "__main__":

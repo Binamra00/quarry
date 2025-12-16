@@ -1,8 +1,8 @@
 import subprocess
 import json
 from .. import config
-from ..utils import cmd_runner
 
+# Removed unused import: from ..utils import cmd_runner
 
 def get_all_commits(repo_path):
     """

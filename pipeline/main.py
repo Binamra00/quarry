@@ -1,11 +1,11 @@
 import sys
+import importlib
 from pipeline import config
-# Import our new adapters
-# NOTE: Using the specific names you created: refm_adapt and pmd_adapt
-from pipeline.adapters import refm_adapt
 from pipeline.metrics import refm_mets, repo_mets
-from pipeline.adapters import pmd_adapt
 
+# NOTE: We import adapters inside the functions or try/except blocks
+# to prevent the script from crashing if a team member's file (e.g., pmd_adapt)
+# is missing or has a syntax error.
 
 def main():
     """
@@ -16,45 +16,51 @@ def main():
     print(f"📂 Configuration Loaded. Drive Path: {config.DRIVE_PATH}")
 
     # Step 1: Verification (Phase 0)
-    # We run the metrics again to confirm the repo is accessible and healthy
     print("\n--- Step 1: Repository Verification ---")
+    repo_total_commits = 0
     try:
-        repo_mets.run_metrics_report()
+        # Capture the actual commit count to pass to refm_mets later
+        repo_total_commits = repo_mets.run_metrics_report()
     except Exception as e:
         print(f"⚠️ Metrics calculation failed: {e}")
-        # We don't stop here, we try to run the tools anyway
 
-    # Step 2: RefactoringMiner Smoke Test (Your Task)
+    # Step 2: RefactoringMiner Smoke Test
     print("\n--- Step 2: RefactoringMiner Smoke Test ---")
+    rm_success = False
     try:
+        # Import inside the try block to catch ImportErrors safely
+        from pipeline.adapters import refm_adapt
         rm_success = refm_adapt.run_refm_smoke_test()
-    except AttributeError:
-        print("⚠️ RefactoringMiner adapter function not found. Check function naming in refm_adapt.py")
-        rm_success = False
+    except ImportError:
+         print("⚠️ refm_adapt module not found. Check pipeline/adapters/ folder.")
     except Exception as e:
         print(f"❌ RefactoringMiner Exception: {e}")
-        rm_success = False
 
     # Step 3: PMD Smoke Test (Darun's Task)
     print("\n--- Step 3: PMD Smoke Test ---")
+    pmd_success = False
     try:
-        # We wrap this in a try/except specifically for NotImplementedError or missing attributes
-        # so the pipeline doesn't crash while Darun is still working on it.
+        # Dynamic import to safely handle missing files
+        pmd_adapt = importlib.import_module("pipeline.adapters.pmd_adapt")
         pmd_success = pmd_adapt.run_pmd_smoke_test()
+    except ImportError:
+        print("⚠️ PMD adapter module not found (Waiting for Darun).")
     except AttributeError:
-        print("⚠️ PMD adapter function not implemented yet (Waiting for Darun).")
-        pmd_success = False
+        print("⚠️ PMD adapter function not implemented yet.")
     except Exception as e:
         print(f"❌ PMD Exception: {e}")
-        pmd_success = False
 
     # Step 4: Final Status
     print("\n--- 🏁 Pipeline Completion Report ---")
 
     if rm_success:
         print("✅ RefactoringMiner: OPERATIONAL")
-        # CALL METRICS HERE
-        refm_mets.calculate_refm_metrics()
+        try:
+            # Calculate metrics only if the tool ran successfully
+            # Pass the actual commit count mined in Step 1
+            refm_mets.calculate_refm_metrics(repo_total_commits)
+        except Exception as e:
+            print(f"⚠️ Metrics Calc Error: {e}")
     else:
         print("❌ RefactoringMiner: FAILED (or Pending)")
 
@@ -63,14 +69,11 @@ def main():
     else:
         print("❌ PMD: FAILED (or Pending)")
 
-    # Logic for Exit Codes (Useful for CI/CD or Shell Scripts)
-    # We exit with 0 only if BOTH are successful (or if we decide partially working is okay for now)
     if rm_success and pmd_success:
         print("\n🎉 SMOKE TEST PASSED: All tools are operational.")
         sys.exit(0)
     else:
         print("\n⚠️ SMOKE TEST INCOMPLETE: Check logs above.")
-        # We assume failure for now to alert us to missing pieces
         sys.exit(1)
 
 
