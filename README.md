@@ -39,14 +39,18 @@ smell-ranker/
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
 │ │ ├── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling
 │ │ └── colab_env_setup.sh# SETUP SCRIPT: Installs Java 17 & mounts Drive
-│ │
+
+│ ├── metrics/ # [NEW] Tool Adapters Package (Structural Pattern)
+│ │ ├── refm_mets.py # Metrics to analyze refm output
+│ │ ├── repo_mets.py # Base metrics for all repos
+│ │ └── init.py # Exposes metrics to the main pipeline
+
 │ ├── utils/ # Python Utility Package
 │ │ ├── cmd_runner.py # Adapter for running shell commands safely
 │ │ └── init.py # Exposes utilities to the app
 │ │
 │ ├── main.py # FACADE: Main Python entry point
 │ ├── config.py # CONFIG: All paths (Drive, Tools) and settings
-│ ├── repo_metrics.py # ANALYSIS: Project stats (LOC, commits)
 │ └── init.py # Package marker
 │
 ├── notebooks/ # Jupyter Notebooks for Colab Control
@@ -85,7 +89,7 @@ Thesis_Project/
 ## 3. Execution Flow (The “How-To”)
 
 The system is designed to be run from Google Colab, triggered by the  
-`02_pipeline_execution.ipynb` notebook.
+`01_pipeline_execution.ipynb` notebook.
 
 ### Step 1: Initialization
 
@@ -126,13 +130,20 @@ The system is designed to be run from Google Colab, triggered by the
 
 #### Process
 
-- **Phase 1.5 (Metric Verification):**  
-Runs `repo_metrics.py` to print statistics (LOC, commits).
-
-- **Phase 1 (Smoke Test):**  
-- Calls `refm_adapt.run_rm_smoke_test()` to iterate all 65 commits and generate `refactorings.json`.
-- Calls `pmd_adapt.run_pmd_smoke_test()` to generate `pmd_report.xml`.
-
+- **Phase 0 (Metric Verification):**  
+Runs `repo_metrics.py` to mine the total commit history and calculate project stats (LOC, Churn, Age). Generates `repo_metrics_[repo_name].json`.
+- **Phase 1 (Analysis - Smoke Test):**  
+Calls `refm_adapt.run_rm_smoke_test()` to execute RefactoringMiner.
+  - *Forced-Loop Strategy:*  Iterates explicitly through the `git rev-list` to capture all commits, but filters for `*.java` files.
+  - Generates `refactorings.json`.
+- **Phase 1 (Metrics):** 
+    - Parses `refactorings_[repo_name].json` and calls `refm_mets.calculate_refm_metrics()` to calculate:
+        - Refactoring Density
+        - Commit Purity Score
+        - Signal Strength
+    - Outputs `refactoring_metrics_[repo_name].json`.
+- **Phase 2 (Candidate Generation):**
+    - Calls `pmd_adapt.run_pmd_smoke_test()` (currently a placeholder waiting for integration) to generate `pmd_report.xml`.
 ---
 
 ## 4. Design Principles & Patterns
@@ -157,7 +168,7 @@ The architecture adheres strictly to software engineering best practices to ensu
 - **Build Requirement:** Java 17 (JDK)
 - **Role:** Pass 1 – History mining
 - **Execution Strategy:**  
-*Forced Loop* (explicit iteration over all commits to capture detached/merge history)
+*Forced Loop* (explicit iteration over all commits via git rev-list --all --reverse -- *.java). This captures detached/merge history while filtering out non-code noise (e.g., docs/builds).
 
 ---
 
