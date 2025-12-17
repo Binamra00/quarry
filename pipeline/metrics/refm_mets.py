@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 try:
     from pydriller import Repository
@@ -75,7 +74,7 @@ def calculate_refm_metrics(total_commits_mined=65):
                 r_type = r.get("type", "Unknown")
                 refactoring_types[r_type] = refactoring_types.get(r_type, 0) + 1
 
-        # Calculations
+        # --- Calculations ---
         refactoring_density = (commits_with_refactorings / total_commits_mined) * 100 if total_commits_mined > 0 else 0
         avg_intensity = total_ops / commits_with_refactorings if commits_with_refactorings > 0 else 0
         clean_commits = commits_with_refactorings - high_churn_refactorings
