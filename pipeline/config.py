@@ -11,6 +11,12 @@ TOOLS_PATH = DRIVE_PATH / "tools"
 REPOS_PATH = DRIVE_PATH / "repos"
 OUTPUTS_PATH = DRIVE_PATH / "outputs"
 
+# [NEW] Repo Root Logic to find local config files
+# Assuming this config.py is inside .../pipeline/config.py
+# We go up one level to 'pipeline', then up one to 'repo_root'
+current_file = Path(__file__).resolve()
+REPO_ROOT = current_file.parent.parent
+
 # --- 2. DEFINE TOOL EXECUTABLES ---
 PMD_PATH = TOOLS_PATH / "pmd-bin-7.18.0" / "bin" / "pmd"
 RM_PATH = TOOLS_PATH / "RefactoringMiner_v3" / "bin" / "RefactoringMiner"
@@ -27,6 +33,3 @@ def escape_path(path_obj):
 PMD_PATH_ESCAPED = escape_path(PMD_PATH)
 RM_PATH_ESCAPED = escape_path(RM_PATH)
 TOY_PROJECT_PATH_ESCAPED = escape_path(TOY_PROJECT_PATH)
-
-# --- 5. EXECUTION SETTINGS ---
-PMD_DESIGN_RULESET = "rulesets/java/pmd_rulset.xml"
