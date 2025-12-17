@@ -11,11 +11,11 @@ TOOLS_PATH = DRIVE_PATH / "tools"
 REPOS_PATH = DRIVE_PATH / "repos"
 OUTPUTS_PATH = DRIVE_PATH / "outputs"
 
-# [NEW] Repo Root Logic to find local config files
-# Assuming this config.py is inside .../pipeline/config.py
-# We go up one level to 'pipeline', then up one to 'repo_root'
-current_file = Path(__file__).resolve()
-REPO_ROOT = current_file.parent.parent
+# # [NEW] Repo Root Logic to find local config files
+# # Assuming this config.py is inside .../pipeline/config.py
+# # We go up one level to 'pipeline', then up one to 'repo_root'
+# current_file = Path(__file__).resolve()
+# REPO_ROOT = current_file.parent.parent
 
 # --- 2. DEFINE TOOL EXECUTABLES ---
 PMD_PATH = TOOLS_PATH / "pmd-bin-7.18.0" / "bin" / "pmd"
