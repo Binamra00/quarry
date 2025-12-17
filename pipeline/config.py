@@ -29,4 +29,4 @@ RM_PATH_ESCAPED = escape_path(RM_PATH)
 TOY_PROJECT_PATH_ESCAPED = escape_path(TOY_PROJECT_PATH)
 
 # --- 5. EXECUTION SETTINGS ---
-PMD_DESIGN_RULESET = "rulesets/java/design.xml"
+PMD_DESIGN_RULESET = "rulesets/java/pmd_rulset.xml"

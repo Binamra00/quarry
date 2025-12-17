@@ -36,12 +36,12 @@ def main():
     except Exception as e:
         print(f"❌ RefactoringMiner Exception: {e}")
 
-    # Step 3: PMD Smoke Test (Darun's Task)
+    # Step 3: PMD Static Analysis (Phase 2)
     print("\n--- Step 3: PMD Smoke Test ---")
     pmd_success = False
     try:
-        # Dynamic import to safely handle missing files
-        pmd_adapt = importlib.import_module("pipeline.adapters.pmd_adapt")
+        from pipeline.adapters import pmd_adapt
+        # Now fully implemented
         pmd_success = pmd_adapt.run_pmd_smoke_test()
     except ImportError:
         print("⚠️ PMD adapter module not found (Waiting for Darun).")
