@@ -1,6 +1,6 @@
 import subprocess
 import json
-from .. import config
+from .. import rulesets
 
 # Removed unused import: from ..utils import cmd_runner
 
@@ -33,11 +33,11 @@ def run_refm_smoke_test():
     print("--- ⚡ Starting RefactoringMiner Smoke Test (Whole History) ---")
 
     # 1. Define Output Path (Dynamic based on repo name)
-    project_name = config.TOY_PROJECT_PATH.name
-    json_output_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+    project_name = rulesets.TOY_PROJECT_PATH.name
+    json_output_path = rulesets.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
     # 2. Get All Commits
-    commits = get_all_commits(config.TOY_PROJECT_PATH)
+    commits = get_all_commits(rulesets.TOY_PROJECT_PATH)
     total_commits = len(commits)
     print(f"🎯 Target Analysis: {total_commits} commits found (including merges/detached).")
 
@@ -50,12 +50,12 @@ def run_refm_smoke_test():
         print(f"Processing {i + 1}/{total_commits}: {commit_hash[:7]}...")
 
         # We use a temporary file for each commit to avoid overwrite issues
-        temp_json = config.OUTPUTS_PATH / "temp_refm.json"
+        temp_json = rulesets.OUTPUTS_PATH / "temp_refm.json"
 
         cmd = [
-            str(config.RM_PATH),
+            str(rulesets.RM_PATH),
             "-c",
-            str(config.TOY_PROJECT_PATH),
+            str(rulesets.TOY_PROJECT_PATH),
             commit_hash,
             "-json",
             str(temp_json)

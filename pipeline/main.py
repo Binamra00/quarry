@@ -1,6 +1,6 @@
 import sys
 import importlib
-from pipeline import config
+from pipeline import rulesets
 from pipeline.metrics import refm_mets, repo_mets
 
 # NOTE: We import adapters inside the functions or try/except blocks
@@ -12,7 +12,7 @@ def main():
     Phase 2 Integration: Now running both RefactoringMiner and PMD.
     """
     print("🚀 Starting Smell-Ranker Pipeline (Phase 1 & 2)")
-    print(f"📂 Configuration Loaded. Drive Path: {config.DRIVE_PATH}")
+    print(f"📂 Configuration Loaded. Drive Path: {rulesets.DRIVE_PATH}")
 
     # Step 1: Verification (Phase 0)
     print("\n--- Step 1: Repository Verification ---")
