@@ -1,5 +1,5 @@
 import json
-from ..config import config  # Using explicit config import
+from pipeline import config  # Using explicit config import
 
 try:
     from pydriller import Repository
