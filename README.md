@@ -43,6 +43,7 @@ smell-ranker/
 │ ├── metrics/ # Metrics Package
 │ │ ├── refm_mets.py # Metrics to analyze refm output
 │ │ ├── repo_mets.py # Base metrics for all repos
+│ │ ├── pmd_mets.py # Metrics to analyze PMD output
 │ │ └── init.py # Exposes metrics to the main pipeline
 │ │
 │ │── rulesets/
