@@ -2,6 +2,7 @@ import sys
 import importlib
 from pipeline import config
 from pipeline.metrics import refm_mets, repo_mets
+from pipeline.adapters import pmd_adapt, refm_adapt
 
 # NOTE: We import adapters inside the functions or try/except blocks
 # to prevent the script from crashing if a file is missing during dev.
@@ -27,7 +28,6 @@ def main():
     print("\n--- Step 2: RefactoringMiner (History Mining) ---")
     rm_success = False
     try:
-        from pipeline.adapters import refm_adapt
         rm_success = refm_adapt.run_refm_smoke_test()
     except ImportError:
          print("⚠️ refm_adapt module not found.")
@@ -38,7 +38,6 @@ def main():
     print("\n--- Step 3: PMD Static Analysis (Candidate Generation) ---")
     pmd_success = False
     try:
-        from pipeline.adapters import pmd_adapt
         # Now fully implemented
         pmd_success = pmd_adapt.run_pmd_smoke_test()
     except ImportError:
