@@ -1,27 +1,22 @@
 import subprocess
 import json
-from .. import config
-
+from ..config import config # Standard import
 
 def run_pmd_smoke_test():
     """
-    Executes PMD using a CUSTOM 'pmd_rules_00.xml' that references standard rules.
-    This is efficient (runs only what we need) but scientifically valid (uses standard definitions).
+    Executes PMD using a CUSTOM 'pmd_rules_00.xml'.
+    Includes robust debugging for JSON errors.
     """
     print("--- 🔍 Starting PMD Static Analysis (Targeted Rules) ---")
 
     # 1. Setup Paths
-    # UPDATED: Looking for 'pmd_rules_00.xml' instead of 'design.xml'
     ruleset_path = config.REPO_ROOT / "pipeline" / "rulesets" / "pmd_rules_00.xml"
-
-    # Dynamic output name based on project
     project_name = config.TOY_PROJECT_PATH.name
     output_json = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
 
     # 2. Check if Ruleset Exists
     if not ruleset_path.exists():
         print(f"❌ Error: Custom ruleset not found at {ruleset_path}")
-        print("   Please create the XML file in pipeline/rulesets/pmd_rules_00.xml")
         return False
 
     # 3. Construct Command
@@ -29,7 +24,7 @@ def run_pmd_smoke_test():
         str(config.PMD_PATH),
         "check",
         "-d", str(config.TOY_PROJECT_PATH),
-        "-R", str(ruleset_path),  # Use our efficient custom file
+        "-R", str(ruleset_path),
         "-f", "json",
         "-r", str(output_json),
         "--no-cache"
@@ -44,14 +39,25 @@ def run_pmd_smoke_test():
 
         if output_json.exists():
             # Validate JSON content
-            with open(output_json, 'r') as f:
-                data = json.load(f)
+            if output_json.stat().st_size == 0:
+                print("❌ PMD Failed: Output file created but is EMPTY.")
+                print(f"STDERR Log:\n{result.stderr}")
+                return False
+
+            try:
+                with open(output_json, 'r') as f:
+                    data = json.load(f)
+            except json.JSONDecodeError as je:
+                print(f"❌ PMD Failed: Output file contains invalid JSON.")
+                print(f"JSON Error: {je}")
+                print(f"STDERR Log (Check for Ruleset Errors):\n{result.stderr}")
+                # Optional: Print the first few lines of the file to see what it wrote
+                with open(output_json, 'r') as f:
+                    print(f"File Content Preview:\n{f.read(200)}...")
+                return False
 
             files = data.get("files", [])
             total_violations = 0
-
-            # Since our XML ONLY contains the rules we want,
-            # every violation found is a target smell.
             for file in files:
                 total_violations += len(file.get("violations", []))
 

@@ -1,12 +1,11 @@
 import json
+from ..config import config  # Using explicit config import
 
 try:
     from pydriller import Repository
 except ImportError:
     print("⚠️ PyDriller not found. Churn metrics will be skipped.")
     Repository = None
-
-from .. import config
 
 
 def get_churn_map(repo_path):
@@ -36,11 +35,15 @@ def calculate_refm_metrics(total_commits_mined=65):
     """
     # Dynamic filenames based on project name
     project_name = config.TOY_PROJECT_PATH.name
-    json_path = config.OUTPUTS_PATH / "refactorings.json"
+
+    # FIX: Updated to match the output filename from refm_adapt.py
+    json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+
     metric_output_path = config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
 
     if not json_path.exists():
-        print("⚠️ Refactoring output not found. Skipping metrics.")
+        print(f"⚠️ Refactoring output not found at: {json_path.name}")
+        print("   Skipping metrics calculation.")
         return
 
     print("\n--- 📊 RefactoringMiner Metrics Report ---")
