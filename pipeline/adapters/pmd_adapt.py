@@ -1,6 +1,6 @@
 import subprocess
 import json
-from .. import rulesets
+from .. import config
 
 
 def run_pmd_smoke_test():
@@ -12,11 +12,11 @@ def run_pmd_smoke_test():
 
     # 1. Setup Paths
     # UPDATED: Looking for 'pmd_rules_00.xml' instead of 'design.xml'
-    ruleset_path = rulesets.REPO_ROOT / "pipeline" / "rulesets" / "pmd_rules_00.xml"
+    ruleset_path = config.REPO_ROOT / "pipeline" / "rulesets" / "pmd_rules_00.xml"
 
     # Dynamic output name based on project
-    project_name = rulesets.TOY_PROJECT_PATH.name
-    output_json = rulesets.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
+    project_name = config.TOY_PROJECT_PATH.name
+    output_json = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
 
     # 2. Check if Ruleset Exists
     if not ruleset_path.exists():
@@ -26,16 +26,16 @@ def run_pmd_smoke_test():
 
     # 3. Construct Command
     cmd = [
-        str(rulesets.PMD_PATH),
+        str(config.PMD_PATH),
         "check",
-        "-d", str(rulesets.TOY_PROJECT_PATH),
+        "-d", str(config.TOY_PROJECT_PATH),
         "-R", str(ruleset_path),  # Use our efficient custom file
         "-f", "json",
         "-r", str(output_json),
         "--no-cache"
     ]
 
-    print(f"   Target: {rulesets.TOY_PROJECT_PATH.name}")
+    print(f"   Target: {config.TOY_PROJECT_PATH.name}")
     print(f"   Ruleset: {ruleset_path.name}")
 
     try:
