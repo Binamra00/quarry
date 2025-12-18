@@ -1,7 +1,7 @@
 import json
 import statistics
 from pathlib import Path
-from ..config import config
+from pipeline import config
 
 
 def calculate_pmd_metrics():
