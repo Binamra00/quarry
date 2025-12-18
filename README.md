@@ -1,7 +1,7 @@
 # Smell-Ranker: Infrastructure & Architecture Documentation
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.3 (Phase 1 – Smoke Test Complete)
+**Version:** 0.4 (Phase 2 – Smoke Test Complete)
 
 ---
 
@@ -47,7 +47,7 @@ smell-ranker/
 │ │ └── init.py # Exposes metrics to the main pipeline
 │ │
 │ │── rulesets/
-│ │ └── pmd_rule_00.xml # PMD Ruleset Configuration
+│ │ └── pmd_rules_00.xml # PMD Ruleset Configuration
 │ │ 
 │ ├── utils/ # Python Utility Package
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
@@ -142,7 +142,14 @@ Calls `refm_adapt.run_rm_smoke_test()` to execute RefactoringMiner.
         - Signal Strength
     - Outputs `refactoring_metrics_[repo_name].json`.
 - **Phase 2 (Candidate Generation):**
-    - Calls `pmd_adapt.run_pmd_smoke_test()` (currently a placeholder waiting for integration) to generate `pmd_report.xml`.
+    - Calls `pmd_adapt.run_pmd_smoke_test()` using the `pmd_rules_00.xml` ruleset to generate `pmd_candidates_toy_project.json`.
+- **Phase 2 (Metrics):** 
+    - Parses `pmd_[repo_name].json` and calls `pmd_mets.calculate_pmd_metrics()` to calculate:
+        - Smell Density
+        - Smell Intensity
+        - Rule Taxanomy
+        - Method Complexity Mean
+    - Outputs `pmd_metrics_[repo_name].json`.
 ---
 
 ## 4. Design Principles & Patterns
