@@ -6,21 +6,24 @@
 
     <description>
         Targeted ruleset for Smell-Ranker.
-        References standard PMD definitions without modification to ensure state-of-the-art thresholds.
+        Uses NCSS (Non-Commenting Source Statements) for length metrics to ensure PMD 7 compatibility.
     </description>
 
-    <!--
-      We reference the specific rules we need from the standard categories.
-      This avoids running the hundreds of other rules in 'design.xml'.
-    -->
-
-    <!-- God Class Detection -->
+    <!-- 1. God Class (The Big One) -->
     <rule ref="category/java/design.xml/GodClass" />
 
-    <!-- Long Method Detection -->
-    <rule ref="category/java/design.xml/ExcessiveMethodLength" />
+    <!-- 2. Long Method -> NCSS Count (Lines of Code) -->
+    <!-- Replaces ExcessiveMethodLength which caused errors -->
+    <rule ref="category/java/design.xml/NcssCount">
+        <properties>
+            <!-- Report methods longer than 50 lines (Standard heuristic) -->
+            <property name="methodReportLevel" value="50" />
+            <!-- Report classes longer than 500 lines -->
+            <property name="classReportLevel" value="500" />
+        </properties>
+    </rule>
 
-    <!-- Long Class Detection (often correlated with God Class) -->
-    <rule ref="category/java/design.xml/ExcessiveClassLength" />
+    <!-- 3. Complex Logic (Another proxy for Long Method) -->
+    <rule ref="category/java/design.xml/CyclomaticComplexity" />
 
 </ruleset>
