@@ -1,7 +1,7 @@
 import json
 import statistics
 from pathlib import Path
-from pipeline import config
+from ..config import config
 
 
 def calculate_pmd_metrics():
@@ -128,11 +128,24 @@ def calculate_pmd_metrics():
     print(f"│   ├── Avg Cyclomatic Complexity: {avg_complexity:.1f}")
     print(f"│   └── Max Complexity Found:      {max_complexity}")
     print(f"│")
+
+    # [NEW] Explicitly Print Rule Taxonomy
+    print(f"├── [Rule Taxonomy]")
+    sorted_rules = sorted(rule_counts.items(), key=lambda x: x[1], reverse=True)
+    if sorted_rules:
+        for rule, count in sorted_rules:
+            print(f"│   ├── {rule}: {count}")
+    else:
+        print(f"│   └── (No violations found)")
+    print(f"│")
+
     print(f"├── [Hotspots] (Top Files)")
-    # Sort hotspots by count descending
     sorted_hotspots = sorted(file_hotspots.items(), key=lambda x: x[1], reverse=True)
-    for f, count in sorted_hotspots[:3]:
-        print(f"│   ├── {f}: {count} smells")
+    if sorted_hotspots:
+        for f, count in sorted_hotspots[:3]:
+            print(f"│   ├── {f}: {count} smells")
+    else:
+        print(f"│   └── (No hotspots found)")
 
 
 if __name__ == "__main__":
