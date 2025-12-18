@@ -30,7 +30,7 @@ This is the source of truth for all code. It is version-controlled on GitHub.
 ```commandline
 smell-ranker/
 ├── pipeline/ # The main Python Application Package
-│ ├── adapters/ # [NEW] Tool Adapters Package (Structural Pattern)
+│ ├── adapters/ # Tool Adapters Package (Structural Pattern)
 │ │ ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
 │ │ ├── pmd_adapt.py # Wrapper for PMD CLI logic
 │ │ └── init.py # Exposes adapters to the main pipeline
@@ -39,26 +39,24 @@ smell-ranker/
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
 │ │ ├── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling
 │ │ └── colab_env_setup.sh# SETUP SCRIPT: Installs Java 17 & mounts Drive
-
-│ ├── metrics/ # [NEW] Tool Adapters Package (Structural Pattern)
+│ │ 
+│ ├── metrics/ # Metrics Package
 │ │ ├── refm_mets.py # Metrics to analyze refm output
 │ │ ├── repo_mets.py # Base metrics for all repos
 │ │ └── init.py # Exposes metrics to the main pipeline
-
+│ │
+│ │── rulesets/
+│ │ └── pmd_rule_00.xml # PMD Ruleset Configuration
+│ │ 
 │ ├── utils/ # Python Utility Package
-│ │ ├── cmd_runner.py # Adapter for running shell commands safely
+│ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
 │ │ └── init.py # Exposes utilities to the app
 │ │
 │ ├── main.py # FACADE: Main Python entry point
 │ ├── config.py # CONFIG: All paths (Drive, Tools) and settings
-│ └── init.py # Package marker
-│
-├── notebooks/ # Jupyter Notebooks for Colab Control
-│ ├── 01_project_setup.ipynb # One-time setup & verification
-│ └── 02_pipeline_execution.ipynb # Daily execution trigger
-│
+│ 
 └── docs/ # Project Documentation
-└── infrastructure_architecture.md
+    └── Master Thesis Log.pdf
 ```
 
 ---
