@@ -6,7 +6,7 @@ except ImportError:
     print("⚠️ PyDriller not found. Churn metrics will be skipped.")
     Repository = None
 
-from .. import rulesets
+from .. import config
 
 
 def get_churn_map(repo_path):
@@ -35,9 +35,9 @@ def calculate_refm_metrics(total_commits_mined=65):
     Calculates metrics, SAVES to JSON, and prints to console.
     """
     # Dynamic filenames based on project name
-    project_name = rulesets.TOY_PROJECT_PATH.name
-    json_path = rulesets.OUTPUTS_PATH / "refactorings.json"
-    metric_output_path = rulesets.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
+    project_name = config.TOY_PROJECT_PATH.name
+    json_path = config.OUTPUTS_PATH / "refactorings.json"
+    metric_output_path = config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
 
     if not json_path.exists():
         print("⚠️ Refactoring output not found. Skipping metrics.")
@@ -45,7 +45,7 @@ def calculate_refm_metrics(total_commits_mined=65):
 
     print("\n--- 📊 RefactoringMiner Metrics Report ---")
 
-    churn_map = get_churn_map(rulesets.TOY_PROJECT_PATH)
+    churn_map = get_churn_map(config.TOY_PROJECT_PATH)
 
     try:
         with open(json_path, 'r') as f:

@@ -9,7 +9,7 @@ except ImportError:
     print("CRITICAL ERROR: PyDriller not installed. Run '!pip install pydriller' in Colab.")
     raise
 
-from pipeline import rulesets
+from pipeline import config
 
 # --- HEURISTIC KEYWORDS ---
 FIX_KEYWORDS = ['fix', 'bug', 'issue', 'close', 'resolv', 'crash', 'fail', 'error', 'defect']
@@ -77,7 +77,7 @@ def run_metrics_report():
     """
     Generates report, SAVES it to JSON, and prints to console.
     """
-    repo = rulesets.TOY_PROJECT_PATH
+    repo = config.TOY_PROJECT_PATH
 
     if not repo.exists():
         print(f"Error: Repository not found at {repo}")
@@ -134,7 +134,7 @@ def run_metrics_report():
     }
 
     # Dynamic filename: repo_metrics_toy_project.json
-    json_path = rulesets.OUTPUTS_PATH / f"repo_metrics_{repo.name}.json"
+    json_path = config.OUTPUTS_PATH / f"repo_metrics_{repo.name}.json"
 
     with open(json_path, 'w') as f:
         json.dump(output_data, f, indent=2)
