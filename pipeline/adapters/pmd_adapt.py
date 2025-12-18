@@ -1,11 +1,13 @@
 import subprocess
 import json
-from ..config import config # Standard import
+import os
+from ..config import config  # Standard import
+
 
 def run_pmd_smoke_test():
     """
     Executes PMD using a CUSTOM 'pmd_rules_00.xml'.
-    Includes robust debugging for JSON errors.
+    Includes robust debugging for JSON errors and pre-flight checks.
     """
     print("--- 🔍 Starting PMD Static Analysis (Targeted Rules) ---")
 
@@ -13,15 +15,29 @@ def run_pmd_smoke_test():
     ruleset_path = config.REPO_ROOT / "pipeline" / "rulesets" / "pmd_rules_00.xml"
     project_name = config.TOY_PROJECT_PATH.name
     output_json = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
+    pmd_executable = config.PMD_PATH
 
-    # 2. Check if Ruleset Exists
+    # 2. Pre-Flight Checks
     if not ruleset_path.exists():
         print(f"❌ Error: Custom ruleset not found at {ruleset_path}")
         return False
 
+    if not pmd_executable.exists():
+        print(f"❌ Error: PMD executable not found at {pmd_executable}")
+        return False
+
+    if not os.access(pmd_executable, os.X_OK):
+        print(f"⚠️ Warning: PMD binary at {pmd_executable} is not executable. Attempting to fix...")
+        try:
+            os.chmod(pmd_executable, 0o755)
+            print("   ✅ Permissions fixed.")
+        except Exception as e:
+            print(f"   ❌ Failed to set permissions: {e}")
+            return False
+
     # 3. Construct Command
     cmd = [
-        str(config.PMD_PATH),
+        str(pmd_executable),
         "check",
         "-d", str(config.TOY_PROJECT_PATH),
         "-R", str(ruleset_path),
@@ -32,6 +48,7 @@ def run_pmd_smoke_test():
 
     print(f"   Target: {config.TOY_PROJECT_PATH.name}")
     print(f"   Ruleset: {ruleset_path.name}")
+    print(f"   Command: {' '.join(cmd)}")  # Print the exact command for debugging
 
     try:
         # Run PMD
@@ -41,7 +58,8 @@ def run_pmd_smoke_test():
             # Validate JSON content
             if output_json.stat().st_size == 0:
                 print("❌ PMD Failed: Output file created but is EMPTY.")
-                print(f"STDERR Log:\n{result.stderr}")
+                print(f"STDERR Log (Why did it fail?):\n{result.stderr}")
+                print(f"STDOUT Log:\n{result.stdout}")
                 return False
 
             try:
@@ -50,10 +68,10 @@ def run_pmd_smoke_test():
             except json.JSONDecodeError as je:
                 print(f"❌ PMD Failed: Output file contains invalid JSON.")
                 print(f"JSON Error: {je}")
-                print(f"STDERR Log (Check for Ruleset Errors):\n{result.stderr}")
-                # Optional: Print the first few lines of the file to see what it wrote
+                # Print raw file content for inspection
                 with open(output_json, 'r') as f:
-                    print(f"File Content Preview:\n{f.read(200)}...")
+                    print(f"File Raw Content:\n{f.read(500)}")
+                print(f"STDERR Log:\n{result.stderr}")
                 return False
 
             files = data.get("files", [])
@@ -71,5 +89,5 @@ def run_pmd_smoke_test():
             return False
 
     except Exception as e:
-        print(f"❌ PMD Execution Failed: {e}")
+        print(f"❌ PMD Execution Failed (Python Exception): {e}")
         return False
