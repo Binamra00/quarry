@@ -2,7 +2,7 @@ import sys
 import importlib
 from pipeline import config
 from pipeline.metrics import refm_mets, repo_mets
-from pipeline.adapters import pmd_adapt, refm_adapt
+from pipeline.adapters import pmd_adapt, refm_adapt, pmd_mets
 
 # NOTE: We import adapters inside the functions or try/except blocks
 # to prevent the script from crashing if a file is missing during dev.
@@ -59,6 +59,11 @@ def main():
 
     if pmd_success:
         print("✅ PMD: OPERATIONAL")
+        try:
+            # [NEW] Calculate PMD Metrics
+            pmd_mets.calculate_pmd_metrics()
+        except Exception as e:
+            print(f"⚠️ PMD Metrics Calc Error: {e}")
     else:
         print("❌ PMD: FAILED")
 
