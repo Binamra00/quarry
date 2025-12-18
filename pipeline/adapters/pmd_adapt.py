@@ -1,41 +1,41 @@
 import subprocess
 import json
-from .. import config
+from .. import rulesets
 
 
 def run_pmd_smoke_test():
     """
-    Executes PMD using a CUSTOM 'pmd_ruleset.xml' that references standard rules.
+    Executes PMD using a CUSTOM 'pmd_rules_00.xml' that references standard rules.
     This is efficient (runs only what we need) but scientifically valid (uses standard definitions).
     """
     print("--- 🔍 Starting PMD Static Analysis (Targeted Rules) ---")
 
     # 1. Setup Paths
-    # UPDATED: Looking for 'pmd_ruleset.xml' instead of 'design.xml'
-    ruleset_path = config.REPO_ROOT / "pipeline" / "config" / "pmd_ruleset.xml"
+    # UPDATED: Looking for 'pmd_rules_00.xml' instead of 'design.xml'
+    ruleset_path = rulesets.REPO_ROOT / "pipeline" / "rulesets" / "pmd_rules_00.xml"
 
     # Dynamic output name based on project
-    project_name = config.TOY_PROJECT_PATH.name
-    output_json = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
+    project_name = rulesets.TOY_PROJECT_PATH.name
+    output_json = rulesets.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
 
     # 2. Check if Ruleset Exists
     if not ruleset_path.exists():
         print(f"❌ Error: Custom ruleset not found at {ruleset_path}")
-        print("   Please create the XML file in pipeline/config/pmd_ruleset.xml")
+        print("   Please create the XML file in pipeline/rulesets/pmd_rules_00.xml")
         return False
 
     # 3. Construct Command
     cmd = [
-        str(config.PMD_PATH),
+        str(rulesets.PMD_PATH),
         "check",
-        "-d", str(config.TOY_PROJECT_PATH),
+        "-d", str(rulesets.TOY_PROJECT_PATH),
         "-R", str(ruleset_path),  # Use our efficient custom file
         "-f", "json",
         "-r", str(output_json),
         "--no-cache"
     ]
 
-    print(f"   Target: {config.TOY_PROJECT_PATH.name}")
+    print(f"   Target: {rulesets.TOY_PROJECT_PATH.name}")
     print(f"   Ruleset: {ruleset_path.name}")
 
     try:
