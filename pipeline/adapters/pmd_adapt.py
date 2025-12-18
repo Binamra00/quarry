@@ -1,7 +1,7 @@
 import subprocess
 import json
 import os
-from ..config import config  # Standard import
+from pipeline import config
 
 
 def run_pmd_smoke_test():
