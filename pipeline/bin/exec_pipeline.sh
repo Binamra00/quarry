@@ -41,14 +41,15 @@ else
     fi
 fi
 
-# B. Check Python Libraries (PyDriller)
-if python3 -c "import pydriller" 2>/dev/null; then
-    echo "✅ PyDriller found."
+# B. Check Python Libraries
+echo "--- Checking Python Libraries ---"
+# We check for both pydriller and python-dotenv
+if python3 -c "import pydriller, dotenv" 2>/dev/null; then
+    echo "✅ Python dependencies found."
 else
-    echo "⚠️ PyDriller NOT found."
-    echo "📦 Installing PyDriller..."
-    pip install pydriller > /dev/null
-    echo "✅ PyDriller installed."
+    echo "📦 Installing Python dependencies..."
+    pip install pydriller python-dotenv > /dev/null
+    echo "✅ Dependencies installed."
 fi
 
 
