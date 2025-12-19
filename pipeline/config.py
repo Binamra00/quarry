@@ -2,17 +2,16 @@ import os
 import sys
 from pathlib import Path
 
-# --- 0. LOAD DOTENV (The New Feature) ---
+# --- 0. LOAD DOTENV ---
 try:
     from dotenv import load_dotenv
 
-    # Load environment variables from a .env file if it exists
     load_dotenv()
 except ImportError:
-    # It's okay if dotenv isn't installed in Colab, we fallback to detection
     pass
 
 # --- 1. ROBUST PROJECT ROOT DISCOVERY ---
+# This finds the folder containing .git (e.g., .../Thesis Project/scripts)
 current_path = Path(__file__).resolve()
 root_candidate = current_path.parent
 while not (root_candidate / ".git").exists():
@@ -23,11 +22,10 @@ REPO_ROOT = root_candidate
 
 # --- 2. DYNAMIC WORKSPACE CONFIGURATION ---
 
-# A. Check for Explicit Configuration (The Docker Way)
-# If a user sets SMELL_RANKER_HOME in .env or Docker, we use it.
+# A. Check for Explicit Configuration (.env override)
 custom_home = os.getenv("SMELL_RANKER_HOME")
 
-# B. Check for Colab (The Research Way)
+# B. Check for Colab
 is_colab = "COLAB_RELEASE_TAG" in os.environ or "COLAB_GPU" in os.environ
 
 print(f"📂 Codebase Root: {REPO_ROOT}")
@@ -45,15 +43,21 @@ elif is_colab:
             print("   ⏳ Mounting Google Drive...")
             drive.mount('/content/drive')
 
-        # Default Colab Path
-        WORKSPACE_ROOT = Path("/content/drive/My Drive/Thesis Project")
+        # [CRITICAL FIX] DYNAMIC PARENT RESOLUTION
+        # Instead of hardcoding "/content/drive/My Drive/Thesis_Project",
+        # we trust that the 'scripts' repo is inside the Workspace folder.
+        # Workspace = Parent of Repo Root
+        WORKSPACE_ROOT = REPO_ROOT.parent
+
     except ImportError:
         WORKSPACE_ROOT = Path("/content/workspace_data")
 
 else:
     print("💻 Detected Local Environment (Default).")
-    # Default Local Path
+    # In local mode, we usually want the workspace INSIDE the repo to keep it contained
     WORKSPACE_ROOT = REPO_ROOT / "workspace_data"
+
+print(f"📂 Workspace Root: {WORKSPACE_ROOT}")
 
 # Create the Workspace Root if it doesn't exist
 if not WORKSPACE_ROOT.exists():
