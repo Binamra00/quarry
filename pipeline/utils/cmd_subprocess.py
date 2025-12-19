@@ -1,56 +1,52 @@
-# This module handles the execution of external shell commands.
-# It is part of the 'utils' package.
-
 import subprocess
+from typing import List, Tuple, Optional
 
 
-def run_command(command, working_dir=None):
+def run_command(command: List[str], cwd: Optional[str] = None, allowed_exit_codes: List[int] = [0]) -> Tuple[bool, str]:
     """
-    Executes a shell command and returns the result.
+    Executes a shell command safely and returns the result.
 
     Args:
-        command (list): A list of strings representing the command and arguments.
-                        Example: ["ls", "-la"]
-        working_dir (str, optional): The directory to run the command in.
+        command (list): The command to run (e.g., ["ls", "-la"]).
+        cwd (str, optional): The directory to run the command in.
+        allowed_exit_codes (list): Exit codes that are considered "Success". 
+                                   Default is [0]. PMD uses [0, 4].
 
     Returns:
         tuple: (success (bool), output (str))
     """
-    # Log the command we are about to run (joined by spaces for readability)
-    print(f"[RUNNING]: {' '.join(command)}")
+    cmd_str = " ".join(command)
+    print(f"   [EXEC]: {cmd_str}")
 
     try:
-        # We use subprocess.run to execute the command.
-        # check=True raises an error if the command fails (exit code != 0).
-        # capture_output=True grabs stdout and stderr so we can use them.
-        # text=True ensures the output is a string, not bytes.
-        # shell=False is safer and avoids injection vulnerabilities.
+        # check=False allows us to manually handle the exit code
         result = subprocess.run(
             command,
-            cwd=working_dir,
-            check=True,
+            cwd=cwd,
             capture_output=True,
             text=True,
-            shell=False
+            check=False
         )
 
-        # If we get here, the command succeeded (exit code 0)
-        print(f"[STDOUT]:\n{result.stdout}")
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        exit_code = result.returncode
 
-        # Some tools print warnings to stderr even on success, so we log it if present.
-        if result.stderr:
-            print(f"[STDERR]:\n{result.stderr}")
+        # Log output if verbose (optional, keeping it clean for now)
+        # if stdout: print(f"   [STDOUT]: {stdout[:200]}...") 
 
-        return True, result.stdout
-
-    except subprocess.CalledProcessError as e:
-        # This block catches commands that ran but failed (exit code != 0)
-        print(f"[ERROR]: Command failed with exit code {e.returncode}")
-        print(f"[STDOUT]:\n{e.stdout}")
-        print(f"[STDERR]:\n{e.stderr}")
-        return False, e.stderr
+        if exit_code in allowed_exit_codes:
+            return True, stdout
+        else:
+            print(f"❌ Command Failed (Exit Code {exit_code})")
+            print(f"   Command: {cmd_str}")
+            if stderr:
+                print(f"   [STDERR]: {stderr}")
+            return False, stderr
 
     except FileNotFoundError:
-        # This block catches cases where the executable itself doesn't exist
-        print(f"[ERROR]: Command not found. Is the path correct?\n{command[0]}")
-        return False, "Command not found."
+        print(f"❌ Executable not found: {command[0]}")
+        return False, "Command not found"
+    except Exception as e:
+        print(f"❌ Unexpected Error: {e}")
+        return False, str(e)
