@@ -46,7 +46,7 @@ elif is_colab:
             drive.mount('/content/drive')
 
         # Default Colab Path
-        WORKSPACE_ROOT = Path("/content/drive/My Drive/Thesis_Project")
+        WORKSPACE_ROOT = Path("/content/drive/My Drive/Thesis Project")
     except ImportError:
         WORKSPACE_ROOT = Path("/content/workspace_data")
 
