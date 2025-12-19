@@ -1,69 +1,92 @@
 #!/bin/bash
 
-# --- Master Pipeline Orchestrator (Layer 3: Execution Master) ---
-# ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute Python.
+# --- Master Pipeline Orchestrator (Universal Edition) ---
+# ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute.
+# NOW SUPPORTED: Local Linux/Mac and Google Colab.
 
-# $1 is the first argument passed to this script, which MUST be the Git URL.
+# $1 is the optional Git URL for syncing (Layer 2).
 GIT_URL_WITH_TOKEN="$1"
 
-# --- 0. PATH CORRECTION (CRITICAL FIX) ---
-# We must ensure we are running from the correct directory.
-# This logic finds where this script is located and navigates to the repo root.
-
-# Get the directory where this script lives (e.g., .../pipeline/bin)
+# --- 0. PATH CORRECTION & PYTHON CONTEXT ---
+# Determine where this script is, then find the Repo Root.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Calculate the Repo Root (Go up two levels: pipeline/bin -> pipeline -> root)
+# Go up two levels: pipeline/bin -> pipeline -> REPO_ROOT
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-echo "--- 0. Setting Working Directory ---"
-echo "Script Location: $SCRIPT_DIR"
-echo "Repo Root:       $REPO_ROOT"
+echo "--- 0. Setting Context ---"
+echo "📂 Repo Root: $REPO_ROOT"
+cd "$REPO_ROOT" || { echo "❌ Failed to cd to $REPO_ROOT"; exit 1; }
 
-# Change directory to the Repo Root so that 'pipeline' is a valid package
-cd "$REPO_ROOT" || { echo "Failed to cd to $REPO_ROOT"; exit 1; }
-
-# Add the current directory to PYTHONPATH so python can find 'pipeline'
+# CRITICAL: Add current directory to PYTHONPATH so 'pipeline' module is found
 export PYTHONPATH=$PYTHONPATH:.
 
 
-# --- Define Sub-Scripts (Now relative to REPO_ROOT) ---
-# Since we are now at the root, the bin scripts are at pipeline/bin/
-ENV_SETUP_SCRIPT="./pipeline/bin/colab_env_setup.sh"
-GIT_SYNC_SCRIPT="./pipeline/bin/colab_git_setup_smell_ranker.sh"
-MAIN_PYTHON_MODULE="pipeline.main"
+# --- 1. SYSTEM DEPENDENCY CHECK (Java & Python Libs) ---
+echo "--- 1. Checking System Dependencies ---"
 
-
-# --- 1. ENV SETUP (Call Layer 1) ---
-echo "--- 1. Initializing Runtime Environment (Java/Mount) ---"
-if [ -f "$ENV_SETUP_SCRIPT" ]; then
-    bash "$ENV_SETUP_SCRIPT"
+# A. Check Java 17 (Required for RefactoringMiner)
+if type -p java > /dev/null; then
+    echo "✅ Java found."
+    # Optional: You could check version here, but existence is a good start.
 else
-    echo "ERROR: Could not find environment script at $ENV_SETUP_SCRIPT"
+    echo "⚠️ Java NOT found."
+    if [ -n "$COLAB_RELEASE_TAG" ]; then
+        echo "☁️ Colab detected: Installing OpenJDK 17..."
+        apt-get update > /dev/null
+        apt-get install -y openjdk-17-jdk > /dev/null
+        echo "✅ Java installed."
+    else
+        echo "❌ ACTION REQUIRED: Please install Java 17+ manually."
+        exit 1
+    fi
+fi
+
+# B. Check Python Libraries (PyDriller)
+if python3 -c "import pydriller" 2>/dev/null; then
+    echo "✅ PyDriller found."
+else
+    echo "⚠️ PyDriller NOT found."
+    echo "📦 Installing PyDriller..."
+    pip install pydriller > /dev/null
+    echo "✅ PyDriller installed."
+fi
+
+
+# --- 2. TOOLCHAIN ALLOCATION (The New Feature) ---
+# This replaces manual downloads and chmod commands.
+echo "--- 2. Allocating Toolchain (PMD & RefactoringMiner) ---"
+python3 -m pipeline.utils.allocate_tools
+
+if [ $? -ne 0 ]; then
+    echo "❌ Tool allocation failed. Check network or allocate_tools.py."
     exit 1
 fi
 
-# --- 2. CODE SYNC (Call Layer 2) ---
-echo "--- 2. Synchronizing Code from GitHub ---"
-if [ -f "$GIT_SYNC_SCRIPT" ]; then
-    bash "$GIT_SYNC_SCRIPT" "$GIT_URL_WITH_TOKEN"
-else
-    echo "ERROR: Could not find sync script at $GIT_SYNC_SCRIPT"
-    exit 1
-fi
 
-# --- 3. ENFORCE TOOL PERMISSIONS (CRITICAL FIX) ---
-# We must ensure RefactoringMiner and PMD are executable
-# Note: These paths assume standard structure relative to Drive root
-# We use a wildcard to catch the specific version folder
-echo "--- 3. Enforcing Tool Permissions ---"
-chmod +x ../tools/RefactoringMiner_v3/bin/RefactoringMiner || echo "Warning: Could not chmod RefactoringMiner"
-chmod +x ../tools/pmd-bin-*/bin/pmd || echo "Warning: Could not chmod PMD"
+# --- 3. CODE SYNC (Optional Layer 2) ---
+# Only runs if a Git URL is provided (useful for Colab auto-updating).
+if [ -n "$GIT_URL_WITH_TOKEN" ]; then
+    echo "--- 3. Synchronizing Code from GitHub ---"
+    SYNC_SCRIPT="./pipeline/bin/colab_git_setup_smell_ranker.sh"
+
+    if [ -f "$SYNC_SCRIPT" ]; then
+        bash "$SYNC_SCRIPT" "$GIT_URL_WITH_TOKEN"
+    else
+        echo "⚠️ Sync script not found at $SYNC_SCRIPT. Skipping sync."
+    fi
+else
+    echo "--- 3. Skipping Code Sync (No URL provided) ---"
+fi
 
 
 # --- 4. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
 # We run the module using the package syntax (-m pipeline.main)
-/usr/bin/python3 -m "$MAIN_PYTHON_MODULE"
+/usr/bin/python3 -m pipeline.main
 
-echo "✅ Execution Pipeline Complete."
+if [ $? -eq 0 ]; then
+    echo "✅ Execution Pipeline Complete."
+else
+    echo "❌ Pipeline Failed."
+    exit 1
+fi
