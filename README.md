@@ -37,8 +37,7 @@ smell-ranker/
 │ │
 │ ├── bin/ # Executable Shell Scripts (Entry Points)
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
-│ │ ├── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling
-│ │ └── colab_env_setup.sh# SETUP SCRIPT: Installs Java 17 & mounts Drive
+│ │ ├── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling in Colab
 │ │ 
 │ ├── metrics/ # Metrics Package
 │ │ ├── refm_mets.py # Metrics to analyze refm output
@@ -51,13 +50,18 @@ smell-ranker/
 │ │ 
 │ ├── utils/ # Python Utility Package
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
+│ │ ├── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │ └── init.py # Exposes utilities to the app
 │ │
 │ ├── main.py # FACADE: Main Python entry point
-│ ├── config.py # CONFIG: All paths (Drive, Tools) and settings
+│ └──config.py # CONFIG: All paths (Drive, Tools) and settings
 │ 
 └── docs/ # Project Documentation
-    └── Master Thesis Log.pdf
+│   └── Master Thesis Log.pdf
+└── .env
+└── .gitignore
+└──  requirements.txt
+└── .README.md
 ```
 
 ---
