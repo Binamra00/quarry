@@ -27,7 +27,6 @@ echo "--- 1. Checking System Dependencies ---"
 # A. Check Java 17 (Required for RefactoringMiner)
 if type -p java > /dev/null; then
     echo "✅ Java found."
-    # Optional: You could check version here, but existence is a good start.
 else
     echo "⚠️ Java NOT found."
     if [ -n "$COLAB_RELEASE_TAG" ]; then
@@ -82,12 +81,17 @@ fi
 
 # --- 4. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
-# We run the module using the package syntax (-m pipeline.main)
-/usr/bin/python3 -m pipeline.main
 
-if [ $? -eq 0 ]; then
+# UPDATED: We use "$@" to pass ALL arguments from this shell script
+# to the Python main module.
+# Example: ./exec_pipeline.sh --stage static  -> python ... main --stage static
+python3 -m pipeline.main "$@"
+
+exit_code=$?
+
+if [ $exit_code -eq 0 ]; then
     echo "✅ Execution Pipeline Complete."
 else
     echo "❌ Pipeline Failed."
-    exit 1
+    exit $exit_code
 fi
