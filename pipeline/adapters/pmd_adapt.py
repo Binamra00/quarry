@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from pipeline import config
 from pipeline.utils import cmd_subprocess
+# FIX: Using 'IAdapter' to match your interface file
 from pipeline.adapters.i_adapter import IAdapter
 
 
@@ -48,6 +49,10 @@ class PMDAdapter(IAdapter):
 
         print(f"   Target: {config.TOY_PROJECT_PATH.name}")
         print(f"   Ruleset: {ruleset_path.name}")
+
+        # [NEW] Explicitly tell the user we are running and logging
+        print(f"   📝 Logging raw output to: {log_path.name}")
+        print(f"   ⏳ Analysis in progress... (this may take a moment)")
 
         # Pass the log_path to the runner
         success, _ = cmd_subprocess.run_command(
