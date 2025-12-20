@@ -1,11 +1,11 @@
 import json
 import tempfile
+import subprocess
 from pathlib import Path
 from typing import List
 
 from pipeline import config
 from pipeline.utils import cmd_subprocess
-# FIX: Using 'IAdapter' to match your updated interface file
 from pipeline.adapters.i_adapter import IAdapter
 
 
@@ -37,7 +37,7 @@ class RefactoringMinerAdapter(IAdapter):
         print(f"--- ⚡ Starting {self.get_tool_name()} ---")
 
         final_json_path = self.get_output_path()
-        log_path = self.get_log_path()  # [NEW] Log Path
+        log_path = self.get_log_path()
 
         commits = self._get_all_commits(config.TOY_PROJECT_PATH)
         total_commits = len(commits)
@@ -47,13 +47,12 @@ class RefactoringMinerAdapter(IAdapter):
             return False
 
         print(f"🎯 Target Analysis: {total_commits} commits found.")
-        print(f"   📝 Logging raw output to: {log_path.name}")  # [NEW] User feedback
+        print(f"   📝 Logging raw output to: {log_path.name}")
 
         all_refactorings = []
         success_count = 0
 
         # We open the log file ONCE and append to it for the whole loop
-        # This keeps all commit logs in one file
         with open(log_path, "w") as log_file:
             log_file.write(f"--- RefactoringMiner Log: {config.TOY_PROJECT_PATH.name} ---\n")
 
@@ -62,9 +61,9 @@ class RefactoringMinerAdapter(IAdapter):
                 print(f"   [Performance] Using temporary local buffer: {temp_dir}")
 
                 for i, commit_hash in enumerate(commits):
-                    # Progress bar on console (keeps it alive)
+                    # FIX: added flush=True to force Colab to render the update immediately
                     if i % 5 == 0:
-                        print(f"   Processing {i + 1}/{total_commits}...", end="\r")
+                        print(f"   Processing {i + 1}/{total_commits}...", end="\r", flush=True)
 
                     temp_json_path = temp_dir / f"commit_{commit_hash}.json"
 
@@ -73,17 +72,14 @@ class RefactoringMinerAdapter(IAdapter):
                         commit_hash, "-json", str(temp_json_path)
                     ]
 
-                    # [NEW] We manually call subprocess here to append to our open log_file
-                    # We don't use cmd_subprocess.run_command inside the loop because
-                    # we want to stream to a single open file handle for efficiency.
                     try:
                         log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
                         log_file.flush()
 
-                        subprocess_result = cmd_subprocess.subprocess.run(
+                        subprocess_result = subprocess.run(
                             cmd,
-                            stdout=log_file,  # Stream directly to our log file
-                            stderr=cmd_subprocess.subprocess.STDOUT,
+                            stdout=log_file,
+                            stderr=subprocess.STDOUT,
                             text=True,
                             check=False
                         )
@@ -103,7 +99,7 @@ class RefactoringMinerAdapter(IAdapter):
                     except Exception as e:
                         log_file.write(f"[EXCEPTION] {e}\n")
 
-        print(f"   Processed {total_commits} commits.                 ")  # Clear the progress line
+        print(f"   Processed {total_commits} commits.                 ")
 
         # Final Atomic Write
         print(f"   💾 Saving results to: {final_json_path.name}")
