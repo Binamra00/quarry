@@ -39,7 +39,12 @@ smell-ranker/
 │ ├── bin/ # Executable Shell Scripts (Entry Points)
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
 │ │ └── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling in Colab
-│ │ 
+│ │
+│ │── commands/ # CLI Command Templates Package
+│ │ ├── init.py # Exposes command templates to adapters
+│ │ ├── i_commands.py # Interface for all command templates 
+│ │ └── tools_cmd.py # CLI commands for external tools like refm and pmd
+│ │
 │ ├── metrics/ # Metrics Package
 │ │ ├── init.py # Exposes metrics to the main pipeline
 │ │ ├── refm_mets.py # Metrics to analyze refm output
