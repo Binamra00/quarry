@@ -3,12 +3,11 @@
 # --- Master Pipeline Orchestrator (Universal Edition) ---
 # ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute.
 
-# --- 0. ARGUMENT PARSING (The Critical Fix) ---
-# We check if the first argument is a URL (starts with http).
-# If yes, we capture it and SHIFT it out.
-# This ensures $1 becomes '--stage' and the URL is NOT passed to Python.
+# --- 0. ARGUMENT PARSING (ROBUST VERSION) ---
+# We check if $1 exists AND does NOT start with a hyphen (-).
+# If so, we assume it is the Git URL (positional argument) and shift it out.
 GIT_URL_WITH_TOKEN=""
-if [[ "$1" == http* ]]; then
+if [[ -n "$1" && "$1" != -* ]]; then
     GIT_URL_WITH_TOKEN="$1"
     shift
 fi
@@ -76,7 +75,8 @@ fi
 # --- 5. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
 
-# Now "$@" only contains the flags (like --stage pmd), because the URL was shifted out.
+# Now "$@" is guaranteed to only contain flags (like --stage pmd)
+# because the positional URL (if present) was shifted out.
 python3 -m pipeline.main "$@"
 
 exit_code=$?
