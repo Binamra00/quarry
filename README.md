@@ -57,6 +57,7 @@ smell-ranker/
 │ ├── utils/ # Python Utility Package
 │ │ ├── init.py # Exposes utilities to the app
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
+│ │ ├── ui.py # Universal Console output formatting
 │ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │
 │ ├── main.py # FACADE: Main Python entry point
@@ -167,12 +168,15 @@ Calls `refm_adapt.run_rm_smoke_test()` to execute RefactoringMiner.
 The architecture adheres strictly to software engineering best practices to ensure thesis defensibility.
 
 | Principle | Implementation |
-|---------|----------------|
-| Separation of Concerns (SoC) | Logic (`pipeline/`), configuration (`config.py`), and adapters (`pipeline/adapters/`) are distinct |
-| Single Responsibility (SRP) | Each adapter handles exactly one tool |
-| Facade Pattern | `main.py` acts as the simple entry point |
-| Adapter Pattern | Wrappers translate Python calls into tool-specific CLI commands |
-| DRY (Don’t Repeat Yourself) | `cmd_runner.py` centralizes subprocess logic |
+|----------|----------------|
+| Separation of Concerns (SoC) | Logic (`pipeline/`), configuration (`config.py`), and adapters (`pipeline/adapters/`) are strictly distinct. |
+| Single Responsibility (SRP) | Each adapter handles exactly one tool; `ui.py` handles strictly display logic. |
+| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects, decoupling the request from the execution. |
+| Adapter Pattern | `IAdapter` interface standardizes diverse tools (Java-based PMD, Git-based RefactoringMiner) into a uniform Python contract. |
+| Open/Closed Principle (OCP) | The pipeline is open for extension (add new `SonarAdapter`) but closed for modification (no changes needed in `main.py`). |
+| Strategy Pattern | `ui.py` dynamically selects the visualization strategy (Jupyter Widget vs. standard `\r`) based on the runtime environment. |
+| DRY (Don’t Repeat Yourself) | `cmd_subprocess.py` centralizes all shell execution, error handling, and file streaming logic. |
+
 
 ---
 
