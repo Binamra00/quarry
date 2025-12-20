@@ -24,6 +24,7 @@ class PMDAdapter(IAdapter):
         # Setup
         ruleset_path = config.PMD_RULESET_PATH
         output_json = self.get_output_path()
+        log_path = self.get_log_path()
 
         # Pre-Flight Checks
         if not ruleset_path.exists():
@@ -48,8 +49,12 @@ class PMDAdapter(IAdapter):
         print(f"   Target: {config.TOY_PROJECT_PATH.name}")
         print(f"   Ruleset: {ruleset_path.name}")
 
-        # Execution (Exit Code 4 is valid for PMD smells)
-        success, output = cmd_subprocess.run_command(cmd, allowed_exit_codes=[0, 4])
+        # Pass the log_path to the runner
+        success, _ = cmd_subprocess.run_command(
+            cmd,
+            allowed_exit_codes=[0, 4],
+            log_file_path=log_path
+        )
 
         if not success:
             print("❌ PMD execution failed.")

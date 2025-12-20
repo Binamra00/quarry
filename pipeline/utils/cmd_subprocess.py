@@ -1,48 +1,71 @@
 import subprocess
+import os
+from pathlib import Path
 from typing import List, Tuple, Optional
 
 
-def run_command(command: List[str], cwd: Optional[str] = None, allowed_exit_codes: List[int] = [0]) -> Tuple[bool, str]:
+def run_command(
+        command: List[str],
+        cwd: Optional[str] = None,
+        allowed_exit_codes: List[int] = [0],
+        log_file_path: Optional[Path] = None
+) -> Tuple[bool, str]:
     """
-    Executes a shell command safely and returns the result.
+    Executes a shell command safely.
 
     Args:
-        command (list): The command to run (e.g., ["ls", "-la"]).
-        cwd (str, optional): The directory to run the command in.
-        allowed_exit_codes (list): Exit codes that are considered "Success". 
-                                   Default is [0]. PMD uses [0, 4].
+        command (list): The command to run.
+        cwd (str): Working directory.
+        allowed_exit_codes (list): Codes considered 'Success' (e.g., [0, 4] for PMD).
+        log_file_path (Path): If provided, writes stdout/stderr to this file
+                              instead of capturing it in memory.
 
     Returns:
-        tuple: (success (bool), output (str))
+        tuple: (success (bool), output_summary (str))
     """
     cmd_str = " ".join(command)
+    # Print only the command being run, not the output
     print(f"   [EXEC]: {cmd_str}")
 
     try:
-        # check=False allows us to manually handle the exit code
-        result = subprocess.run(
-            command,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False
-        )
+        if log_file_path:
+            # OPTION A: Stream to File (Silent Mode)
+            # We open the file and let the subprocess write to it directly
+            with open(log_file_path, "w") as f:
+                result = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                    text=True,
+                    check=False
+                )
+            # Output summary is just the path to the log
+            output_content = f"Log saved to {log_file_path.name}"
+        else:
+            # OPTION B: Capture to Memory (Verbose/Default)
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            output_content = result.stdout.strip() + "\n" + result.stderr.strip()
 
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
         exit_code = result.returncode
 
-        # Log output if verbose (optional, keeping it clean for now)
-        # if stdout: print(f"   [STDOUT]: {stdout[:200]}...") 
-
         if exit_code in allowed_exit_codes:
-            return True, stdout
+            return True, output_content
         else:
             print(f"❌ Command Failed (Exit Code {exit_code})")
-            print(f"   Command: {cmd_str}")
-            if stderr:
-                print(f"   [STDERR]: {stderr}")
-            return False, stderr
+
+            # If we logged to a file, print the last 10 lines for immediate context
+            if log_file_path and log_file_path.exists():
+                print(f"   Last 10 lines of log ({log_file_path.name}):")
+                os.system(f"tail -n 10 '{log_file_path}'")
+
+            return False, output_content
 
     except FileNotFoundError:
         print(f"❌ Executable not found: {command[0]}")
