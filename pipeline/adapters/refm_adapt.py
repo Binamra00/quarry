@@ -5,6 +5,7 @@ from typing import List
 
 from pipeline import config
 from pipeline.utils import cmd_subprocess
+# FIX: Using 'IAdapter' to match your updated interface file
 from pipeline.adapters.i_adapter import IAdapter
 
 
@@ -36,6 +37,8 @@ class RefactoringMinerAdapter(IAdapter):
         print(f"--- ⚡ Starting {self.get_tool_name()} ---")
 
         final_json_path = self.get_output_path()
+        log_path = self.get_log_path()  # [NEW] Log Path
+
         commits = self._get_all_commits(config.TOY_PROJECT_PATH)
         total_commits = len(commits)
 
@@ -44,41 +47,63 @@ class RefactoringMinerAdapter(IAdapter):
             return False
 
         print(f"🎯 Target Analysis: {total_commits} commits found.")
+        print(f"   📝 Logging raw output to: {log_path.name}")  # [NEW] User feedback
 
         all_refactorings = []
         success_count = 0
 
-        # Temp-to-Persistent I/O Strategy
-        with tempfile.TemporaryDirectory() as temp_dir_str:
-            temp_dir = Path(temp_dir_str)
-            print(f"   [Performance] Using temporary local buffer: {temp_dir}")
+        # We open the log file ONCE and append to it for the whole loop
+        # This keeps all commit logs in one file
+        with open(log_path, "w") as log_file:
+            log_file.write(f"--- RefactoringMiner Log: {config.TOY_PROJECT_PATH.name} ---\n")
 
-            for i, commit_hash in enumerate(commits):
-                print(f"Processing {i + 1}/{total_commits}: {commit_hash[:7]}...")
+            with tempfile.TemporaryDirectory() as temp_dir_str:
+                temp_dir = Path(temp_dir_str)
+                print(f"   [Performance] Using temporary local buffer: {temp_dir}")
 
-                temp_json_path = temp_dir / f"commit_{commit_hash}.json"
-                cmd = [
-                    str(config.RM_PATH),
-                    "-c",
-                    str(config.TOY_PROJECT_PATH),
-                    commit_hash,
-                    "-json",
-                    str(temp_json_path)
-                ]
+                for i, commit_hash in enumerate(commits):
+                    # Progress bar on console (keeps it alive)
+                    if i % 5 == 0:
+                        print(f"   Processing {i + 1}/{total_commits}...", end="\r")
 
-                success, _ = cmd_subprocess.run_command(cmd)
+                    temp_json_path = temp_dir / f"commit_{commit_hash}.json"
 
-                if success and temp_json_path.exists():
+                    cmd = [
+                        str(config.RM_PATH), "-c", str(config.TOY_PROJECT_PATH),
+                        commit_hash, "-json", str(temp_json_path)
+                    ]
+
+                    # [NEW] We manually call subprocess here to append to our open log_file
+                    # We don't use cmd_subprocess.run_command inside the loop because
+                    # we want to stream to a single open file handle for efficiency.
                     try:
-                        with open(temp_json_path, 'r') as f:
-                            data = json.load(f)
-                            if "commits" in data:
-                                all_refactorings.extend(data["commits"])
-                        success_count += 1
-                    except json.JSONDecodeError:
-                        pass
-                else:
-                    print(f"❌ Failed to analyze commit {commit_hash[:7]}")
+                        log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
+                        log_file.flush()
+
+                        subprocess_result = cmd_subprocess.subprocess.run(
+                            cmd,
+                            stdout=log_file,  # Stream directly to our log file
+                            stderr=cmd_subprocess.subprocess.STDOUT,
+                            text=True,
+                            check=False
+                        )
+
+                        if subprocess_result.returncode == 0 and temp_json_path.exists():
+                            try:
+                                with open(temp_json_path, 'r') as f:
+                                    data = json.load(f)
+                                    if "commits" in data:
+                                        all_refactorings.extend(data["commits"])
+                                success_count += 1
+                            except json.JSONDecodeError:
+                                log_file.write(f"[ERROR] Invalid JSON for {commit_hash}\n")
+                        else:
+                            log_file.write(f"[ERROR] Non-zero exit or missing output for {commit_hash}\n")
+
+                    except Exception as e:
+                        log_file.write(f"[EXCEPTION] {e}\n")
+
+        print(f"   Processed {total_commits} commits.                 ")  # Clear the progress line
 
         # Final Atomic Write
         print(f"   💾 Saving results to: {final_json_path.name}")
