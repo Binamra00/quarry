@@ -28,13 +28,13 @@ The architecture splits responsibilities across three layers:
 This is the source of truth for all code. It is version-controlled on GitHub.
 
 ```commandline
-smell-ranker/
+smell-ranker/    
 ├── pipeline/ # The main Python Application Package
 │ ├── adapters/ # Tool Adapters Package (Structural Pattern)
-│ │ └── init.py # Exposes adapters to the main pipeline
+│ │ ├── init.py # Exposes adapters to the main pipeline
 │ │ ├── i_adapter.py # Interface for all adapters  
 │ │ ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
-│ │ ├── pmd_adapt.py # Wrapper for PMD CLI logic
+│ │ └── pmd_adapt.py # Wrapper for PMD CLI logic
 │ │
 │ ├── bin/ # Executable Shell Scripts (Entry Points)
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment

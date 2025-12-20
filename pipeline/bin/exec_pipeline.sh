@@ -2,29 +2,30 @@
 
 # --- Master Pipeline Orchestrator (Universal Edition) ---
 # ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute.
-# NOW SUPPORTED: Local Linux/Mac and Google Colab.
 
-# $1 is the optional Git URL for syncing (Layer 2).
-GIT_URL_WITH_TOKEN="$1"
+# --- 0. ARGUMENT PARSING (The Critical Fix) ---
+# We check if the first argument is a URL (starts with http).
+# If yes, we capture it and SHIFT it out.
+# This ensures $1 becomes '--stage' and the URL is NOT passed to Python.
+GIT_URL_WITH_TOKEN=""
+if [[ "$1" == http* ]]; then
+    GIT_URL_WITH_TOKEN="$1"
+    shift
+fi
 
-# --- 0. PATH CORRECTION & PYTHON CONTEXT ---
-# Determine where this script is, then find the Repo Root.
+# --- 1. PATH CORRECTION & PYTHON CONTEXT ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Go up two levels: pipeline/bin -> pipeline -> REPO_ROOT
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 echo "--- 0. Setting Context ---"
 echo "📂 Repo Root: $REPO_ROOT"
 cd "$REPO_ROOT" || { echo "❌ Failed to cd to $REPO_ROOT"; exit 1; }
 
-# CRITICAL: Add current directory to PYTHONPATH so 'pipeline' module is found
 export PYTHONPATH=$PYTHONPATH:.
 
-
-# --- 1. SYSTEM DEPENDENCY CHECK (Java & Python Libs) ---
+# --- 2. SYSTEM DEPENDENCY CHECK ---
 echo "--- 1. Checking System Dependencies ---"
 
-# A. Check Java 17 (Required for RefactoringMiner)
 if type -p java > /dev/null; then
     echo "✅ Java found."
 else
@@ -40,9 +41,7 @@ else
     fi
 fi
 
-# B. Check Python Libraries
 echo "--- Checking Python Libraries ---"
-# We check for both pydriller and python-dotenv
 if python3 -c "import pydriller, dotenv" 2>/dev/null; then
     echo "✅ Python dependencies found."
 else
@@ -51,9 +50,7 @@ else
     echo "✅ Dependencies installed."
 fi
 
-
-# --- 2. TOOLCHAIN ALLOCATION (The New Feature) ---
-# This replaces manual downloads and chmod commands.
+# --- 3. TOOLCHAIN ALLOCATION ---
 echo "--- 2. Allocating Toolchain (PMD & RefactoringMiner) ---"
 python3 -m pipeline.utils.allocate_tools
 
@@ -62,9 +59,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-
-# --- 3. CODE SYNC (Optional Layer 2) ---
-# Only runs if a Git URL is provided (useful for Colab auto-updating).
+# --- 4. CODE SYNC (Optional Layer 2) ---
 if [ -n "$GIT_URL_WITH_TOKEN" ]; then
     echo "--- 3. Synchronizing Code from GitHub ---"
     SYNC_SCRIPT="./pipeline/bin/colab_git_setup_smell_ranker.sh"
@@ -78,13 +73,10 @@ else
     echo "--- 3. Skipping Code Sync (No URL provided) ---"
 fi
 
-
-# --- 4. EXECUTE THE PIPELINE ---
+# --- 5. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
 
-# UPDATED: We use "$@" to pass ALL arguments from this shell script
-# to the Python main module.
-# Example: ./exec_pipeline.sh --stage static  -> python ... main --stage static
+# Now "$@" only contains the flags (like --stage pmd), because the URL was shifted out.
 python3 -m pipeline.main "$@"
 
 exit_code=$?
