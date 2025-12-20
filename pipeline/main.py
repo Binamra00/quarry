@@ -1,77 +1,94 @@
 import sys
-import importlib
-from pipeline import config
-from pipeline.metrics import refm_mets, repo_mets, pmd_mets
-from pipeline.adapters import pmd_adapt, refm_adapt
+import argparse
+from typing import List
 
-# NOTE: We import adapters inside the functions or try/except blocks
-# to prevent the script from crashing if a file is missing during dev.
+from pipeline import config
+from pipeline.metrics import repo_mets, refm_mets, pmd_mets
+from pipeline.adapters.pmd_adapt import PMDAdapter
+from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
+from pipeline.commands.i_command import IPipelineCommand
+from pipeline.commands.tools_cmd import RunToolCommand
+
 
 def main():
     """
     Main Entry Point for the Smell-Ranker Pipeline.
-    Phase 2 Integration: Now running both RefactoringMiner and PMD.
+    Implements the Command Pattern to allow autonomous or full execution.
     """
-    print("🚀 Starting Smell-Ranker Pipeline (Phase 1 & 2)")
-    print(f"📂 Configuration Loaded. Drive Path: {config.WORKSPACE_ROOT}")
 
-    # Step 1: Verification (Phase 0)
+    # --- 1. Argument Parsing (The Client) ---
+    parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
+    parser.add_argument(
+        "--stage",
+        # UPDATE 1: Renamed choices here
+        choices=["all", "refm", "pmd"],
+        default="all",
+        help="Select which pipeline stage to run (default: all)"
+    )
+    args = parser.parse_args()
+
+    print("🚀 Starting Smell-Ranker Pipeline")
+    print(f"📂 Configuration Loaded. Workspace: {config.WORKSPACE_ROOT}")
+    print(f"🎯 Target Stage: {args.stage.upper()}")
+
+    # --- 2. Initial Setup (Phase 0) ---
     print("\n--- Step 1: Repository Verification ---")
     repo_total_commits = 0
     try:
-        # Capture the actual commit count to pass to refm_mets later
         repo_total_commits = repo_mets.run_metrics_report()
     except Exception as e:
-        print(f"⚠️ Metrics calculation failed: {e}")
+        print(f"⚠️ Verification Warning: {e}")
 
-    # Step 2: RefactoringMiner (Phase 1)
-    print("\n--- Step 2: RefactoringMiner (History Mining) ---")
-    rm_success = False
-    try:
-        rm_success = refm_adapt.run_refm_smoke_test()
-    except ImportError:
-         print("⚠️ refm_adapt module not found.")
-    except Exception as e:
-        print(f"❌ RefactoringMiner Exception: {e}")
+    # --- 3. Command Configuration (The Invoker Setup) ---
+    commands: List[IPipelineCommand] = []
 
-    # Step 3: PMD Static Analysis (Phase 2)
-    print("\n--- Step 3: PMD Static Analysis (Candidate Generation) ---")
-    pmd_success = False
-    try:
-        # Now fully implemented
-        pmd_success = pmd_adapt.run_pmd_smoke_test()
-    except ImportError:
-        print("⚠️ PMD adapter module not found. Check pipeline/adapters/")
-    except Exception as e:
-        print(f"❌ PMD Exception: {e}")
+    # Configure RefactoringMiner (History)
+    # UPDATE 2: Updated logic check to "refm"
+    if args.stage in ["refm", "all"]:
+        rm_adapter = RefactoringMinerAdapter()
+        commands.append(RunToolCommand(rm_adapter))
 
-    # Step 4: Final Status
+    # Configure PMD (Static Analysis)
+    # UPDATE 3: Updated logic check to "pmd"
+    if args.stage in ["pmd", "all"]:
+        pmd_adapter = PMDAdapter()
+        commands.append(RunToolCommand(pmd_adapter))
+
+    # --- 4. Execution Loop (The Invoker) ---
+    execution_results = {}
+
+    for command in commands:
+        tool_name = command._adapter.get_tool_name()
+        success = command.execute()
+        execution_results[tool_name] = success
+
+        if not success and args.stage != "all":
+            print(f"\n❌ Critical Failure in {tool_name}. Aborting.")
+            sys.exit(1)
+
+    # --- 5. Metrics Calculation (Post-Processing) ---
     print("\n--- 🏁 Pipeline Completion Report ---")
 
-    if rm_success:
-        print("✅ RefactoringMiner: OPERATIONAL")
+    rm_name = "RefactoringMiner (History Mining)"
+    if execution_results.get(rm_name, False):
         try:
             refm_mets.calculate_refm_metrics(repo_total_commits)
         except Exception as e:
-            print(f"⚠️ Metrics Calc Error: {e}")
-    else:
-        print("❌ RefactoringMiner: FAILED")
+            print(f"⚠️ Metrics Calc Error (RM): {e}")
 
-    if pmd_success:
-        print("✅ PMD: OPERATIONAL")
+    pmd_name = "PMD Static Analysis"
+    if execution_results.get(pmd_name, False):
         try:
-            # [NEW] Calculate PMD Metrics
             pmd_mets.calculate_pmd_metrics()
         except Exception as e:
-            print(f"⚠️ PMD Metrics Calc Error: {e}")
-    else:
-        print("❌ PMD: FAILED")
+            print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
-    if rm_success and pmd_success:
-        print("\n🎉 FULL PIPELINE SUCCESS: History and Static Analysis complete.")
+    # --- 6. Final Exit Code ---
+    if all(execution_results.values()):
+        print("\n🎉 PIPELINE SUCCESS.")
         sys.exit(0)
     else:
-        print("\n⚠️ PIPELINE INCOMPLETE: Check logs.")
+        print("\n⚠️ PIPELINE COMPLETED WITH ERRORS.")
         sys.exit(1)
 
 

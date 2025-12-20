@@ -31,27 +31,33 @@ This is the source of truth for all code. It is version-controlled on GitHub.
 smell-ranker/
 ├── pipeline/ # The main Python Application Package
 │ ├── adapters/ # Tool Adapters Package (Structural Pattern)
+│ │ └── init.py # Exposes adapters to the main pipeline
+│ │ ├── i_adapter.py # Interface for all adapters  
 │ │ ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
 │ │ ├── pmd_adapt.py # Wrapper for PMD CLI logic
-│ │ └── init.py # Exposes adapters to the main pipeline
 │ │
 │ ├── bin/ # Executable Shell Scripts (Entry Points)
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
-│ │ ├── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling in Colab
-│ │ 
+│ │ └── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling in Colab
+│ │
+│ │── commands/ # CLI Command Templates Package
+│ │ ├── init.py # Exposes command templates to adapters
+│ │ ├── i_commands.py # Interface for all command templates 
+│ │ └── tools_cmd.py # CLI commands for external tools like refm and pmd
+│ │
 │ ├── metrics/ # Metrics Package
+│ │ ├── init.py # Exposes metrics to the main pipeline
 │ │ ├── refm_mets.py # Metrics to analyze refm output
 │ │ ├── repo_mets.py # Base metrics for all repos
-│ │ ├── pmd_mets.py # Metrics to analyze PMD output
-│ │ └── init.py # Exposes metrics to the main pipeline
+│ │ └── pmd_mets.py # Metrics to analyze PMD output
 │ │
 │ │── rulesets/
 │ │ └── pmd_rules_00.xml # PMD Ruleset Configuration
 │ │ 
 │ ├── utils/ # Python Utility Package
+│ │ ├── init.py # Exposes utilities to the app
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
-│ │ ├── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
-│ │ └── init.py # Exposes utilities to the app
+│ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │
 │ ├── main.py # FACADE: Main Python entry point
 │ └──config.py # CONFIG: All paths (Drive, Tools) and settings

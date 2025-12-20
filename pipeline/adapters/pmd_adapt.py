@@ -1,80 +1,72 @@
 import json
-import os
+from pathlib import Path
 from pipeline import config
 from pipeline.utils import cmd_subprocess
+from pipeline.adapters.i_adapter import IAdapter
 
 
-def run_pmd_smoke_test():
+class PMDAdapter(IAdapter):
     """
-    Executes PMD using a CUSTOM 'pmd_rules_00.xml'.
-    Uses the unified cmd_subprocess for execution safety.
+    Adapter for PMD Static Analyzer v7.18.0.
+    Strategy: Snapshot Analysis using Custom Ruleset.
     """
-    print("--- 🔍 Starting PMD Static Analysis (Targeted Rules) ---")
 
-    # 1. Setup Paths
-    ruleset_path = config.PMD_RULESET_PATH
-    project_name = config.TOY_PROJECT_PATH.name
-    output_json = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
+    def get_tool_name(self) -> str:
+        return "PMD Static Analysis"
 
-    # 2. Pre-Flight Checks
-    if not ruleset_path.exists():
-        print(f"❌ Error: Custom ruleset not found at {ruleset_path}")
-        return False
+    def get_output_path(self) -> Path:
+        project_name = config.TOY_PROJECT_PATH.name
+        return config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
 
-    if not config.PMD_PATH.exists():
-        print(f"❌ Error: PMD executable not found at {config.PMD_PATH}")
-        return False
+    def execute(self) -> bool:
+        print(f"--- 🔍 Starting {self.get_tool_name()} ---")
 
-    # 3. Construct Command
-    # Note: We use str() on paths to ensure compatibility
-    cmd = [
-        str(config.PMD_PATH),
-        "check",
-        "-d", str(config.TOY_PROJECT_PATH),
-        "-R", str(ruleset_path),
-        "-f", "json",
-        "-r", str(output_json),
-        "--no-cache"
-    ]
+        # Setup
+        ruleset_path = config.PMD_RULESET_PATH
+        output_json = self.get_output_path()
 
-    print(f"   Target: {project_name}")
-    print(f"   Ruleset: {ruleset_path.name}")
-
-    # 4. Execute via Unified Runner
-    # PMD Exit Codes: 0 = Clean, 4 = Violations Found, 1 = Error
-    success, output = cmd_subprocess.run_command(
-        cmd,
-        allowed_exit_codes=[0, 4]
-    )
-
-    if not success:
-        print("❌ PMD execution failed (See logs above).")
-        return False
-
-    # 5. Output Verification
-    if output_json.exists():
-        # Validate JSON content
-        if output_json.stat().st_size == 0:
-            print("❌ PMD Failed: Output file created but is EMPTY.")
+        # Pre-Flight Checks
+        if not ruleset_path.exists():
+            print(f"❌ Error: Custom ruleset not found at {ruleset_path}")
             return False
 
-        try:
-            with open(output_json, 'r') as f:
-                data = json.load(f)
-        except json.JSONDecodeError as je:
-            print(f"❌ PMD Failed: Output file contains invalid JSON.")
-            print(f"   Error: {je}")
+        if not config.PMD_PATH.exists():
+            print(f"❌ Error: PMD executable not found at {config.PMD_PATH}")
             return False
 
-        files = data.get("files", [])
-        total_violations = 0
-        for file in files:
-            total_violations += len(file.get("violations", []))
+        # Command Construction
+        cmd = [
+            str(config.PMD_PATH),
+            "check",
+            "-d", str(config.TOY_PROJECT_PATH),
+            "-R", str(ruleset_path),
+            "-f", "json",
+            "-r", str(output_json),
+            "--no-cache"
+        ]
 
-        print(f"✅ PMD Analysis Complete!")
-        print(f"   Total Target Smells Found: {total_violations}")
-        print(f"📄 Output saved to: {output_json.name}")
-        return True
-    else:
-        print("❌ PMD Failed: No output file generated.")
-        return False
+        print(f"   Target: {config.TOY_PROJECT_PATH.name}")
+        print(f"   Ruleset: {ruleset_path.name}")
+
+        # Execution (Exit Code 4 is valid for PMD smells)
+        success, output = cmd_subprocess.run_command(cmd, allowed_exit_codes=[0, 4])
+
+        if not success:
+            print("❌ PMD execution failed.")
+            return False
+
+        # Verification
+        if output_json.exists() and output_json.stat().st_size > 0:
+            try:
+                with open(output_json, 'r') as f:
+                    data = json.load(f)
+                    file_count = len(data.get("files", []))
+                    print(f"✅ PMD Complete. Scanned {file_count} files with violations.")
+                    print(f"📄 Output saved to: {output_json.name}")
+                    return True
+            except json.JSONDecodeError:
+                print("❌ PMD Failed: Invalid JSON output.")
+                return False
+        else:
+            print("❌ PMD Failed: No output generated.")
+            return False
