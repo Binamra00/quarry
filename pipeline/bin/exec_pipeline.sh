@@ -41,11 +41,13 @@ else
 fi
 
 echo "--- Checking Python Libraries ---"
-if python3 -c "import pydriller, dotenv" 2>/dev/null; then
+# [UPDATE] Added 'IPython' to the check list
+if python3 -c "import pydriller, dotenv, IPython" 2>/dev/null; then
     echo "✅ Python dependencies found."
 else
     echo "📦 Installing Python dependencies..."
-    pip install pydriller python-dotenv > /dev/null
+    # [UPDATE] Added 'ipython' to the install command
+    pip install pydriller python-dotenv ipython > /dev/null
     echo "✅ Dependencies installed."
 fi
 

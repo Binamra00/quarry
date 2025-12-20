@@ -6,6 +6,8 @@ from typing import List
 
 from pipeline import config
 from pipeline.utils import cmd_subprocess
+# [NEW] Import the UI helper we just built
+from pipeline.utils import ui
 from pipeline.adapters.i_adapter import IAdapter
 
 
@@ -52,7 +54,6 @@ class RefactoringMinerAdapter(IAdapter):
         all_refactorings = []
         success_count = 0
 
-        # We open the log file ONCE and append to it for the whole loop
         with open(log_path, "w") as log_file:
             log_file.write(f"--- RefactoringMiner Log: {config.TOY_PROJECT_PATH.name} ---\n")
 
@@ -61,9 +62,8 @@ class RefactoringMinerAdapter(IAdapter):
                 print(f"   [Performance] Using temporary local buffer: {temp_dir}")
 
                 for i, commit_hash in enumerate(commits):
-                    # FIX: added flush=True to force Colab to render the update immediately
-                    if i % 5 == 0:
-                        print(f"   Processing {i + 1}/{total_commits}...", end="\r", flush=True)
+                    # [FIXED] Delegate the display logic to the agnostic UI utility
+                    ui.update_progress(i + 1, total_commits, prefix="   ⏳ Progress:")
 
                     temp_json_path = temp_dir / f"commit_{commit_hash}.json"
 
@@ -99,9 +99,11 @@ class RefactoringMinerAdapter(IAdapter):
                     except Exception as e:
                         log_file.write(f"[EXCEPTION] {e}\n")
 
-        print(f"   Processed {total_commits} commits.                 ")
+        # Clear the progress line for a clean finish
+        ui.clear_line()
 
-        # Final Atomic Write
+        # Final Report
+        print(f"   Processed {total_commits} commits.")
         print(f"   💾 Saving results to: {final_json_path.name}")
         try:
             with open(final_json_path, 'w') as f:
