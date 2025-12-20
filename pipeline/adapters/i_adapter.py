@@ -25,3 +25,11 @@ class IAdapter(ABC):
     def get_output_path(self) -> Path:
         """Returns the path where the tool saves its results."""
         pass
+
+    def get_log_path(self) -> Path:
+        """
+        Returns the path where the raw execution log should be saved.
+        Default: A .log file next to the output .json file.
+        """
+        # Example: outputs/pmd_candidates.json -> outputs/pmd_candidates.log
+        return self.get_output_path().with_suffix(".log")
