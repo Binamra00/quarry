@@ -1,7 +1,7 @@
 # Smell-Ranker: Infrastructure & Architecture Documentation
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.4 (Phase 2 – Smoke Test Complete)
+**Version:** 0.5 (Phase 2.1 – Refactoring Complete)
 
 ---
 
@@ -167,6 +167,10 @@ Calls `refm_adapt.run_rm_smoke_test()` to execute RefactoringMiner.
         - Rule Taxanomy
         - Method Complexity Mean
     - Outputs `pmd_metrics_[repo_name].json`.
+- **Phase 2.1 (Refactoring):**  
+    - *Architecture Hardening:* Refactored the monolithic script into a scalable architecture using Factory, Command, Adapter, Template Method, and Strategy design patterns.
+    - *Configuration Management:* Externalized hardcoded scientific heuristics (churn thresholds, rule weights) into `heuristic_params.json` for easier sensitivity analysis.
+    - *DevOps:* Implemented universal environment detection (Docker/Colab/Local) and silent logging mode to handle large-scale execution logs robustly.
 ---
 
 ## 4. Design Principles & Patterns
@@ -182,8 +186,8 @@ The architecture adheres strictly to software engineering best practices to ensu
 | Open/Closed Principle (OCP) | The pipeline is open for extension (add new `SonarAdapter`) but closed for modification (no changes needed in `main.py`). |
 | Strategy Pattern | `ui.py` dynamically selects the visualization strategy (Jupyter Widget vs. standard `\r`) based on the runtime environment. |
 | DRY (Don’t Repeat Yourself) | `cmd_subprocess.py` centralizes all shell execution, error handling, and file streaming logic. |
-
-
+| Factory Method Pattern | `adapter_fact.py` encapsulates the logic for instantiating the correct tool adapters based on the requested stage. |
+| Template Method Pattern | `temp_mets.py` defines the skeleton algorithm for metric reporting, enforcing a consistent lifecycle across all metric calculators. |
 ---
 
 ## 5. Toolchain Configuration
@@ -210,6 +214,6 @@ Chosen over JDeodorant for feasibility and command-line compatibility.
 
 ## 6. Future Roadmap
 
-- **Phase 2:** Implement `pass_1_fast_scan.py` to parse RefactoringMiner JSON output
-- **Phase 3:** Implement `pass_2_slow_analysis.py` to handle Git checkout and PMD loops
-- **Phase 4:** Implement `heuristics.py` to score overlap between Pass 1 and Pass 2 data
+- **Phase 3:** Implement `pass_1_fast_scan.py` to parse RefactoringMiner JSON output
+- **Phase 4:** Implement `pass_2_slow_analysis.py` to handle Git checkout and PMD loops
+- **Phase 5:** Implement `heuristics.py` to score overlap between Pass 1 and Pass 2 data
