@@ -4,8 +4,6 @@
 # ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute.
 
 # --- 0. ARGUMENT PARSING (ROBUST VERSION) ---
-# We check if $1 exists AND does NOT start with a hyphen (-).
-# If so, we assume it is the Git URL (positional argument) and shift it out.
 GIT_URL_WITH_TOKEN=""
 if [[ -n "$1" && "$1" != -* ]]; then
     GIT_URL_WITH_TOKEN="$1"
@@ -25,28 +23,30 @@ export PYTHONPATH=$PYTHONPATH:.
 # --- 2. SYSTEM DEPENDENCY CHECK ---
 echo "--- 1. Checking System Dependencies ---"
 
+# A. Check Java (Updated for RefactoringMiner 3.0+)
+# We now require Java 21 because RefactoringMiner 3.0.12+ is compiled with it.
 if type -p java > /dev/null; then
+    # Optional: Check version string if strict check needed
     echo "✅ Java found."
 else
     echo "⚠️ Java NOT found."
     if [ -n "$COLAB_RELEASE_TAG" ]; then
-        echo "☁️ Colab detected: Installing OpenJDK 17..."
+        echo "☁️ Colab detected: Installing OpenJDK 21..."
         apt-get update > /dev/null
-        apt-get install -y openjdk-17-jdk > /dev/null
+        # UPDATE: Changed 17 to 21 to support newer RefactoringMiner builds
+        apt-get install -y openjdk-21-jdk > /dev/null
         echo "✅ Java installed."
     else
-        echo "❌ ACTION REQUIRED: Please install Java 17+ manually."
+        echo "❌ ACTION REQUIRED: Please install Java 21+ manually."
         exit 1
     fi
 fi
 
 echo "--- Checking Python Libraries ---"
-# [UPDATE] Added 'IPython' to the check list
 if python3 -c "import pydriller, dotenv, IPython" 2>/dev/null; then
     echo "✅ Python dependencies found."
 else
     echo "📦 Installing Python dependencies..."
-    # [UPDATE] Added 'ipython' to the install command
     pip install pydriller python-dotenv ipython > /dev/null
     echo "✅ Dependencies installed."
 fi
@@ -65,9 +65,8 @@ else
     echo "--- 3. Skipping Code Sync (No URL provided) ---"
 fi
 
-
 # --- 4. TOOLCHAIN ALLOCATION ---
-echo "--- 3. Allocating Toolchain (PMD & RefactoringMiner) ---"
+echo "--- 3. Allocating Toolchain (PMD & RefactoringMiner) ---\"
 python3 -m pipeline.utils.allocate_tools
 
 if [ $? -ne 0 ]; then
@@ -78,8 +77,6 @@ fi
 # --- 5. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
 
-# Now "$@" is guaranteed to only contain flags (like --stage pmd)
-# because the positional URL (if present) was shifted out.
 python3 -m pipeline.main "$@"
 
 exit_code=$?
