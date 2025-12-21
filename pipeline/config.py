@@ -59,14 +59,14 @@ for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
 # --- 4. DEFINE TOOL CONFIGURATION ---
 # REVERT: RefactoringMiner 3.0 (Known Good)
 PMD_VERSION = "pmd-bin-7.19.0" # Keeping PMD 7.19.0 as it worked
-RM_VERSION = "RefactoringMiner-3.0"
+RM_VERSION = "RefactoringMiner-3.0.12"
 PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / "pmd"
 RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
 
 # --- 5. TOOL DOWNLOAD URLS ---
 # REVERT: Using 3.0 URL which matches the 3.0 folder structure we know
 PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.19.0/pmd-dist-7.19.0-bin.zip"
-RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.zip"
+RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.12.zip"
 
 # --- 6. TARGET REPOSITORIES ---
 TOY_PROJECT_PATH = REPOS_PATH / "toy_project"
