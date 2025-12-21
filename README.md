@@ -66,7 +66,7 @@ smell-ranker/
 │ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │
 │ ├── main.py # FACADE: Main Python entry point
-│ ├── heuristic_params.json # Heuristic Thresholds to guide metirc analysis
+│ ├── heuristic_seeds.json # Heuristic Thresholds to guide metirc analysis
 │ └──config.py # CONFIG: All paths (Drive, Tools) and settings
 │ 
 └── docs/ # Project Documentation
