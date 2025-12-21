@@ -1,137 +1,126 @@
 import json
-from pipeline import config  # Using explicit config import
+from pathlib import Path
+from pipeline import config
+from pipeline.metrics.temp_mets import BaseMetrics
 
 try:
     from pydriller import Repository
 except ImportError:
-    print("⚠️ PyDriller not found. Churn metrics will be skipped.")
     Repository = None
 
 
-def get_churn_map(repo_path):
-    """
-    Returns a dictionary mapping commit SHA to total churn.
-    """
-    churn_map = {}
-    if not Repository:
+class RefmMetrics(BaseMetrics):
+
+    def get_tool_name(self) -> str:
+        return "RefactoringMiner Metrics"
+
+    def get_output_path(self) -> Path:
+        project_name = config.TOY_PROJECT_PATH.name
+        return config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
+
+    def _get_churn_map(self):
+        """Helper to mine churn for purity analysis."""
+        churn_map = {}
+        if Repository:
+            print(f"   ... ⏳ Mining churn data for purity analysis ...")
+            try:
+                for commit in Repository(str(config.TOY_PROJECT_PATH)).traverse_commits():
+                    total_churn = sum(f.added_lines + f.deleted_lines for f in commit.modified_files)
+                    churn_map[commit.hash] = total_churn
+            except Exception:
+                pass
         return churn_map
 
-    print(f"   ... ⏳ Mining churn data from {repo_path.name} for purity analysis ...")
-    try:
-        for commit in Repository(str(repo_path)).traverse_commits():
-            total_churn = 0
-            for file in commit.modified_files:
-                total_churn += file.added_lines + file.deleted_lines
-            churn_map[commit.hash] = total_churn
-    except Exception as e:
-        print(f"   ⚠️ Error extracting churn: {e}")
+    def load_data(self):
+        """
+        Impl: Loads Refactoring JSON AND Repo Metrics JSON (for total commits).
+        """
+        project_name = config.TOY_PROJECT_PATH.name
+        refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+        repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
-    return churn_map
+        if not refm_json_path.exists():
+            print(f"⚠️ Refactoring output not found: {refm_json_path.name}")
+            return None
 
+        # Load main data
+        try:
+            with open(refm_json_path, 'r') as f:
+                refm_data = json.load(f)
+        except json.JSONDecodeError:
+            return None
 
-def calculate_refm_metrics(total_commits_mined=65):
-    """
-    Calculates metrics, SAVES to JSON, and prints to console.
-    """
-    # Dynamic filenames based on project name
-    project_name = config.TOY_PROJECT_PATH.name
+        # Load context (Total Commits)
+        total_commits = 0
+        if repo_metrics_path.exists():
+            try:
+                with open(repo_metrics_path, 'r') as f:
+                    repo_data = json.load(f)
+                    total_commits = repo_data.get("history", {}).get("total_commits", 0)
+            except:
+                pass
 
-    # FIX: Updated to match the output filename from refm_adapt.py
-    json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+        churn_map = self._get_churn_map()
 
-    metric_output_path = config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
+        return (refm_data, total_commits, churn_map)
 
-    if not json_path.exists():
-        print(f"⚠️ Refactoring output not found at: {json_path.name}")
-        print("   Skipping metrics calculation.")
-        return
+    def calculate(self, data) -> dict:
+        refm_data, total_commits, churn_map = data
 
-    print("\n--- 📊 RefactoringMiner Metrics Report ---")
-
-    churn_map = get_churn_map(config.TOY_PROJECT_PATH)
-
-    try:
-        with open(json_path, 'r') as f:
-            data = json.load(f)
-
-        commits_list = data.get("commits", [])
-        commits_with_refactorings = len(commits_list)
-
+        commits_list = refm_data.get("commits", [])
+        commits_with_refs = len(commits_list)
         total_ops = 0
-        refactoring_types = {}
-        high_churn_refactorings = 0
+        high_churn_refs = 0
+        ref_types = {}
 
         for commit in commits_list:
             refs = commit.get("refactorings", [])
             count = len(refs)
             total_ops += count
 
+            # Purity Check
             sha1 = commit.get("sha1")
-            commit_churn = churn_map.get(sha1, 0)
-
-            # Purity Heuristic: > 20 lines of churn per refactoring op = High Churn
-            if commit_churn > (count * 20):
-                high_churn_refactorings += 1
+            churn = churn_map.get(sha1, 0)
+            if churn > (count * 20):  # Hardcoded heuristic (will fix in Task 4)
+                high_churn_refs += 1
 
             for r in refs:
-                r_type = r.get("type", "Unknown")
-                refactoring_types[r_type] = refactoring_types.get(r_type, 0) + 1
+                t = r.get("type", "Unknown")
+                ref_types[t] = ref_types.get(t, 0) + 1
 
-        # --- Calculations ---
-        refactoring_density = (commits_with_refactorings / total_commits_mined) * 100 if total_commits_mined > 0 else 0
-        avg_intensity = total_ops / commits_with_refactorings if commits_with_refactorings > 0 else 0
-        clean_commits = commits_with_refactorings - high_churn_refactorings
-        purity_score = (clean_commits / commits_with_refactorings) * 100 if commits_with_refactorings > 0 else 0
+        # Ratios
+        density = (commits_with_refs / total_commits * 100) if total_commits > 0 else 0
+        purity = ((commits_with_refs - high_churn_refs) / commits_with_refs * 100) if commits_with_refs > 0 else 0
 
-        # --- SAVE TO JSON ---
-        sorted_types = sorted(refactoring_types.items(), key=lambda x: x[1], reverse=True)
+        sorted_types = dict(sorted(ref_types.items(), key=lambda x: x[1], reverse=True)[:10])
 
-        metrics_data = {
+        return {
             "scope": {
-                "total_commits_history": total_commits_mined,
-                "commits_with_refactorings": commits_with_refactorings,
-                "refactoring_density_percent": round(refactoring_density, 2)
-            },
-            "signal_strength": {
-                "total_operations": total_ops,
-                "avg_ops_per_commit": round(avg_intensity, 2)
+                "total_commits": total_commits,
+                "commits_with_refs": commits_with_refs,
+                "density_percent": round(density, 2)
             },
             "purity": {
-                "high_churn_commits": high_churn_refactorings,
-                "clean_commits": clean_commits,
-                "purity_score_percent": round(purity_score, 2)
+                "floss_commits": high_churn_refs,
+                "purity_score": round(purity, 2)
             },
-            "top_types": {k: v for k, v in sorted_types[:10]}
+            "top_types": sorted_types
         }
 
-        with open(metric_output_path, 'w') as f:
-            json.dump(metrics_data, f, indent=2)
-        print(f"📄 Calculated metrics saved to: {metric_output_path.name}")
+    def print_report(self, metrics: dict):
+        s = metrics["scope"]
+        p = metrics["purity"]
 
-        # --- PRINT REPORT ---
         print(f"├── [Dataset Scope]")
-        print(f"│   ├── Total Commits Analyzed: {total_commits_mined}")
-        print(f"│   ├── Commits w/ Refactorings: {commits_with_refactorings}")
-        print(f"│   └── Refactoring Density:    {refactoring_density:.1f}% (Target: >40%)")
-        print(f"│")
-        print(f"├── [Signal Strength]")
-        print(f"│   ├── Total Refactoring Ops:  {total_ops}")
-        print(f"│   └── Avg Ops per Commit:     {avg_intensity:.1f}")
-        print(f"│")
-        print(f"├── [Dataset Purity] (Atomic vs. Floss)")
-        print(f"│   ├── Total Churn Mapped:     {len(churn_map)} commits")
-        print(f"│   ├── Likely 'Floss' Commits: {high_churn_refactorings} (High churn relative to ops)")
-        print(f"│   └── Commit Purity Score:    {purity_score:.1f}% (Target: >80%)")
-        print(f"│")
-        print(f"├── [Top Refactoring Types] (Heuristic Inputs)")
-        for r_type, count in sorted_types[:5]:
-            print(f"│   ├── {r_type}: {count}")
-
-    except json.JSONDecodeError:
-        print("❌ Error: refactorings.json is not valid JSON.")
-    except Exception as e:
-        print(f"❌ Error calculating metrics: {e}")
+        print(f"│   ├── Total Commits: {s['total_commits']}")
+        print(f"│   └── Refactoring Density: {s['density_percent']}%")
+        print(f"├── [Dataset Purity]")
+        print(f"│   ├── Floss Commits: {p['floss_commits']}")
+        print(f"│   └── Purity Score:  {p['purity_score']}%")
+        print(f"├── [Top Types]")
+        for t, c in metrics["top_types"].items():
+            print(f"│   ├── {t}: {c}")
 
 
-if __name__ == "__main__":
-    calculate_refm_metrics()
+def calculate_refm_metrics(ignored_arg=None):
+    RefmMetrics().run_report()
