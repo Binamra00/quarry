@@ -1,94 +1,108 @@
-import sys
-from abc import ABC, abstractmethod
+import os
+import shutil
+import stat
+import urllib.request
+import zipfile
+from pathlib import Path
+from pipeline import config
 
+# --- Base URLs ---
+# PMD uses tags like: pmd_releases/7.18.0 (URL-encoded as pmd_releases%2F7.18.0)
+PMD_BASE_URL = "https://github.com/pmd/pmd/releases/download"
+RM_BASE_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download"
 
-# --- 1. The Strategy Interface ---
-class IDisplayStrategy(ABC):
+# --- Dynamically Constructed URLs ---
+PMD_URL = (
+    f"{PMD_BASE_URL}/pmd_releases%2F{config.PMD_VERSION}/"
+    f"pmd-dist-{config.PMD_VERSION}-bin.zip"
+)
+
+RM_URL = (
+    f"{RM_BASE_URL}/{config.RM_VERSION}/"
+    f"RefactoringMiner-{config.RM_VERSION}.zip"
+)
+
+def report(msg):
+    print(f"   [Toolchain] {msg}")
+
+def download_and_extract(url, target_folder_name):
     """
-    Strategy Interface for Console UI.
-    Allows swapping between Jupyter/Colab rich output and standard Terminal text.
-    Follows the Strategy Pattern to eliminate repeated environment checks.
+    Downloads a zip and extracts it.
+    Renames the extracted folder to 'target_folder_name'.
+    This allows multiple tool versions to coexist side-by-side.
     """
+    dest_dir = config.TOOLS_PATH
+    zip_path = dest_dir / "temp_tool.zip"
+    final_path = dest_dir / target_folder_name
 
-    @abstractmethod
-    def update_progress(self, current: int, total: int, prefix: str):
-        pass
+    # If the specific version folder exists, we are done.
+    if final_path.exists():
+        report(f"✅ Found version: {target_folder_name}. Skipping download.")
+        return True
 
-    @abstractmethod
-    def clear_line(self):
-        pass
+    report(f"⬇️ Downloading {target_folder_name} from {url}...")
+    try:
+        urllib.request.urlretrieve(url, zip_path)
+    except Exception as e:
+        report(f"❌ Download failed: {e}")
+        return False
 
+    report(f"📦 Extracting...")
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_root = zip_ref.namelist()[0].split('/')[0]
+            zip_ref.extractall(dest_dir)
 
-# --- 2. Concrete Strategy: Jupyter/Colab ---
-class ColabStrategy(IDisplayStrategy):
-    """
-    Implementation for Jupyter Notebooks / Google Colab.
-    Uses IPython widgets or clear_output for smooth web-based rendering.
-    """
+        zip_path.unlink()
 
-    def __init__(self):
-        # Lazy import to ensure we don't crash if IPython is missing
-        try:
-            from IPython.display import clear_output
-            self._clear_output_func = clear_output
-        except ImportError:
-            self._clear_output_func = None
+        extracted_path = dest_dir / zip_root
 
-    def update_progress(self, current: int, total: int, prefix: str):
-        message = f"{prefix} {current}/{total}..."
-        if self._clear_output_func:
-            # wait=True prevents flickering by waiting for new output before clearing
-            self._clear_output_func(wait=True)
-            print(message)
-        else:
-            # Fallback if IPython is missing despite detection
-            print(message)
+        if extracted_path != final_path:
+            if final_path.exists():
+                shutil.rmtree(final_path)
 
-    def clear_line(self):
-        if self._clear_output_func:
-            self._clear_output_func(wait=True)
+            if extracted_path.exists():
+                extracted_path.rename(final_path)
+            else:
+                report(f"⚠️ Warning: Expected extracted folder {zip_root} not found.")
 
+        report(f"✅ Installed: {final_path.name}")
+        return True
 
-# --- 3. Concrete Strategy: Standard Terminal ---
-class TerminalStrategy(IDisplayStrategy):
-    """
-    Implementation for Standard Linux/Unix Terminals.
-    Uses Carriage Return (\r) to overwrite the current line in place.
-    """
+    except Exception as e:
+        report(f"❌ Extraction failed: {e}")
+        return False
 
-    def update_progress(self, current: int, total: int, prefix: str):
-        message = f"{prefix} {current}/{total}..."
-        # \r moves cursor to start of line, allowing overwrite
-        sys.stdout.write(f"\r{message}")
-        sys.stdout.flush()
+def make_executable(tool_path):
+    """Equivalent to chmod +x"""
+    if tool_path.exists():
+        st = os.stat(tool_path)
+        os.chmod(tool_path, st.st_mode | stat.S_IEXEC)
+        report(f"🔧 Permissions fixed: {tool_path.name}")
+    else:
+        report(f"⚠️ Binary not found for permission fix: {tool_path}")
 
-    def clear_line(self):
-        # Overwrite line with spaces, then return to start
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
+def provision():
+    print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
+    print(f"Target Directory: {config.TOOLS_PATH}")
 
+    # 1. Check & Install PMD
+    download_and_extract(
+        PMD_URL,
+        f"pmd-{config.PMD_VERSION}"
+    )
 
-# --- 4. Context & Environment Detection (The Singleton) ---
-# We determine the strategy ONCE at module load time.
-if 'ipykernel' in sys.modules:
-    _active_strategy = ColabStrategy()
-else:
-    _active_strategy = TerminalStrategy()
+    # 2. Check & Install RefactoringMiner
+    download_and_extract(
+        RM_URL,
+        f"RefactoringMiner-{config.RM_VERSION}"
+    )
 
+    # 3. Fix Permissions
+    make_executable(config.PMD_PATH)
+    make_executable(config.RM_PATH)
 
-# --- 5. Public API (Delegates to Active Strategy) ---
-def update_progress(current: int, total: int, prefix: str = "Processing"):
-    """
-    Updates the console with a progress message using the active display strategy.
+    print("--- Toolchain Ready ---\n")
 
-    Args:
-        current (int): Current item number.
-        total (int): Total number of items.
-        prefix (str): Text to show before the counter.
-    """
-    _active_strategy.update_progress(current, total, prefix)
-
-
-def clear_line():
-    """Clears the current line using the active display strategy."""
-    _active_strategy.clear_line()
+if __name__ == "__main__":
+    provision()
