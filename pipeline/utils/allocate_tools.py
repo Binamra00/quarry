@@ -6,6 +6,11 @@ import zipfile
 from pathlib import Path
 from pipeline import config
 
+# --- HARDCODED DOWNLOAD URLS (Verified) ---
+# We use these exact URLs to prevent 404 errors.
+PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.19.0/pmd-dist-7.19.0-bin.zip"
+RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.zip"
+
 
 def report(msg):
     print(f"   [Toolchain] {msg}")
@@ -22,7 +27,6 @@ def download_and_extract(url, target_folder_name):
 
     # If the specific version folder exists, we are done.
     if final_path.exists():
-        # Echo the version being used
         report(f"✅ Found version: {target_folder_name}. Skipping download.")
         return True
 
@@ -78,12 +82,12 @@ def provision():
     print(f"Target Directory: {config.TOOLS_PATH}")
 
     # 1. Check & Install PMD
-    # We use the folder name from config.py ("pmd-bin-7.18.0")
-    download_and_extract(config.PMD_URL, config.PMD_VERSION)
+    # We use the folder name from config.py ("pmd-bin-7.19.0")
+    download_and_extract(PMD_URL, config.PMD_VERSION)
 
     # 2. Check & Install RefactoringMiner
-    # We use the folder name from config.py ("RefactoringMiner_v3")
-    download_and_extract(config.RM_URL, config.RM_VERSION)
+    # We use the folder name from config.py ("RefactoringMiner_3.0" or similar)
+    download_and_extract(RM_URL, config.RM_VERSION)
 
     # 3. Fix Permissions
     make_executable(config.PMD_PATH)
