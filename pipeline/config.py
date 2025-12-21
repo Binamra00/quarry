@@ -57,8 +57,9 @@ for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
     path.mkdir(exist_ok=True)
 
 # --- 4. DEFINE TOOL CONFIGURATION ---
-PMD_VERSION = "pmd-bin-7.18.0"
-RM_VERSION = "RefactoringMiner_v3"
+# UPDATE: Changed versions to 7.19.0 and 3.0 to trigger new downloads
+PMD_VERSION = "pmd-bin-7.19.0"
+RM_VERSION = "RefactoringMiner_3.0"
 PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / "pmd"
 RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
 
