@@ -64,7 +64,7 @@ RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
 
 # --- 5. TOOL DOWNLOAD URLS (NEW) ---
 # Hardcoded to verified versions to ensure stability
-PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.18.0/pmd-dist-7.18.0-bin.zip"
+PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.19.0/pmd-dist-7.19.0-bin.zip"
 RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.zip"
 
 # --- 6. TARGET REPOSITORIES ---
