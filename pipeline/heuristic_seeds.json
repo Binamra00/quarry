@@ -1,0 +1,17 @@
+{
+  "refactoring": {
+    "churn_sensitivity": 20,
+    "purity_target_percent": 80.0,
+    "density_target_percent": 40.0
+  },
+  "repo_mining": {
+    "fix_keywords": ["fix", "bug", "issue", "close", "resolv", "crash", "fail", "error", "defect"],
+    "refactor_keywords": ["refactor", "cleanup", "clean up", "rename", "move", "extract", "restruct", "optimiz"]
+  },
+  "pmd": {
+    "high_priority_rule_weights": {
+      "CyclomaticComplexity": 10,
+      "NPathComplexity": 5
+    }
+  }
+}

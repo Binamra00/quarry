@@ -41,6 +41,15 @@ class PMDMetrics(BaseMetrics):
         pmd_data, file_count = data
         files = pmd_data.get("files", [])
 
+        # [NEW] Load Heuristics from Config
+        # We look for a "pmd" block in the JSON file
+        pmd_conf = config.HEURISTICS.get("pmd", {})
+
+        # Default to CyclomaticComplexity if not in config
+        COMPLEXITY_RULE_NAME = pmd_conf.get("complexity_rule", "CyclomaticComplexity")
+        # Default to Top 5 if not in config
+        HOTSPOT_LIMIT = pmd_conf.get("hotspot_limit", 5)
+
         total_smells = 0
         complexity_scores = []
         hotspots = {}
@@ -52,10 +61,11 @@ class PMDMetrics(BaseMetrics):
             hotspots[Path(f["filename"]).name] = count
 
             for v in violations:
-                if v.get("rule") == "CyclomaticComplexity":
-                    # Simple extraction logic
+                # [Refactor] Use dynamic rule name from config
+                if v.get("rule") == COMPLEXITY_RULE_NAME:
                     desc = v.get("description", "")
                     try:
+                        # Attempt to parse "complexity of 12"
                         score = int(desc.split("complexity of")[-1].strip(" ."))
                         complexity_scores.append(score)
                     except:
@@ -64,22 +74,28 @@ class PMDMetrics(BaseMetrics):
         density = total_smells / file_count if file_count > 0 else 0
         avg_comp = statistics.mean(complexity_scores) if complexity_scores else 0
 
-        top_hotspots = dict(sorted(hotspots.items(), key=lambda x: x[1], reverse=True)[:5])
+        # [Refactor] Use dynamic limit from config
+        top_hotspots = dict(sorted(hotspots.items(), key=lambda x: x[1], reverse=True)[:HOTSPOT_LIMIT])
 
         return {
             "density": {"total_smells": total_smells, "per_file": round(density, 2)},
-            "complexity": {"avg_cyclomatic": round(avg_comp, 1)},
+            "complexity": {
+                "metric_used": COMPLEXITY_RULE_NAME,
+                "avg_score": round(avg_comp, 1)
+            },
             "hotspots": top_hotspots
         }
 
     def print_report(self, metrics: dict):
         d = metrics["density"]
         c = metrics["complexity"]
+
         print(f"├── [Density]")
         print(f"│   ├── Total Smells: {d['total_smells']}")
         print(f"│   └── Smells/File:  {d['per_file']}")
         print(f"├── [Complexity]")
-        print(f"│   └── Avg Cyclomatic: {c['avg_cyclomatic']}")
+        print(f"│   ├── Metric: {c['metric_used']}")
+        print(f"│   └── Avg Score:  {c['avg_score']}")
         print(f"├── [Hotspots]")
         for f, count in metrics["hotspots"].items():
             print(f"│   ├── {f}: {count}")
