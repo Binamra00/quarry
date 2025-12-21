@@ -51,18 +51,9 @@ else
     echo "✅ Dependencies installed."
 fi
 
-# --- 3. TOOLCHAIN ALLOCATION ---
-echo "--- 2. Allocating Toolchain (PMD & RefactoringMiner) ---"
-python3 -m pipeline.utils.allocate_tools
-
-if [ $? -ne 0 ]; then
-    echo "❌ Tool allocation failed. Check network or allocate_tools.py."
-    exit 1
-fi
-
-# --- 4. CODE SYNC (Optional Layer 2) ---
+# --- 3. CODE SYNC (Optional Layer 2) ---
 if [ -n "$GIT_URL_WITH_TOKEN" ]; then
-    echo "--- 3. Synchronizing Code from GitHub ---"
+    echo "--- 2. Synchronizing Code from GitHub ---"
     SYNC_SCRIPT="./pipeline/bin/colab_git_setup_smell_ranker.sh"
 
     if [ -f "$SYNC_SCRIPT" ]; then
@@ -72,6 +63,16 @@ if [ -n "$GIT_URL_WITH_TOKEN" ]; then
     fi
 else
     echo "--- 3. Skipping Code Sync (No URL provided) ---"
+fi
+
+
+# --- 4. TOOLCHAIN ALLOCATION ---
+echo "--- 3. Allocating Toolchain (PMD & RefactoringMiner) ---"
+python3 -m pipeline.utils.allocate_tools
+
+if [ $? -ne 0 ]; then
+    echo "❌ Tool allocation failed. Check network or allocate_tools.py."
+    exit 1
 fi
 
 # --- 5. EXECUTE THE PIPELINE ---
