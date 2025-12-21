@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 
 from pipeline import config
-from pipeline.utils import cmd_subprocess
+from pipeline.utils import adapter_subprocess
 # [NEW] Import the UI helper we just built
 from pipeline.utils import ui
 from pipeline.adapters.i_adapter import IAdapter
@@ -27,7 +27,7 @@ class RefactoringMinerAdapter(IAdapter):
     def _get_all_commits(self, repo_path: Path) -> List[str]:
         """Helper: Retrieves SHA-1 hashes of commits modifying .java files."""
         cmd = ["git", "rev-list", "--all", "--reverse", "--", "*.java"]
-        success, output = cmd_subprocess.run_command(cmd, cwd=str(repo_path))
+        success, output = adapter_subprocess.run_command(cmd, cwd=str(repo_path))
 
         if success and output:
             return output.strip().split('\n')

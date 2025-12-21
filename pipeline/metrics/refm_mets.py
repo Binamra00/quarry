@@ -32,9 +32,6 @@ class RefmMetrics(BaseMetrics):
         return churn_map
 
     def load_data(self):
-        """
-        Impl: Loads Refactoring JSON AND Repo Metrics JSON (for total commits).
-        """
         project_name = config.TOY_PROJECT_PATH.name
         refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
@@ -67,6 +64,10 @@ class RefmMetrics(BaseMetrics):
     def calculate(self, data) -> dict:
         refm_data, total_commits, churn_map = data
 
+        # [NEW] Load Heuristics
+        refm_conf = config.HEURISTICS.get("refactoring", {})
+        CHURN_SENSITIVITY = refm_conf.get("churn_sensitivity", 20)
+
         commits_list = refm_data.get("commits", [])
         commits_with_refs = len(commits_list)
         total_ops = 0
@@ -78,10 +79,12 @@ class RefmMetrics(BaseMetrics):
             count = len(refs)
             total_ops += count
 
-            # Purity Check
+            # Purity Check with Configurable Heuristic
             sha1 = commit.get("sha1")
             churn = churn_map.get(sha1, 0)
-            if churn > (count * 20):  # Hardcoded heuristic (will fix in Task 4)
+
+            # Use loaded CHURN_SENSITIVITY instead of hardcoded 20
+            if churn > (count * CHURN_SENSITIVITY):
                 high_churn_refs += 1
 
             for r in refs:
@@ -111,12 +114,17 @@ class RefmMetrics(BaseMetrics):
         s = metrics["scope"]
         p = metrics["purity"]
 
+        # [NEW] Load Targets for Display
+        refm_conf = config.HEURISTICS.get("refactoring", {})
+        TARGET_DENSITY = refm_conf.get("density_target_percent", 40.0)
+        TARGET_PURITY = refm_conf.get("purity_target_percent", 80.0)
+
         print(f"├── [Dataset Scope]")
         print(f"│   ├── Total Commits: {s['total_commits']}")
-        print(f"│   └── Refactoring Density: {s['density_percent']}%")
+        print(f"│   └── Refactoring Density: {s['density_percent']}% (Target: >{TARGET_DENSITY}%)")
         print(f"├── [Dataset Purity]")
         print(f"│   ├── Floss Commits: {p['floss_commits']}")
-        print(f"│   └── Purity Score:  {p['purity_score']}%")
+        print(f"│   └── Purity Score:  {p['purity_score']}% (Target: >{TARGET_PURITY}%)")
         print(f"├── [Top Types]")
         for t, c in metrics["top_types"].items():
             print(f"│   ├── {t}: {c}")

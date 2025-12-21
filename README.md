@@ -54,7 +54,7 @@ smell-ranker/
 │ │ ├── refm_mets.py # Metrics to analyze refm output
 │ │ ├── repo_mets.py # Base metrics for all repos
 │ │ └── pmd_mets.py # Metrics to analyze PMD output
-│ │ └── temp_mets.py # Template for present and new metric concrete sub classes
+│ │ └── temp_mets.py # Template to reduce process duplication for adapter metrics classes
 │ │
 │ │── rulesets/
 │ │ └── pmd_rules_00.xml # PMD Ruleset Configuration
@@ -66,6 +66,7 @@ smell-ranker/
 │ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │
 │ ├── main.py # FACADE: Main Python entry point
+│ ├── heuristic_seeds.json # Heuristic Thresholds to guide metirc analysis
 │ └──config.py # CONFIG: All paths (Drive, Tools) and settings
 │ 
 └── docs/ # Project Documentation

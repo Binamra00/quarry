@@ -3,7 +3,6 @@ import json
 from collections import defaultdict, Counter
 from pathlib import Path
 from pipeline import config
-# Importing your Template Base
 from pipeline.metrics.temp_mets import BaseMetrics
 
 try:
@@ -22,10 +21,6 @@ class RepoMetrics(BaseMetrics):
         return config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
     def load_data(self):
-        """
-        Impl: Mines the repository using PyDriller to extract raw counters.
-        Returns a tuple of raw data structures.
-        """
         if not Repository:
             print("CRITICAL ERROR: PyDriller not installed.")
             return None
@@ -45,8 +40,10 @@ class RepoMetrics(BaseMetrics):
         file_authors = defaultdict(set)
         pair_coupling = Counter()
 
-        FIX_KEYWORDS = ['fix', 'bug', 'issue', 'close', 'resolv', 'crash', 'fail', 'error', 'defect']
-        REFACTOR_KEYWORDS = ['refactor', 'cleanup', 'clean up', 'rename', 'move', 'extract', 'restruct', 'optimiz']
+        # [NEW] Load Keywords from Heuristics Configuration
+        repo_conf = config.HEURISTICS.get("repo_mining", {})
+        FIX_KEYWORDS = repo_conf.get("fix_keywords", ['fix', 'bug', 'issue'])
+        REFACTOR_KEYWORDS = repo_conf.get("refactor_keywords", ['refactor', 'cleanup'])
 
         for commit in Repository(str(repo_path)).traverse_commits():
             stats["total_commits"] += 1
@@ -81,12 +78,8 @@ class RepoMetrics(BaseMetrics):
         return (stats, file_authors, pair_coupling)
 
     def calculate(self, data) -> dict:
-        """
-        Impl: Calculates ratios, bus factor, and coupling from raw data.
-        """
         stats, file_authors, pair_coupling = data
 
-        # Helper: Safe division
         total = stats["total_commits"]
         fix_ratio = (stats["fix_commits"] / total * 100) if total > 0 else 0
         refactor_ratio = (stats["refactor_commits"] / total * 100) if total > 0 else 0
@@ -150,6 +143,5 @@ class RepoMetrics(BaseMetrics):
         print("------------------------------------------")
 
 
-# Wrapper for backward compatibility if needed
 def run_metrics_report():
     RepoMetrics().run_report()
