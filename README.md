@@ -62,7 +62,7 @@ smell-ranker/
 │ ├── utils/ # Python Utility Package
 │ │ ├── init.py # Exposes utilities to the app
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
-│ │ ├── ui.py # Universal Console output formatting
+│ │ ├── ui_strategy.py # Universal Console output formatting (Strategy Pattern)
 │ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
 │ │
 │ ├── main.py # FACADE: Main Python entry point

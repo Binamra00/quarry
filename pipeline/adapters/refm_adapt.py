@@ -7,7 +7,7 @@ from typing import List
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 # [NEW] Import the UI helper we just built
-from pipeline.utils import ui
+from pipeline.utils import ui_strategy
 from pipeline.adapters.i_adapter import IAdapter
 
 
