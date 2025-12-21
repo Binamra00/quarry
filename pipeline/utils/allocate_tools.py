@@ -22,6 +22,7 @@ def download_and_extract(url, target_folder_name):
 
     # If the specific version folder exists, we are done.
     if final_path.exists():
+        # Echo the version being used
         report(f"✅ Found version: {target_folder_name}. Skipping download.")
         return True
 
