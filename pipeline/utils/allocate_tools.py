@@ -6,30 +6,15 @@ import zipfile
 from pathlib import Path
 from pipeline import config
 
-# --- Base URLs ---
-# PMD uses tags like: pmd_releases/7.18.0 (URL-encoded as pmd_releases%2F7.18.0)
-PMD_BASE_URL = "https://github.com/pmd/pmd/releases/download"
-RM_BASE_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download"
-
-# --- Dynamically Constructed URLs ---
-PMD_URL = (
-    f"{PMD_BASE_URL}/pmd_releases%2F{config.PMD_VERSION}/"
-    f"pmd-dist-{config.PMD_VERSION}-bin.zip"
-)
-
-RM_URL = (
-    f"{RM_BASE_URL}/{config.RM_VERSION}/"
-    f"RefactoringMiner-{config.RM_VERSION}.zip"
-)
 
 def report(msg):
     print(f"   [Toolchain] {msg}")
+
 
 def download_and_extract(url, target_folder_name):
     """
     Downloads a zip and extracts it.
     Renames the extracted folder to 'target_folder_name'.
-    This allows multiple tool versions to coexist side-by-side.
     """
     dest_dir = config.TOOLS_PATH
     zip_path = dest_dir / "temp_tool.zip"
@@ -50,11 +35,14 @@ def download_and_extract(url, target_folder_name):
     report(f"📦 Extracting...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            # We need to know the top-level folder inside the zip to rename it
             zip_root = zip_ref.namelist()[0].split('/')[0]
             zip_ref.extractall(dest_dir)
 
+        # Cleanup zip
         zip_path.unlink()
 
+        # Rename the extracted folder to our target version name
         extracted_path = dest_dir / zip_root
 
         if extracted_path != final_path:
@@ -73,6 +61,7 @@ def download_and_extract(url, target_folder_name):
         report(f"❌ Extraction failed: {e}")
         return False
 
+
 def make_executable(tool_path):
     """Equivalent to chmod +x"""
     if tool_path.exists():
@@ -82,27 +71,25 @@ def make_executable(tool_path):
     else:
         report(f"⚠️ Binary not found for permission fix: {tool_path}")
 
+
 def provision():
     print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
     print(f"Target Directory: {config.TOOLS_PATH}")
 
     # 1. Check & Install PMD
-    download_and_extract(
-        PMD_URL,
-        f"pmd-{config.PMD_VERSION}"
-    )
+    # We use the folder name from config.py ("pmd-bin-7.18.0")
+    download_and_extract(config.PMD_URL, config.PMD_VERSION)
 
     # 2. Check & Install RefactoringMiner
-    download_and_extract(
-        RM_URL,
-        f"RefactoringMiner-{config.RM_VERSION}"
-    )
+    # We use the folder name from config.py ("RefactoringMiner_v3")
+    download_and_extract(config.RM_URL, config.RM_VERSION)
 
     # 3. Fix Permissions
     make_executable(config.PMD_PATH)
     make_executable(config.RM_PATH)
 
     print("--- Toolchain Ready ---\n")
+
 
 if __name__ == "__main__":
     provision()

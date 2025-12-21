@@ -62,14 +62,19 @@ RM_VERSION = "RefactoringMiner_v3"
 PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / "pmd"
 RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
 
-# --- 5. TARGET REPOSITORIES ---
+# --- 5. TOOL DOWNLOAD URLS (NEW) ---
+# Hardcoded to verified versions to ensure stability
+PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.18.0/pmd-dist-7.18.0-bin.zip"
+RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.zip"
+
+# --- 6. TARGET REPOSITORIES ---
 TOY_PROJECT_PATH = REPOS_PATH / "toy_project"
 
-# --- 6. INTERNAL ASSETS ---
+# --- 7. INTERNAL ASSETS ---
 RULES_DIR = REPO_ROOT / "pipeline" / "rulesets"
 PMD_RULESET_PATH = RULES_DIR / "pmd_rules_00.xml"
 
-# --- 7. UTILITIES ---
+# --- 8. UTILITIES ---
 def escape_path(path_obj):
     return str(path_obj).replace(" ", "\\ ")
 
@@ -78,7 +83,7 @@ RM_PATH_ESCAPED = escape_path(RM_PATH)
 TOY_PROJECT_PATH_ESCAPED = escape_path(TOY_PROJECT_PATH)
 WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 
-# --- 8. HEURISTICS (NEW) ---
+# --- 9. HEURISTICS (NEW) ---
 HEURISTICS_PATH = REPO_ROOT / "pipeline" / "heuristic_seeds.json"
 HEURISTICS = {}
 
