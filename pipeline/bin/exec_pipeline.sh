@@ -66,7 +66,7 @@ else
 fi
 
 # --- 4. TOOLCHAIN ALLOCATION ---
-echo "--- 3. Allocating Toolchain (PMD & RefactoringMiner) ---\"
+echo "--- 3. Allocating Toolchain (PMD & RefactoringMiner) ---"
 python3 -m pipeline.utils.allocate_tools
 
 if [ $? -ne 0 ]; then
