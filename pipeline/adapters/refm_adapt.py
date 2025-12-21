@@ -63,7 +63,7 @@ class RefactoringMinerAdapter(IAdapter):
 
                 for i, commit_hash in enumerate(commits):
                     # [FIXED] Delegate the display logic to the agnostic UI utility
-                    ui.update_progress(i + 1, total_commits, prefix="   ⏳ Progress:")
+                    ui_strategy.update_progress(i + 1, total_commits, prefix="   ⏳ Progress:")
 
                     temp_json_path = temp_dir / f"commit_{commit_hash}.json"
 
@@ -100,7 +100,7 @@ class RefactoringMinerAdapter(IAdapter):
                         log_file.write(f"[EXCEPTION] {e}\n")
 
         # Clear the progress line for a clean finish
-        ui.clear_line()
+        ui_strategy.clear_line()
 
         # Final Report
         print(f"   Processed {total_commits} commits.")
