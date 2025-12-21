@@ -4,24 +4,24 @@ from typing import List
 
 from pipeline import config
 from pipeline.metrics import repo_mets, refm_mets, pmd_mets
-from pipeline.adapters.pmd_adapt import PMDAdapter
-from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
+# [NEW] Import Factory instead of concrete adapters
+from pipeline.factories.adapter_fact import ToolFactory
 from pipeline.commands.i_command import IPipelineCommand
-from pipeline.commands.tools_cmd import RunToolCommand
+from pipeline.commands.adapter_cmd import RunToolCommand
 
 
 def main():
     """
     Main Entry Point for the Smell-Ranker Pipeline.
-    Implements the Command Pattern to allow autonomous or full execution.
+    Refactored to use Factory and Command Patterns.
     """
 
     # --- 1. Argument Parsing (The Client) ---
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
     parser.add_argument(
         "--stage",
-        # UPDATE 1: Renamed choices here
-        choices=["all", "refm", "pmd"],
+        # Expanded choices to include aliases
+        choices=["all", "history", "static", "refm", "pmd"],
         default="all",
         help="Select which pipeline stage to run (default: all)"
     )
@@ -42,31 +42,34 @@ def main():
     # --- 3. Command Configuration (The Invoker Setup) ---
     commands: List[IPipelineCommand] = []
 
-    # Configure RefactoringMiner (History)
-    # UPDATE 2: Updated logic check to "refm"
-    if args.stage in ["refm", "all"]:
-        rm_adapter = RefactoringMinerAdapter()
-        commands.append(RunToolCommand(rm_adapter))
+    # [PATTERN] Factory Method: Get the tools without knowing their names
+    active_adapters = ToolFactory.create_adapters(args.stage)
 
-    # Configure PMD (Static Analysis)
-    # UPDATE 3: Updated logic check to "pmd"
-    if args.stage in ["pmd", "all"]:
-        pmd_adapter = PMDAdapter()
-        commands.append(RunToolCommand(pmd_adapter))
+    # Wrap them in Commands
+    for adapter in active_adapters:
+        commands.append(RunToolCommand(adapter))
+
+    if not commands:
+        print(f"⚠️ No tools matched the stage '{args.stage}'. Exiting.")
+        sys.exit(0)
 
     # --- 4. Execution Loop (The Invoker) ---
     execution_results = {}
 
     for command in commands:
+        # We access the internal adapter just to get the name for the results dict
         tool_name = command._adapter.get_tool_name()
+
         success = command.execute()
         execution_results[tool_name] = success
 
+        # Fail fast if running a specific stage
         if not success and args.stage != "all":
             print(f"\n❌ Critical Failure in {tool_name}. Aborting.")
             sys.exit(1)
 
     # --- 5. Metrics Calculation (Post-Processing) ---
+    # (This part relies on Template Method later to be fully decoupled)
     print("\n--- 🏁 Pipeline Completion Report ---")
 
     rm_name = "RefactoringMiner (History Mining)"

@@ -40,10 +40,14 @@ smell-ranker/
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
 │ │ └── colab_git_setup...# SYNC SCRIPT: Secure Git cloning/pulling in Colab
 │ │
-│ │── commands/ # CLI Command Templates Package
+│ │── commands/ # CLI Command Templates for adapters (Command Pattern)
 │ │ ├── init.py # Exposes command templates to adapters
 │ │ ├── i_commands.py # Interface for all command templates 
-│ │ └── tools_cmd.py # CLI commands for external tools like refm and pmd
+│ │ └── adapter_cmd.py # CLI commands for external tools like refm and pmd
+│ │
+│ │── factories/ # Factory classes to create adapter instances (Factory Pattern)
+│ │ ├── init.py # Exposes factories to the main pipeline
+│ │ └── adapter_fact.py # Factory to create adapters based on tool name
 │ │
 │ ├── metrics/ # Metrics Package
 │ │ ├── init.py # Exposes metrics to the main pipeline
