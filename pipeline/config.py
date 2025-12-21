@@ -66,7 +66,7 @@ RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
 # --- 5. TOOL DOWNLOAD URLS ---
 # REVERT: Using 3.0 URL which matches the 3.0 folder structure we know
 PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.19.0/pmd-dist-7.19.0-bin.zip"
-RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.12.zip"
+RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0.12/RefactoringMiner-3.0.12.zip"
 
 # --- 6. TARGET REPOSITORIES ---
 TOY_PROJECT_PATH = REPOS_PATH / "toy_project"
