@@ -23,19 +23,36 @@ export PYTHONPATH=$PYTHONPATH:.
 # --- 2. SYSTEM DEPENDENCY CHECK ---
 echo "--- 1. Checking System Dependencies ---"
 
-# A. Check Java (Updated for RefactoringMiner 3.0+)
-# We now require Java 21 because RefactoringMiner 3.0.12+ is compiled with it.
+# A. Check Java Version (Strict Check for Java 21+)
+REQUIRED_JAVA_VERSION=21
+JAVA_INSTALLED=false
+
 if type -p java > /dev/null; then
-    # Optional: Check version string if strict check needed
-    echo "✅ Java found."
+    # Extract version number (e.g., "21" from "openjdk 21.0.1...")
+    CURRENT_JAVA_VERSION=$(java -version 2>&1 | head -n 1 | awk -F '"' '{print $2}' | cut -d'.' -f1)
+
+    if [[ "$CURRENT_JAVA_VERSION" -ge "$REQUIRED_JAVA_VERSION" ]]; then
+        echo "✅ Java $CURRENT_JAVA_VERSION found (Matches requirement >= $REQUIRED_JAVA_VERSION)."
+        JAVA_INSTALLED=true
+    else
+        echo "⚠️ Java $CURRENT_JAVA_VERSION found, but we require Java $REQUIRED_JAVA_VERSION+."
+    fi
 else
     echo "⚠️ Java NOT found."
+fi
+
+# Install Java 21 if missing or too old
+if [ "$JAVA_INSTALLED" = false ]; then
     if [ -n "$COLAB_RELEASE_TAG" ]; then
-        echo "☁️ Colab detected: Installing OpenJDK 21..."
+        echo "☁️ Colab detected: Installing/Upgrading to OpenJDK 21..."
         apt-get update > /dev/null
-        # UPDATE: Changed 17 to 21 to support newer RefactoringMiner builds
         apt-get install -y openjdk-21-jdk > /dev/null
-        echo "✅ Java installed."
+
+        # FIX: Force the system to use the new Java version
+        update-alternatives --set java /usr/lib/jvm/java-21-openjdk-amd64/bin/java
+
+        echo "✅ Java installed/updated."
+        java -version 2>&1 | head -n 1
     else
         echo "❌ ACTION REQUIRED: Please install Java 21+ manually."
         exit 1
