@@ -1,108 +1,94 @@
-import os
-import shutil
-import stat
-import urllib.request
-import zipfile
-from pathlib import Path
-from pipeline import config
-
-# --- DOWNLOAD URLS ---
-# [cite_start]Using the exact versions mentioned in your thesis logs [cite: 7, 20]
-PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.18.0/pmd-dist-7.18.0-bin.zip"
-RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0/RefactoringMiner-3.0.zip"
+import sys
+from abc import ABC, abstractmethod
 
 
-def report(msg):
-    print(f"   [Toolchain] {msg}")
-
-
-def download_and_extract(url, target_name):
+# --- 1. The Strategy Interface ---
+class IDisplayStrategy(ABC):
     """
-    Downloads a zip file, extracts it, and renames the folder to match config.py.
+    Strategy Interface for Console UI.
+    Allows swapping between Jupyter/Colab rich output and standard Terminal text.
+    Follows the Strategy Pattern to eliminate repeated environment checks.
     """
-    dest_dir = config.TOOLS_PATH
-    zip_path = dest_dir / "temp_tool.zip"
-    final_path = dest_dir / target_name
 
-    report(f"⬇️ Downloading {target_name}...")
-    try:
-        urllib.request.urlretrieve(url, zip_path)
-    except Exception as e:
-        report(f"❌ Download failed: {e}")
-        return False
+    @abstractmethod
+    def update_progress(self, current: int, total: int, prefix: str):
+        pass
 
-    report(f"📦 Extracting to {dest_dir}...")
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(dest_dir)
-
-        # Cleanup zip
-        zip_path.unlink()
-
-        # --- HANDLING FOLDER RENAMES ---
-        # PMD zip extracts to 'pmd-bin-7.18.0' (Matches config, no rename needed)
-        # RefactoringMiner zip extracts to 'RefactoringMiner-3.0' (Needs rename to 'RefactoringMiner_v3')
-
-        extracted_name = ""
-        if "pmd" in target_name:
-            extracted_name = "pmd-bin-7.18.0"
-        elif "RefactoringMiner" in target_name:
-            extracted_name = "RefactoringMiner-3.0"
-
-        extracted_path = dest_dir / extracted_name
-
-        if extracted_path.exists() and extracted_path != final_path:
-            # If the folder exists from a previous bad run, remove it
-            if final_path.exists():
-                shutil.rmtree(final_path)
-            extracted_path.rename(final_path)
-
-        report(f"✅ Installed: {final_path.name}")
-        return True
-
-    except Exception as e:
-        report(f"❌ Extraction failed: {e}")
-        return False
+    @abstractmethod
+    def clear_line(self):
+        pass
 
 
-def make_executable(path):
+# --- 2. Concrete Strategy: Jupyter/Colab ---
+class ColabStrategy(IDisplayStrategy):
     """
-    Equivalent to chmod +x
+    Implementation for Jupyter Notebooks / Google Colab.
+    Uses IPython widgets or clear_output for smooth web-based rendering.
     """
-    if path.exists():
-        st = os.stat(path)
-        os.chmod(path, st.st_mode | stat.S_IEXEC)
-        report(f"🔧 Permissions fixed: {path.name}")
-    else:
-        report(f"⚠️ Binary not found for permission fix: {path}")
+
+    def __init__(self):
+        # Lazy import to ensure we don't crash if IPython is missing
+        try:
+            from IPython.display import clear_output
+            self._clear_output_func = clear_output
+        except ImportError:
+            self._clear_output_func = None
+
+    def update_progress(self, current: int, total: int, prefix: str):
+        message = f"{prefix} {current}/{total}..."
+        if self._clear_output_func:
+            # wait=True prevents flickering by waiting for new output before clearing
+            self._clear_output_func(wait=True)
+            print(message)
+        else:
+            # Fallback if IPython is missing despite detection
+            print(message)
+
+    def clear_line(self):
+        if self._clear_output_func:
+            self._clear_output_func(wait=True)
 
 
-def provision():
-    print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
-    print(f"Target Directory: {config.TOOLS_PATH}")
+# --- 3. Concrete Strategy: Standard Terminal ---
+class TerminalStrategy(IDisplayStrategy):
+    """
+    Implementation for Standard Linux/Unix Terminals.
+    Uses Carriage Return (\r) to overwrite the current line in place.
+    """
 
-    # 1. Check & Install PMD
-    if config.PMD_PATH.exists():
-        report(f"Found PMD ({config.PMD_VERSION}). Skipping download.")
-    else:
-        report(f"PMD missing. Installing...")
-        download_and_extract(PMD_URL, config.PMD_VERSION)
+    def update_progress(self, current: int, total: int, prefix: str):
+        message = f"{prefix} {current}/{total}..."
+        # \r moves cursor to start of line, allowing overwrite
+        sys.stdout.write(f"\r{message}")
+        sys.stdout.flush()
 
-    # 2. Check & Install RefactoringMiner
-    if config.RM_PATH.exists():
-        report(f"Found RefactoringMiner ({config.RM_VERSION}). Skipping download.")
-    else:
-        report(f"RefactoringMiner missing. Installing...")
-        download_and_extract(RM_URL, config.RM_VERSION)
-
-    # 3. Fix Permissions (Crucial for Linux/Colab)
-    # PMD usually has a shell script 'pmd'
-    make_executable(config.PMD_PATH)
-    # RefactoringMiner has a script 'RefactoringMiner'
-    make_executable(config.RM_PATH)
-
-    print("--- Toolchain Ready ---\n")
+    def clear_line(self):
+        # Overwrite line with spaces, then return to start
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
 
 
-if __name__ == "__main__":
-    provision()
+# --- 4. Context & Environment Detection (The Singleton) ---
+# We determine the strategy ONCE at module load time.
+if 'ipykernel' in sys.modules:
+    _active_strategy = ColabStrategy()
+else:
+    _active_strategy = TerminalStrategy()
+
+
+# --- 5. Public API (Delegates to Active Strategy) ---
+def update_progress(current: int, total: int, prefix: str = "Processing"):
+    """
+    Updates the console with a progress message using the active display strategy.
+
+    Args:
+        current (int): Current item number.
+        total (int): Total number of items.
+        prefix (str): Text to show before the counter.
+    """
+    _active_strategy.update_progress(current, total, prefix)
+
+
+def clear_line():
+    """Clears the current line using the active display strategy."""
+    _active_strategy.clear_line()
