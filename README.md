@@ -30,7 +30,7 @@ This is the source of truth for all code. It is version-controlled on GitHub.
 ```commandline
 smell-ranker/    
 ├── pipeline/ # The main Python Application Package
-│ ├── adapters/ # Tool Adapters Package (Structural Pattern)
+│ ├── adapters/ # Tool Adapters Package (Adapter Pattern)
 │ │ ├── init.py # Exposes adapters to the main pipeline
 │ │ ├── i_adapter.py # Interface for all adapters  
 │ │ ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
@@ -49,11 +49,12 @@ smell-ranker/
 │ │ ├── init.py # Exposes factories to the main pipeline
 │ │ └── adapter_fact.py # Factory to create adapters based on tool name
 │ │
-│ ├── metrics/ # Metrics Package
+│ ├── metrics/ # Metrics classes to generate analysis from adpaters output (Template Method Pattern)
 │ │ ├── init.py # Exposes metrics to the main pipeline
 │ │ ├── refm_mets.py # Metrics to analyze refm output
 │ │ ├── repo_mets.py # Base metrics for all repos
 │ │ └── pmd_mets.py # Metrics to analyze PMD output
+│ │ └── temp_mets.py # Template for present and new metric concrete sub classes
 │ │
 │ │── rulesets/
 │ │ └── pmd_rules_00.xml # PMD Ruleset Configuration

@@ -3,28 +3,20 @@ import argparse
 from typing import List
 
 from pipeline import config
-from pipeline.metrics import repo_mets, refm_mets, pmd_mets
-# [NEW] Import Factory instead of concrete adapters
+# [NEW] Import class-based metrics
+from pipeline.metrics.repo_mets import RepoMetrics
+from pipeline.metrics.refm_mets import RefmMetrics
+from pipeline.metrics.pmd_mets import PMDMetrics
+
 from pipeline.factories.adapter_fact import ToolFactory
 from pipeline.commands.i_command import IPipelineCommand
 from pipeline.commands.adapter_cmd import RunToolCommand
 
 
 def main():
-    """
-    Main Entry Point for the Smell-Ranker Pipeline.
-    Refactored to use Factory and Command Patterns.
-    """
-
-    # --- 1. Argument Parsing (The Client) ---
+    # ... (Arg parsing and printing remains the same) ...
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
-    parser.add_argument(
-        "--stage",
-        # Expanded choices to include aliases
-        choices=["all", "history", "static", "refm", "pmd"],
-        default="all",
-        help="Select which pipeline stage to run (default: all)"
-    )
+    parser.add_argument("--stage", choices=["all", "history", "static", "refm", "pmd"], default="all")
     args = parser.parse_args()
 
     print("🚀 Starting Smell-Ranker Pipeline")
@@ -33,19 +25,16 @@ def main():
 
     # --- 2. Initial Setup (Phase 0) ---
     print("\n--- Step 1: Repository Verification ---")
-    repo_total_commits = 0
     try:
-        repo_total_commits = repo_mets.run_metrics_report()
+        # [PATTERN] Template Method Call
+        RepoMetrics().run_report()
     except Exception as e:
         print(f"⚠️ Verification Warning: {e}")
 
-    # --- 3. Command Configuration (The Invoker Setup) ---
+    # --- 3. Command Configuration ---
     commands: List[IPipelineCommand] = []
-
-    # [PATTERN] Factory Method: Get the tools without knowing their names
     active_adapters = ToolFactory.create_adapters(args.stage)
 
-    # Wrap them in Commands
     for adapter in active_adapters:
         commands.append(RunToolCommand(adapter))
 
@@ -53,36 +42,32 @@ def main():
         print(f"⚠️ No tools matched the stage '{args.stage}'. Exiting.")
         sys.exit(0)
 
-    # --- 4. Execution Loop (The Invoker) ---
+    # --- 4. Execution Loop ---
     execution_results = {}
-
     for command in commands:
-        # We access the internal adapter just to get the name for the results dict
         tool_name = command._adapter.get_tool_name()
-
         success = command.execute()
         execution_results[tool_name] = success
 
-        # Fail fast if running a specific stage
         if not success and args.stage != "all":
             print(f"\n❌ Critical Failure in {tool_name}. Aborting.")
             sys.exit(1)
 
     # --- 5. Metrics Calculation (Post-Processing) ---
-    # (This part relies on Template Method later to be fully decoupled)
     print("\n--- 🏁 Pipeline Completion Report ---")
 
-    rm_name = "RefactoringMiner (History Mining)"
-    if execution_results.get(rm_name, False):
+    # [PATTERN] Template Method Calls (Polymorphic-style)
+    # We no longer pass 'repo_total_commits' manually. The classes load it themselves.
+
+    if args.stage in ["all", "refm", "history"]:
         try:
-            refm_mets.calculate_refm_metrics(repo_total_commits)
+            RefmMetrics().run_report()
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (RM): {e}")
 
-    pmd_name = "PMD Static Analysis"
-    if execution_results.get(pmd_name, False):
+    if args.stage in ["all", "pmd", "static"]:
         try:
-            pmd_mets.calculate_pmd_metrics()
+            PMDMetrics().run_report()
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
