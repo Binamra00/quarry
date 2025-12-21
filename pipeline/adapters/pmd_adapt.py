@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from pipeline import config
-from pipeline.utils import cmd_subprocess
+from pipeline.utils import adapter_subprocess
 # FIX: Using 'IAdapter' to match your interface file
 from pipeline.adapters.i_adapter import IAdapter
 
@@ -55,7 +55,7 @@ class PMDAdapter(IAdapter):
         print(f"   ⏳ Analysis in progress... (this may take a moment)")
 
         # Pass the log_path to the runner
-        success, _ = cmd_subprocess.run_command(
+        success, _ = adapter_subprocess.run_command(
             cmd,
             allowed_exit_codes=[0, 4],
             log_file_path=log_path
