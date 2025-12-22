@@ -17,7 +17,8 @@ class RepoMetrics(BaseMetrics):
         return "Repository Mining (Phase 0)"
 
     def get_output_path(self) -> Path:
-        project_name = config.TOY_PROJECT_PATH.name
+        # [DECOUPLING] Dynamic naming
+        project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
     def load_data(self):
@@ -25,7 +26,8 @@ class RepoMetrics(BaseMetrics):
             print("CRITICAL ERROR: PyDriller not installed.")
             return None
 
-        repo_path = config.TOY_PROJECT_PATH
+        # [DECOUPLING] Use injected path
+        repo_path = self.target_repo_path
         print(f"   ... ⛏️ Mining raw history from: {repo_path.name}")
 
         stats = {
@@ -39,20 +41,12 @@ class RepoMetrics(BaseMetrics):
         }
         file_authors = defaultdict(set)
         pair_coupling = Counter()
-
-        # [PERFORMANCE FIX] Map to store {commit_hash: churn_count}
-        # This prevents refm_mets.py from having to re-mine the repo later.
         churn_map = {}
 
-        # [SCIENTIFIC CONFIGURATION]
-        # We trust config.HEURISTICS to hold the truth from heuristic_seeds.json.
-        # We do NOT hardcode fallbacks here. If the config is empty, the heuristic
-        # is effectively disabled, which is safer than hidden magic values.
         repo_conf = config.HEURISTICS.get("repo_mining", {})
         FIX_KEYWORDS = repo_conf.get("fix_keywords", [])
         REFACTOR_KEYWORDS = repo_conf.get("refactor_keywords", [])
 
-        # Optimization check (optional log to confirm keywords are loaded)
         if not FIX_KEYWORDS:
             print("   ⚠️ Warning: No 'fix_keywords' found in heuristic config.")
 
@@ -68,7 +62,7 @@ class RepoMetrics(BaseMetrics):
             if any(kw in msg_lower for kw in REFACTOR_KEYWORDS):
                 stats["refactor_commits"] += 1
 
-            commit_churn = 0  # Track churn for THIS specific commit
+            commit_churn = 0
             modified_java_files = []
 
             for file in commit.modified_files:
@@ -77,19 +71,13 @@ class RepoMetrics(BaseMetrics):
 
                 if file.filename.endswith('.java'):
                     modified_java_files.append(file.filename)
-
-                    # [MATH] Churn = Added + Deleted
                     file_churn = file.added_lines + file.deleted_lines
                     commit_churn += file_churn
-
-                    # Aggregate to global total
                     stats["total_churn"] += file_churn
                     file_authors[file.filename].add(commit.author.name)
 
-            # [PERFORMANCE FIX] Save the granular data
             churn_map[commit.hash] = commit_churn
 
-            # Coupling Analysis (Optimized: Skip massive batch updates)
             if 1 < len(modified_java_files) < 50:
                 modified_java_files.sort()
                 for i in range(len(modified_java_files)):
@@ -124,7 +112,8 @@ class RepoMetrics(BaseMetrics):
         main_lang = top_file_type[0][0] if top_file_type else "Unknown"
 
         return {
-            "project_name": config.TOY_PROJECT_PATH.name,
+            # [DECOUPLING] Use injected name
+            "project_name": self.target_repo_path.name,
             "history": {
                 "total_commits": total,
                 "age_days": age_days,
@@ -143,10 +132,10 @@ class RepoMetrics(BaseMetrics):
                 "bus_factor": round(avg_bus_factor, 2),
                 "top_coupling": top_pair_name
             },
-            # [CRITICAL] Export the map so refm_mets.py can use it
             "churn_map": churn_map
         }
 
+    # print_report method remains unchanged from base/previous, handled by logic
     def print_report(self, metrics: dict):
         h = metrics["history"]
         c = metrics["content"]
@@ -165,7 +154,3 @@ class RepoMetrics(BaseMetrics):
         print(f"├── [Heuristic] Bus Factor:     {heu['bus_factor']} authors/file")
         print(f"└── [Heuristic] Top Coupling:   {heu['top_coupling']}")
         print("------------------------------------------")
-
-
-def run_metrics_report():
-    RepoMetrics().run_report()

@@ -4,19 +4,19 @@ from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
 
 
-# [CLEANUP] Removed PyDriller import. This module is now pure calculation.
-
 class RefmMetrics(BaseMetrics):
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner Metrics"
 
     def get_output_path(self) -> Path:
-        project_name = config.TOY_PROJECT_PATH.name
+        project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
 
     def load_data(self):
-        project_name = config.TOY_PROJECT_PATH.name
+        # [DECOUPLING] Dynamic loading based on project name
+        project_name = self.target_repo_path.name
+
         refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
@@ -40,14 +40,8 @@ class RefmMetrics(BaseMetrics):
             try:
                 with open(repo_metrics_path, 'r') as f:
                     repo_data = json.load(f)
-
-                    # Extract Context
                     total_commits = repo_data.get("history", {}).get("total_commits", 0)
-
-                    # [PERFORMANCE FIX] Load the map generated in Phase 0
-                    # This avoids re-mining the repository here.
                     churn_map = repo_data.get("churn_map", {})
-
             except json.JSONDecodeError:
                 print("⚠️ Error decoding RepoMetrics JSON (Context missing)")
         else:
@@ -57,8 +51,6 @@ class RefmMetrics(BaseMetrics):
 
     def calculate(self, data) -> dict:
         refm_data, total_commits, churn_map = data
-
-        # Load Heuristics
         refm_conf = config.HEURISTICS.get("refactoring", {})
         CHURN_SENSITIVITY = refm_conf.get("churn_sensitivity", 20)
 
@@ -72,12 +64,7 @@ class RefmMetrics(BaseMetrics):
             refs = commit.get("refactorings", [])
             count = len(refs)
             total_ops += count
-
-            # Purity Check
             sha1 = commit.get("sha1")
-
-            # [FIX] Lookup churn from the loaded map
-            # We cast to int because JSON keys are always strings, but values might be strings too
             churn = int(churn_map.get(sha1, 0))
 
             if churn > (count * CHURN_SENSITIVITY):
@@ -87,7 +74,6 @@ class RefmMetrics(BaseMetrics):
                 t = r.get("type", "Unknown")
                 ref_types[t] = ref_types.get(t, 0) + 1
 
-        # Ratios
         density = (commits_with_refs / total_commits * 100) if total_commits > 0 else 0
         purity = ((commits_with_refs - high_churn_refs) / commits_with_refs * 100) if commits_with_refs > 0 else 0
 
@@ -109,7 +95,6 @@ class RefmMetrics(BaseMetrics):
     def print_report(self, metrics: dict):
         s = metrics["scope"]
         p = metrics["purity"]
-
         refm_conf = config.HEURISTICS.get("refactoring", {})
         TARGET_DENSITY = refm_conf.get("density_target_percent", 40.0)
         TARGET_PURITY = refm_conf.get("purity_target_percent", 80.0)
@@ -123,8 +108,3 @@ class RefmMetrics(BaseMetrics):
         print(f"├── [Top Types]")
         for t, c in metrics["top_types"].items():
             print(f"│   ├── {t}: {c}")
-
-
-def calculate_refm_metrics():
-    # [CLEANUP] Removed unused argument 'ignored_arg'
-    RefmMetrics().run_report()

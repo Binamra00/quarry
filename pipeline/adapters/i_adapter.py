@@ -7,6 +7,14 @@ class IAdapter(ABC):
     Follows the Open/Closed Principle: Open for new tools, Closed for modification of main.py.
     """
 
+    def __init__(self, target_repo_path: Path):
+        """
+        Constructor Injection.
+        Args:
+            target_repo_path (Path): The specific repository to analyze.
+        """
+        self.target_repo_path = target_repo_path
+
     @abstractmethod
     def get_tool_name(self) -> str:
         """Returns the display name of the tool (e.g., 'RefactoringMiner')."""
@@ -15,7 +23,7 @@ class IAdapter(ABC):
     @abstractmethod
     def execute(self) -> bool:
         """
-        Runs the analysis logic.
+        Runs the analysis logic using self.target_repo_path.
         Returns:
             bool: True if execution was successful, False otherwise.
         """
