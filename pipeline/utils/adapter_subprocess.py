@@ -63,7 +63,15 @@ def run_command(
             # If we logged to a file, print the last 10 lines for immediate context
             if log_file_path and log_file_path.exists():
                 print(f"   Last 10 lines of log ({log_file_path.name}):")
-                os.system(f"tail -n 10 '{log_file_path}'")
+
+                # [SECURITY FIX] Use subprocess.run instead of os.system to prevent shell injection
+                try:
+                    subprocess.run(
+                        ["tail", "-n", "10", str(log_file_path)],
+                        check=False
+                    )
+                except Exception as e:
+                    print(f"   (Could not read log tail: {e})")
 
             return False, output_content
 
