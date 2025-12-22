@@ -10,6 +10,14 @@ class BaseMetrics(ABC):
     Defines the skeleton of the metrics lifecycle: Load -> Calculate -> Save -> Report.
     """
 
+    def __init__(self, target_repo_path: Path):
+        """
+        Constructor Injection.
+        Args:
+            target_repo_path (Path): The specific repository to analyze.
+        """
+        self.target_repo_path = target_repo_path
+
     def run_report(self):
         """The Template Method (The Algorithm Skeleton)"""
         print(f"\n--- 📊 Generating Report: {self.get_tool_name()} ---")
@@ -51,7 +59,9 @@ class BaseMetrics(ABC):
 
     def get_output_path(self) -> Path:
         """Where to save the final calculated metrics."""
-        project_name = config.TOY_PROJECT_PATH.name
+        # [DECOUPLING FIX] Use the injected path, not the global config
+        project_name = self.target_repo_path.name
+
         # Default naming convention: tools/metrics_<tool>_<project>.json
         tool_slug = self.get_tool_name().lower().replace(" ", "_")
         return config.OUTPUTS_PATH / f"metrics_{tool_slug}_{project_name}.json"

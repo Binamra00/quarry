@@ -6,7 +6,6 @@ from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
-# [NEW] Import the UI helper we just built
 from pipeline.utils import ui_strategy
 from pipeline.adapters.i_adapter import IAdapter
 
@@ -21,7 +20,8 @@ class RefactoringMinerAdapter(IAdapter):
         return "RefactoringMiner (History Mining)"
 
     def get_output_path(self) -> Path:
-        project_name = config.TOY_PROJECT_PATH.name
+        # [DECOUPLING] Dynamic naming based on the injected target
+        project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
     def _get_all_commits(self, repo_path: Path) -> List[str]:
@@ -41,7 +41,8 @@ class RefactoringMinerAdapter(IAdapter):
         final_json_path = self.get_output_path()
         log_path = self.get_log_path()
 
-        commits = self._get_all_commits(config.TOY_PROJECT_PATH)
+        # [DECOUPLING] Use the injected path
+        commits = self._get_all_commits(self.target_repo_path)
         total_commits = len(commits)
 
         if total_commits == 0:
@@ -55,20 +56,20 @@ class RefactoringMinerAdapter(IAdapter):
         success_count = 0
 
         with open(log_path, "w") as log_file:
-            log_file.write(f"--- RefactoringMiner Log: {config.TOY_PROJECT_PATH.name} ---\n")
+            log_file.write(f"--- RefactoringMiner Log: {self.target_repo_path.name} ---\n")
 
             with tempfile.TemporaryDirectory() as temp_dir_str:
                 temp_dir = Path(temp_dir_str)
                 print(f"   [Performance] Using temporary local buffer: {temp_dir}")
 
                 for i, commit_hash in enumerate(commits):
-                    # [FIXED] Delegate the display logic to the agnostic UI utility
                     ui_strategy.update_progress(i + 1, total_commits, prefix="   ⏳ Progress:")
 
                     temp_json_path = temp_dir / f"commit_{commit_hash}.json"
 
+                    # [DECOUPLING] Run tool against the injected path
                     cmd = [
-                        str(config.RM_PATH), "-c", str(config.TOY_PROJECT_PATH),
+                        str(config.RM_PATH), "-c", str(self.target_repo_path),
                         commit_hash, "-json", str(temp_json_path)
                     ]
 
@@ -99,10 +100,8 @@ class RefactoringMinerAdapter(IAdapter):
                     except Exception as e:
                         log_file.write(f"[EXCEPTION] {e}\n")
 
-        # Clear the progress line for a clean finish
         ui_strategy.clear_line()
 
-        # Final Report
         print(f"   Processed {total_commits} commits.")
         print(f"   💾 Saving results to: {final_json_path.name}")
         try:

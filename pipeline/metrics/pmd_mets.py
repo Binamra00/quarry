@@ -11,11 +11,13 @@ class PMDMetrics(BaseMetrics):
         return "PMD Metrics"
 
     def get_output_path(self) -> Path:
-        project_name = config.TOY_PROJECT_PATH.name
+        project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"pmd_metrics_{project_name}.json"
 
     def load_data(self):
-        project_name = config.TOY_PROJECT_PATH.name
+        # [DECOUPLING] Dynamic loading
+        project_name = self.target_repo_path.name
+
         pmd_path = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
         repo_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
@@ -41,13 +43,8 @@ class PMDMetrics(BaseMetrics):
         pmd_data, file_count = data
         files = pmd_data.get("files", [])
 
-        # [NEW] Load Heuristics from Config
-        # We look for a "pmd" block in the JSON file
         pmd_conf = config.HEURISTICS.get("pmd", {})
-
-        # Default to CyclomaticComplexity if not in config
         COMPLEXITY_RULE_NAME = pmd_conf.get("complexity_rule", "CyclomaticComplexity")
-        # Default to Top 5 if not in config
         HOTSPOT_LIMIT = pmd_conf.get("hotspot_limit", 5)
 
         total_smells = 0
@@ -61,11 +58,10 @@ class PMDMetrics(BaseMetrics):
             hotspots[Path(f["filename"]).name] = count
 
             for v in violations:
-                # [Refactor] Use dynamic rule name from config
                 if v.get("rule") == COMPLEXITY_RULE_NAME:
                     desc = v.get("description", "")
                     try:
-                        # Attempt to parse "complexity of 12"
+                        # [Robustness] Added basic safety, though regex is preferred later
                         score = int(desc.split("complexity of")[-1].strip(" ."))
                         complexity_scores.append(score)
                     except:
@@ -74,7 +70,6 @@ class PMDMetrics(BaseMetrics):
         density = total_smells / file_count if file_count > 0 else 0
         avg_comp = statistics.mean(complexity_scores) if complexity_scores else 0
 
-        # [Refactor] Use dynamic limit from config
         top_hotspots = dict(sorted(hotspots.items(), key=lambda x: x[1], reverse=True)[:HOTSPOT_LIMIT])
 
         return {
@@ -99,7 +94,3 @@ class PMDMetrics(BaseMetrics):
         print(f"├── [Hotspots]")
         for f, count in metrics["hotspots"].items():
             print(f"│   ├── {f}: {count}")
-
-
-def calculate_pmd_metrics():
-    PMDMetrics().run_report()
