@@ -3,11 +3,8 @@ from pathlib import Path
 from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
 
-try:
-    from pydriller import Repository
-except ImportError:
-    Repository = None
 
+# [CLEANUP] Removed PyDriller import. This module is now pure calculation.
 
 class RefmMetrics(BaseMetrics):
 
@@ -18,19 +15,6 @@ class RefmMetrics(BaseMetrics):
         project_name = config.TOY_PROJECT_PATH.name
         return config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
 
-    def _get_churn_map(self):
-        """Helper to mine churn for purity analysis."""
-        churn_map = {}
-        if Repository:
-            print(f"   ... ⏳ Mining churn data for purity analysis ...")
-            try:
-                for commit in Repository(str(config.TOY_PROJECT_PATH)).traverse_commits():
-                    total_churn = sum(f.added_lines + f.deleted_lines for f in commit.modified_files)
-                    churn_map[commit.hash] = total_churn
-            except Exception:
-                pass
-        return churn_map
-
     def load_data(self):
         project_name = config.TOY_PROJECT_PATH.name
         refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
@@ -40,31 +24,41 @@ class RefmMetrics(BaseMetrics):
             print(f"⚠️ Refactoring output not found: {refm_json_path.name}")
             return None
 
-        # Load main data
+        # 1. Load RefactoringMiner Output
         try:
             with open(refm_json_path, 'r') as f:
                 refm_data = json.load(f)
         except json.JSONDecodeError:
+            print("❌ Error decoding RefactoringMiner JSON")
             return None
 
-        # Load context (Total Commits)
+        # 2. Load Repo Metrics (Context & Churn Map)
         total_commits = 0
+        churn_map = {}
+
         if repo_metrics_path.exists():
             try:
                 with open(repo_metrics_path, 'r') as f:
                     repo_data = json.load(f)
-                    total_commits = repo_data.get("history", {}).get("total_commits", 0)
-            except:
-                pass
 
-        churn_map = self._get_churn_map()
+                    # Extract Context
+                    total_commits = repo_data.get("history", {}).get("total_commits", 0)
+
+                    # [PERFORMANCE FIX] Load the map generated in Phase 0
+                    # This avoids re-mining the repository here.
+                    churn_map = repo_data.get("churn_map", {})
+
+            except json.JSONDecodeError:
+                print("⚠️ Error decoding RepoMetrics JSON (Context missing)")
+        else:
+            print("⚠️ RepoMetrics file missing. Purity analysis may be inaccurate.")
 
         return (refm_data, total_commits, churn_map)
 
     def calculate(self, data) -> dict:
         refm_data, total_commits, churn_map = data
 
-        # [NEW] Load Heuristics
+        # Load Heuristics
         refm_conf = config.HEURISTICS.get("refactoring", {})
         CHURN_SENSITIVITY = refm_conf.get("churn_sensitivity", 20)
 
@@ -79,11 +73,13 @@ class RefmMetrics(BaseMetrics):
             count = len(refs)
             total_ops += count
 
-            # Purity Check with Configurable Heuristic
+            # Purity Check
             sha1 = commit.get("sha1")
-            churn = churn_map.get(sha1, 0)
 
-            # Use loaded CHURN_SENSITIVITY instead of hardcoded 20
+            # [FIX] Lookup churn from the loaded map
+            # We cast to int because JSON keys are always strings, but values might be strings too
+            churn = int(churn_map.get(sha1, 0))
+
             if churn > (count * CHURN_SENSITIVITY):
                 high_churn_refs += 1
 
@@ -114,7 +110,6 @@ class RefmMetrics(BaseMetrics):
         s = metrics["scope"]
         p = metrics["purity"]
 
-        # [NEW] Load Targets for Display
         refm_conf = config.HEURISTICS.get("refactoring", {})
         TARGET_DENSITY = refm_conf.get("density_target_percent", 40.0)
         TARGET_PURITY = refm_conf.get("purity_target_percent", 80.0)
@@ -130,5 +125,6 @@ class RefmMetrics(BaseMetrics):
             print(f"│   ├── {t}: {c}")
 
 
-def calculate_refm_metrics(ignored_arg=None):
+def calculate_refm_metrics():
+    # [CLEANUP] Removed unused argument 'ignored_arg'
     RefmMetrics().run_report()

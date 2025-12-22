@@ -40,10 +40,21 @@ class RepoMetrics(BaseMetrics):
         file_authors = defaultdict(set)
         pair_coupling = Counter()
 
-        # [NEW] Load Keywords from Heuristics Configuration
+        # [PERFORMANCE FIX] Map to store {commit_hash: churn_count}
+        # This prevents refm_mets.py from having to re-mine the repo later.
+        churn_map = {}
+
+        # [SCIENTIFIC CONFIGURATION]
+        # We trust config.HEURISTICS to hold the truth from heuristic_seeds.json.
+        # We do NOT hardcode fallbacks here. If the config is empty, the heuristic
+        # is effectively disabled, which is safer than hidden magic values.
         repo_conf = config.HEURISTICS.get("repo_mining", {})
-        FIX_KEYWORDS = repo_conf.get("fix_keywords", ['fix', 'bug', 'issue'])
-        REFACTOR_KEYWORDS = repo_conf.get("refactor_keywords", ['refactor', 'cleanup'])
+        FIX_KEYWORDS = repo_conf.get("fix_keywords", [])
+        REFACTOR_KEYWORDS = repo_conf.get("refactor_keywords", [])
+
+        # Optimization check (optional log to confirm keywords are loaded)
+        if not FIX_KEYWORDS:
+            print("   ⚠️ Warning: No 'fix_keywords' found in heuristic config.")
 
         for commit in Repository(str(repo_path)).traverse_commits():
             stats["total_commits"] += 1
@@ -57,28 +68,39 @@ class RepoMetrics(BaseMetrics):
             if any(kw in msg_lower for kw in REFACTOR_KEYWORDS):
                 stats["refactor_commits"] += 1
 
+            commit_churn = 0  # Track churn for THIS specific commit
             modified_java_files = []
+
             for file in commit.modified_files:
                 ext = os.path.splitext(file.filename)[1] if file.filename else ".no_ext"
                 stats["file_types"][ext] += 1
 
                 if file.filename.endswith('.java'):
                     modified_java_files.append(file.filename)
-                    churn = file.added_lines + file.deleted_lines
-                    stats["total_churn"] += churn
+
+                    # [MATH] Churn = Added + Deleted
+                    file_churn = file.added_lines + file.deleted_lines
+                    commit_churn += file_churn
+
+                    # Aggregate to global total
+                    stats["total_churn"] += file_churn
                     file_authors[file.filename].add(commit.author.name)
 
-            if len(modified_java_files) > 1:
+            # [PERFORMANCE FIX] Save the granular data
+            churn_map[commit.hash] = commit_churn
+
+            # Coupling Analysis (Optimized: Skip massive batch updates)
+            if 1 < len(modified_java_files) < 50:
                 modified_java_files.sort()
                 for i in range(len(modified_java_files)):
                     for j in range(i + 1, len(modified_java_files)):
                         pair = (modified_java_files[i], modified_java_files[j])
                         pair_coupling[pair] += 1
 
-        return (stats, file_authors, pair_coupling)
+        return (stats, file_authors, pair_coupling, churn_map)
 
     def calculate(self, data) -> dict:
-        stats, file_authors, pair_coupling = data
+        stats, file_authors, pair_coupling, churn_map = data
 
         total = stats["total_commits"]
         fix_ratio = (stats["fix_commits"] / total * 100) if total > 0 else 0
@@ -120,7 +142,9 @@ class RepoMetrics(BaseMetrics):
                 "refactor_ratio": round(refactor_ratio, 2),
                 "bus_factor": round(avg_bus_factor, 2),
                 "top_coupling": top_pair_name
-            }
+            },
+            # [CRITICAL] Export the map so refm_mets.py can use it
+            "churn_map": churn_map
         }
 
     def print_report(self, metrics: dict):
