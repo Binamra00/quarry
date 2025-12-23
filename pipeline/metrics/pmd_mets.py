@@ -21,23 +21,50 @@ class PMDMetrics(BaseMetrics):
         pmd_path = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
         repo_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
+        # [CRITICAL FIX 1.4] Batch Aggregation Logic
+        # If the standard snapshot file is missing, check if we have batch history files.
         if not pmd_path.exists():
-            print(f"⚠️ PMD file missing: {pmd_path.name}")
-            return None
+            print(f"   ⚠️ Standard PMD file ({pmd_path.name}) missing. Checking for history batch files...")
 
-        try:
-            with open(pmd_path, 'r') as f:
-                pmd_data = json.load(f)
+            # Glob for all pmd_out_*.json files
+            batch_files = list(config.OUTPUTS_PATH.glob("pmd_out_*.json"))
 
-            file_count = 1
-            if repo_path.exists():
-                with open(repo_path, 'r') as f:
-                    repo_data = json.load(f)
-                    file_count = repo_data.get("content", {}).get("java_file_count", 1)
+            if batch_files:
+                print(f"   📊 Found {len(batch_files)} batch files. Aggregating data...")
+                # Create an aggregate structure mimicking the standard PMD format
+                aggregated_data = {"files": []}
 
-            return (pmd_data, file_count)
-        except json.JSONDecodeError:
-            return None
+                for bf in batch_files:
+                    try:
+                        with open(bf, 'r') as f:
+                            data = json.load(f)
+                            # Extend the files list with data from this commit
+                            # Note: This aggregates ALL history, so density will be cumulative.
+                            if "files" in data:
+                                aggregated_data["files"].extend(data["files"])
+                    except json.JSONDecodeError:
+                        pass
+
+                # Use this aggregated data
+                pmd_data = aggregated_data
+            else:
+                print(f"   ❌ No PMD data found (Snapshot or Batch).")
+                return None
+        else:
+            # Load standard snapshot
+            try:
+                with open(pmd_path, 'r') as f:
+                    pmd_data = json.load(f)
+            except json.JSONDecodeError:
+                return None
+
+        file_count = 1
+        if repo_path.exists():
+            with open(repo_path, 'r') as f:
+                repo_data = json.load(f)
+                file_count = repo_data.get("content", {}).get("java_file_count", 1)
+
+        return (pmd_data, file_count)
 
     def calculate(self, data) -> dict:
         pmd_data, file_count = data
@@ -55,13 +82,18 @@ class PMDMetrics(BaseMetrics):
             violations = f.get("violations", [])
             count = len(violations)
             total_smells += count
-            hotspots[Path(f["filename"]).name] = count
+
+            # For history aggregation, filename might need commit hash to be unique,
+            # but for hotspot detection, aggregating by filename is actually correct
+            # (shows which file is smelly most often across history).
+            fname = Path(f["filename"]).name
+            hotspots[fname] = hotspots.get(fname, 0) + count
 
             for v in violations:
                 if v.get("rule") == COMPLEXITY_RULE_NAME:
                     desc = v.get("description", "")
                     try:
-                        # [Robustness] Added basic safety, though regex is preferred later
+                        # [Robustness] Added basic safety
                         score = int(desc.split("complexity of")[-1].strip(" ."))
                         complexity_scores.append(score)
                     except:

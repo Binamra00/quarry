@@ -3,29 +3,17 @@ from pathlib import Path
 from pipeline.adapters.i_adapter import IAdapter
 from pipeline.adapters.pmd_adapt import PMDAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
-from pipeline.adapters.pmd_refm_adapt import PMDRefmAdapter
+# [CLEANUP FIX 4.1] Import the correctly named adapter
+from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
 
 
 class ToolFactory:
     """
     Factory Method Pattern.
-    Encapsulates the instantiation logic for analysis tools.
-    Decouples the Client (main.py) from Concrete Products (Adapters).
     """
 
     @staticmethod
     def create_adapters(stage: str, target_repo_path: Path, batch_size: int = 50) -> List[IAdapter]:
-        """
-        Generates a list of tool adapters based on the requested stage.
-
-        Args:
-            stage (str): The pipeline stage ('all', 'history', 'static', 'refm', 'pmd').
-            target_repo_path (Path): The repository object to be analyzed.
-            batch_size (int): Number of commits to process per batch (for PMD History).
-
-        Returns:
-            List[IAdapter]: A list of instantiated adapters ready for execution.
-        """
         adapters = []
         stage = stage.lower()
 
@@ -35,17 +23,17 @@ class ToolFactory:
 
         # 2. PMD Strategy Selection
 
-        # OPTION A: Stateful History Batch (New Default)
+        # [CLEANUP FIX 4.2] Explicit Logic for "all"
         if stage == "all":
-            # [INJECTION] Pass batch_size to the stateful adapter
-            adapters.append(PMDRefmAdapter(target_repo_path, batch_size))
+            # "All" means full history analysis using the robust batcher
+            adapters.append(PMDHistoryAdapter(target_repo_path, batch_size))
 
-        # OPTION B: Snapshot Analysis (Legacy)
         elif stage in ["static", "pmd"]:
+            # Legacy snapshot
             adapters.append(PMDAdapter(target_repo_path))
 
-        # OPTION C: Explicit History Request
         elif stage in ["pmd_history", "pmd_refm"]:
-            adapters.append(PMDRefmAdapter(target_repo_path, batch_size))
+            # Explicit history request
+            adapters.append(PMDHistoryAdapter(target_repo_path, batch_size))
 
         return adapters

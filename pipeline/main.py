@@ -15,17 +15,16 @@ from pipeline.commands.adapter_cmd import RunToolCommand
 def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
 
-    # Dynamic Repo Switch
     parser.add_argument("--repo",
                         default="toy_project",
                         help="Name of the folder in Thesis Project/repos/ to analyze.")
 
+    # [CLEANUP FIX 4.4] Updated Help Text
     parser.add_argument("--stage",
                         choices=["all", "history", "static", "refm", "pmd", "pmd_history"],
                         default="all",
-                        help="Pipeline stage to execute. 'all' now defaults to Stateful PMD.")
+                        help="Pipeline stage. 'all' runs RefactoringMiner + PMD Stateful Batch.")
 
-    # [NEW] Batch Size Control
     parser.add_argument("--batch-size",
                         type=int,
                         default=50,
@@ -58,7 +57,6 @@ def main():
     # --- 3. Command Configuration ---
     commands: List[IPipelineCommand] = []
 
-    # [UPDATE] Pass batch_size to the factory
     active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
 
     for adapter in active_adapters:
@@ -86,13 +84,9 @@ def main():
         try:
             RefmMetrics(target_repo).run_report()
         except Exception as e:
-            # Raise to debug during development
             raise e
 
     if args.stage in ["all", "pmd", "static", "pmd_history"]:
-        # Note: PMDMetrics expects a single aggregated file.
-        # During batch processing, this file might not exist yet.
-        # The class handles missing data gracefully, so we can verify if it runs.
         try:
             PMDMetrics(target_repo).run_report()
         except Exception as e:
