@@ -1,4 +1,6 @@
+import sys
 import json
+import subprocess
 from pathlib import Path
 from typing import List
 
@@ -70,9 +72,15 @@ class PMDHistoryAdapter(IAdapter):
         skipped_count = 0
         ruleset_path = config.PMD_RULESET_PATH
 
+        # [BUG FIX] Capture the base index ONCE before the loop starts
+        # This prevents the "last_index" from compounding inside the loop
+        batch_start_index = self.state_manager.state["last_index"] + 1
+
         try:
             for i, commit_hash in enumerate(batch):
-                global_index = self.state_manager.state["last_index"] + 1 + i
+                # [BUG FIX] Calculate global index relative to the batch start
+                global_index = batch_start_index + i
+
                 ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
 
                 # [OPTIMIZATION] Check Output Exists BEFORE Checkout
@@ -96,7 +104,6 @@ class PMDHistoryAdapter(IAdapter):
 
                 if not checkout_success:
                     print(f"\n   ⚠️ Critical: Checkout failed for {commit_hash}. Marking as processed to skip.")
-                    # [ROBUSTNESS] Mark as processed even if failed, to avoid infinite loop
                     self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
                     continue
 
@@ -118,7 +125,6 @@ class PMDHistoryAdapter(IAdapter):
                     success_count += 1
                 else:
                     print(f"\n   ⚠️ PMD Failed on commit {commit_hash}. Marking processed to avoid retry loop.")
-                    # [ROBUSTNESS] Mark as processed even if failed
                     self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
 
             # [FINAL SYNC] Flush buffer
