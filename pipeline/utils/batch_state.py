@@ -56,10 +56,10 @@ class BatchStateManager:
 
         # 2. Persist to Disk (Slow - Only if requested)
         if flush:
-            self._write_to_disk()
+            self.flush()
 
-    def _write_to_disk(self):
-        """Internal method to handle the physical write."""
+    def flush(self):
+        """Public method to force write state to disk."""
         try:
             with open(self.state_file, 'w') as f:
                 json.dump(self.state, f, indent=2)
@@ -76,7 +76,7 @@ class BatchStateManager:
 
         if not batch:
             self.state["is_complete"] = True
-            self._write_to_disk()  # Ensure completion is saved
+            self.flush()  # Ensure completion is saved
             return []
 
         print(f"   📊 Batch Scope: Commits {start_index + 1} to {start_index + len(batch)} (of {len(all_commits)})")
