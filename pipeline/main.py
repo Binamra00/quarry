@@ -3,6 +3,7 @@ import argparse
 from typing import List
 
 from pipeline import config
+from pipeline.utils import adapter_subprocess
 from pipeline.metrics.repo_mets import RepoMetrics
 from pipeline.metrics.refm_mets import RefmMetrics
 from pipeline.metrics.pmd_mets import PMDMetrics
@@ -19,7 +20,6 @@ def main():
                         default="toy_project",
                         help="Name of the folder in Thesis Project/repos/ to analyze.")
 
-    # [CLEANUP FIX 4.4] Updated Help Text
     parser.add_argument("--stage",
                         choices=["all", "history", "static", "refm", "pmd", "pmd_history"],
                         default="all",
@@ -49,6 +49,15 @@ def main():
 
     # --- 2. Initial Setup (Phase 0) ---
     print("\n--- Step 1: Repository Verification ---")
+
+    print(f"   🔄 Ensuring '{target_repo.name}' is on main branch...")
+    success, _ = adapter_subprocess.run_command(
+        ["git", "checkout", "-f", "main"],
+        cwd=str(target_repo)
+    )
+    if not success:
+        print("   ⚠️ Warning: Could not checkout 'main'. Metrics might reflect Detached HEAD state.")
+
     try:
         RepoMetrics(target_repo).run_report()
     except Exception as e:
@@ -84,7 +93,7 @@ def main():
         try:
             RefmMetrics(target_repo).run_report()
         except Exception as e:
-            raise e
+            print(f"⚠️ Metrics Calc Error (RefM): {e}")
 
     if args.stage in ["all", "pmd", "static", "pmd_history"]:
         try:
