@@ -50,13 +50,46 @@ def main():
     # --- 2. Initial Setup (Phase 0) ---
     print("\n--- Step 1: Repository Verification ---")
 
-    print(f"   🔄 Ensuring '{target_repo.name}' is on main branch...")
+    # [ROBUST FIX] Dynamic Default Branch Detection
+    # Instead of assuming 'main', we ask the remote what the HEAD points to.
+    default_branch = "main"  # Reasonable fallback
+
+    print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
+
+    # Method 1: Check remote HEAD (Standard for clones)
+    # Output is usually: refs/remotes/origin/master
+    success, output = adapter_subprocess.run_command(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd=str(target_repo)
+    )
+
+    if success and output:
+        try:
+            # Parse 'refs/remotes/origin/master' -> 'master'
+            detected = output.strip().split('/')[-1]
+            if detected:
+                default_branch = detected
+                print(f"   ✅ Detected Remote HEAD: {default_branch}")
+        except Exception:
+            pass
+    else:
+        # Method 2: Fallback - Check if 'master' exists locally if remote check failed
+        s, _ = adapter_subprocess.run_command(
+            ["git", "rev-parse", "--verify", "master"],
+            cwd=str(target_repo)
+        )
+        if s:
+            default_branch = "master"
+            print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
+
+    # Perform the Force Checkout
+    print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
     success, _ = adapter_subprocess.run_command(
-        ["git", "checkout", "-f", "main"],
+        ["git", "checkout", "-f", default_branch],
         cwd=str(target_repo)
     )
     if not success:
-        print("   ⚠️ Warning: Could not checkout 'main'. Metrics might reflect Detached HEAD state.")
+        print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Metrics might reflect Detached HEAD state.")
 
     try:
         RepoMetrics(target_repo).run_report()
