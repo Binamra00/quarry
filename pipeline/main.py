@@ -15,28 +15,33 @@ from pipeline.commands.adapter_cmd import RunToolCommand
 def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
 
-    # [NEW] Dynamic Repo Switch
-    # Users can now run: python -m pipeline.main --repo commons-lang
+    # Dynamic Repo Switch
     parser.add_argument("--repo",
                         default="toy_project",
                         help="Name of the folder in Thesis Project/repos/ to analyze.")
 
     parser.add_argument("--stage",
-                        choices=["all", "history", "static", "refm", "pmd"],
-                        default="all")
+                        choices=["all", "history", "static", "refm", "pmd", "pmd_history"],
+                        default="all",
+                        help="Pipeline stage to execute. 'all' now defaults to Stateful PMD.")
+
+    # [NEW] Batch Size Control
+    parser.add_argument("--batch-size",
+                        type=int,
+                        default=50,
+                        help="Number of commits to process in the PMD history batch.")
 
     args = parser.parse_args()
 
     # --- 1. DYNAMIC TARGET RESOLUTION ---
-    # We construct the path based on the folder name passed in the argument.
     target_repo = config.REPOS_PATH / args.repo
 
     print("🚀 Starting Smell-Ranker Pipeline")
     print(f"📂 Configuration Loaded. Workspace: {config.WORKSPACE_ROOT.name}")
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
+    print(f"🎯 Batch Size: {args.batch_size}")
 
-    # Guard Clause: Prevent running on non-existent repos
     if not target_repo.exists():
         print(f"\n❌ CRITICAL ERROR: Repository not found.")
         print(f"   Looked for: {target_repo}")
@@ -53,7 +58,8 @@ def main():
     # --- 3. Command Configuration ---
     commands: List[IPipelineCommand] = []
 
-    active_adapters = ToolFactory.create_adapters(args.stage, target_repo)
+    # [UPDATE] Pass batch_size to the factory
+    active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
 
     for adapter in active_adapters:
         commands.append(RunToolCommand(adapter))
@@ -80,9 +86,13 @@ def main():
         try:
             RefmMetrics(target_repo).run_report()
         except Exception as e:
+            # Raise to debug during development
             raise e
 
-    if args.stage in ["all", "pmd", "static"]:
+    if args.stage in ["all", "pmd", "static", "pmd_history"]:
+        # Note: PMDMetrics expects a single aggregated file.
+        # During batch processing, this file might not exist yet.
+        # The class handles missing data gracefully, so we can verify if it runs.
         try:
             PMDMetrics(target_repo).run_report()
         except Exception as e:
