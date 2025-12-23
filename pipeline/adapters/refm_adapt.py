@@ -26,7 +26,9 @@ class RefactoringMinerAdapter(IAdapter):
 
     def _get_all_commits(self, repo_path: Path) -> List[str]:
         """Helper: Retrieves SHA-1 hashes of commits modifying .java files."""
-        cmd = ["git", "rev-list", "--all", "--reverse", "--", "*.java"]
+        # [PHASE 0 FIX] Changed '--all' to 'HEAD' to only mine the main branch.
+        # This prevents analyzing dead feature branches.
+        cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(repo_path))
 
         if success and output:
