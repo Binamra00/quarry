@@ -99,10 +99,12 @@ class PMDMetrics(BaseMetrics):
             for v in violations:
                 if v.get("rule") == COMPLEXITY_RULE_NAME:
                     desc = v.get("description", "")
+                    # [REFACTOR] Specific Exception Handling
+                    # Catches parsing errors, but lets SystemExit/KeyboardInterrupt through
                     try:
                         score = int(desc.split("complexity of")[-1].strip(" ."))
                         complexity_scores.append(score)
-                    except:
+                    except (ValueError, IndexError, AttributeError):
                         pass
 
         density = total_smells / file_count if file_count > 0 else 0
