@@ -190,24 +190,37 @@ python3 -m venv venv
 
 pip install -r requirements.txt
 ```
-## 3. Prepare Your Target Repository
+### 3. Prepare Your Target Repository
 
-The pipeline does **not** auto-clone your target repository (except for `toy_project` in debug mode).  
-You must manually clone the repository you wish to analyze into the `repos/` folder.
+The pipeline analyzes repositories located in `smell-ranker/workspace_data/repos/`. You must set this up manually before running the analysis.
 
-Run the tool once to initialize the workspace structure:
+**Step A: Initialize the Workspace** Run the pipeline's help command. This triggers the configuration script, which automatically creates the required `workspace_data` folder structure inside the project.
 
 ```bash
+# Ensure you are in the 'smell-ranker' root directory
 python -m pipeline.main --help
 ```
-This creates the `workspace_data/repos` directory.
+You should now see a new folder named `workspace_data` in your project root.
 
-Clone your target repository (e.g., `commons-lang`):
+**Step B: Clone Your Target**
+
+Navigate into the newly created `repos` folder and clone the project you want to analyze.
 
 ```bash
 cd workspace_data/repos
+
+# Example: Clone Apache Commons Lang
 git clone https://github.com/apache/commons-lang.git
 ```
+
+**Step C: Return to Root**
+
+Go back to the main `smell-ranker` directory to run the pipeline:
+
+```bash
+cd ../..
+```
+
 ## 4. Run the Pipeline
 
 You can now analyze the repository you just cloned.
