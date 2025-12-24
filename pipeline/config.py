@@ -77,7 +77,7 @@ PMD_RULESET_PATH = RULES_DIR / "pmd_rules_00.xml"
 
 # --- 8. UTILITIES ---
 def escape_path(path_obj):
-    return str(path_obj).replace(" ", "\\ ")
+    return str(path_obj).replace(" ", "\\\\ ")
 
 PMD_PATH_ESCAPED = escape_path(PMD_PATH)
 RM_PATH_ESCAPED = escape_path(RM_PATH)
@@ -105,3 +105,6 @@ else:
             "refactor_keywords": ['refactor', 'cleanup']
         }
     }
+
+# --- 10. CONSTANTS (NEW) ---
+VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history"]

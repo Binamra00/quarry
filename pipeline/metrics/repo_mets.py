@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from collections import defaultdict, Counter
 from pathlib import Path
@@ -23,8 +24,8 @@ class RepoMetrics(BaseMetrics):
 
     def load_data(self):
         if not Repository:
-            print("CRITICAL ERROR: PyDriller not installed.")
-            return None
+            print("❌ CRITICAL ERROR: PyDriller not installed. Stopping execution.")
+            sys.exit(1)
 
         # [OPTIMIZATION] Smart Skip
         # Check if metrics already exist to avoid re-mining (which is slow)

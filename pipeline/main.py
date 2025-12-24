@@ -21,7 +21,7 @@ def main():
                         help="Name of the folder in Thesis Project/repos/ to analyze.")
 
     parser.add_argument("--stage",
-                        choices=["all", "history", "static", "refm", "pmd", "pmd_history"],
+                        choices=config.VALID_STAGES,
                         default="all",
                         help="Pipeline stage. 'all' runs RefactoringMiner + PMD Stateful Batch.")
 
