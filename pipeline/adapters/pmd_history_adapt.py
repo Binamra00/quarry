@@ -1,6 +1,4 @@
-import sys
 import json
-import subprocess
 from pathlib import Path
 from typing import List
 
@@ -82,7 +80,9 @@ class PMDHistoryAdapter(IAdapter):
         success_count = 0
         skipped_count = 0
         ruleset_path = config.PMD_RULESET_PATH
-        batch_start_index = self.state_manager.state["last_index"] + 1
+
+        # [REFACTOR] Use the new encapsulated getter
+        batch_start_index = self.state_manager.get_next_start_index()
 
         # [LOGGING] Open log file in Append mode to preserve history across batches
         with open(log_path, "a") as log_file:

@@ -39,6 +39,11 @@ class BatchStateManager:
             "is_complete": False
         }
 
+    # [REFACTOR] NEW METHOD: Encapsulate the index calculation logic
+    def get_next_start_index(self) -> int:
+        """Returns the 0-based global index where the next batch should begin."""
+        return self.state["last_index"] + 1
+
     def save_progress(self, commit_hash: str, index: int, total: int, flush: bool = True):
         """
         Updates memory state immediately. Writes to disk only if flush=True.
@@ -70,7 +75,8 @@ class BatchStateManager:
         if self.state["is_complete"]:
             return []
 
-        start_index = self.state["last_index"] + 1
+        # [REFACTOR] Use the internal method here too for consistency
+        start_index = self.get_next_start_index()
         end_index = start_index + batch_size
         batch = all_commits[start_index:end_index]
 
