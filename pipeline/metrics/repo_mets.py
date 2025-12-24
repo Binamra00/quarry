@@ -26,6 +26,25 @@ class RepoMetrics(BaseMetrics):
             print("CRITICAL ERROR: PyDriller not installed.")
             return None
 
+        # [OPTIMIZATION] Smart Skip
+        # Check if metrics already exist to avoid re-mining (which is slow)
+        output_path = self.get_output_path()
+        if output_path.exists():
+            try:
+                with open(output_path, 'r') as f:
+                    cached_data = json.load(f)
+
+                # Basic validation to ensure it's not empty
+                if "history" in cached_data and "total_commits" in cached_data["history"]:
+                    print(f"   ✅ Baseline metrics found ({output_path.name}). Skipping re-mining.")
+                    return cached_data
+                else:
+                    print("   ⚠️ Cached metrics file incomplete. Re-mining...")
+            except json.JSONDecodeError:
+                print("   ⚠️ Corrupt metrics file. Re-mining.")
+            except Exception as e:
+                print(f"   ⚠️ Error reading cache: {e}. Re-mining.")
+
         # [DECOUPLING] Use injected path
         repo_path = self.target_repo_path
         print(f"   ... ⛏️ Mining raw history from: {repo_path.name}")
@@ -88,6 +107,10 @@ class RepoMetrics(BaseMetrics):
         return (stats, file_authors, pair_coupling, churn_map)
 
     def calculate(self, data) -> dict:
+        # [OPTIMIZATION] If data is already the cached dictionary, return it immediately
+        if isinstance(data, dict) and "history" in data:
+            return data
+
         stats, file_authors, pair_coupling, churn_map = data
 
         total = stats["total_commits"]
