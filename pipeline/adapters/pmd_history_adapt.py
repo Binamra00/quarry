@@ -22,6 +22,11 @@ class PMDHistoryAdapter(IAdapter):
         self.batch_size = batch_size
         self.state_manager = BatchStateManager(target_repo_path.name, "pmd_history")
 
+        # [ORGANIZATION] Define a dedicated subfolder for raw batch files
+        self.raw_output_dir = config.OUTPUTS_PATH / "pmd_raw" / self.target_repo_path.name
+        if not self.raw_output_dir.exists():
+            self.raw_output_dir.mkdir(parents=True, exist_ok=True)
+
     def get_tool_name(self) -> str:
         return f"PMD History (Stateful Batch: {self.batch_size})"
 
@@ -73,7 +78,6 @@ class PMDHistoryAdapter(IAdapter):
         ruleset_path = config.PMD_RULESET_PATH
 
         # [BUG FIX] Capture the base index ONCE before the loop starts
-        # This prevents the "last_index" from compounding inside the loop
         batch_start_index = self.state_manager.state["last_index"] + 1
 
         try:
@@ -83,8 +87,8 @@ class PMDHistoryAdapter(IAdapter):
 
                 ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
 
-                # [OPTIMIZATION] Check Output Exists BEFORE Checkout
-                commit_output_path = config.OUTPUTS_PATH / f"pmd_out_{commit_hash}.json"
+                # [ORGANIZATION] Save to subfolder
+                commit_output_path = self.raw_output_dir / f"pmd_out_{commit_hash}.json"
 
                 if commit_output_path.exists() and commit_output_path.stat().st_size > 0:
                     try:
