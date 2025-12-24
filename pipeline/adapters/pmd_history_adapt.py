@@ -31,11 +31,13 @@ class PMDHistoryAdapter(IAdapter):
         return f"PMD History (Stateful Batch: {self.batch_size})"
 
     def get_output_path(self) -> Path:
-        return config.OUTPUTS_PATH / f"pmd_history_batch_log_{self.target_repo_path.name}.json"
+        # This file is now used as the execution log
+        return config.OUTPUTS_PATH / f"pmd_history_execution_{self.target_repo_path.name}.log"
 
     def _get_commit_list(self) -> List[str]:
+        # Silence this check too
         cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
-        success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path))
+        success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
         if success and output:
             return output.strip().split('\n')
         return []
@@ -43,10 +45,11 @@ class PMDHistoryAdapter(IAdapter):
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
 
-        # Pre-Flight Check
+        # Pre-Flight Check (Quietly)
         status_success, status_out = adapter_subprocess.run_command(
             ["git", "status", "--porcelain"],
-            cwd=str(self.target_repo_path)
+            cwd=str(self.target_repo_path),
+            verbose=False
         )
         if status_success and status_out.strip():
             print("❌ CRITICAL: Repository has uncommitted changes.")
@@ -66,78 +69,103 @@ class PMDHistoryAdapter(IAdapter):
         current_branch = "main"
         success, output = adapter_subprocess.run_command(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(self.target_repo_path)
+            cwd=str(self.target_repo_path),
+            verbose=False
         )
         if success and output:
             current_branch = output.strip()
 
         print(f"   🚀 Processing Batch: {len(batch)} commits")
+        log_path = self.get_output_path()
+        print(f"   📝 Detailed execution log: {log_path.name}")
 
         success_count = 0
         skipped_count = 0
         ruleset_path = config.PMD_RULESET_PATH
-
-        # [BUG FIX] Capture the base index ONCE before the loop starts
         batch_start_index = self.state_manager.state["last_index"] + 1
 
-        try:
-            for i, commit_hash in enumerate(batch):
-                # [BUG FIX] Calculate global index relative to the batch start
-                global_index = batch_start_index + i
+        # [LOGGING] Open log file in Append mode to preserve history across batches
+        with open(log_path, "a") as log_file:
+            log_file.write(
+                f"\n\n--- Batch Execution Start: {len(batch)} commits (Indices {batch_start_index}-{batch_start_index + len(batch)}) ---\n")
 
-                ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
+            try:
+                for i, commit_hash in enumerate(batch):
+                    global_index = batch_start_index + i
 
-                # [ORGANIZATION] Save to subfolder
-                commit_output_path = self.raw_output_dir / f"pmd_out_{commit_hash}.json"
+                    # [UI] Update Progress Bar (Console)
+                    ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
 
-                if commit_output_path.exists() and commit_output_path.stat().st_size > 0:
-                    try:
-                        with open(commit_output_path, 'r') as f:
-                            json.load(f)
+                    # [LOG] Write intent to file
+                    log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
 
-                        # [LAZY PERSISTENCE] Update memory, skip I/O
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
-                        skipped_count += 1
+                    commit_output_path = self.raw_output_dir / f"pmd_out_{commit_hash}.json"
+
+                    if commit_output_path.exists() and commit_output_path.stat().st_size > 0:
+                        try:
+                            with open(commit_output_path, 'r') as f:
+                                json.load(f)
+                            self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                            skipped_count += 1
+                            log_file.write("Skipped (Output exists)\n")
+                            continue
+                        except json.JSONDecodeError:
+                            log_file.write("Output corrupt. Re-running.\n")
+
+                    # A. Time Travel (Quiet Mode)
+                    log_file.write(f"[EXEC] git checkout -f {commit_hash}\n")
+                    checkout_cmd = ["git", "checkout", "-f", commit_hash]
+                    checkout_success, checkout_out = adapter_subprocess.run_command(
+                        checkout_cmd,
+                        cwd=str(self.target_repo_path),
+                        verbose=False
+                    )
+
+                    if not checkout_success:
+                        error_msg = f"Checkout failed: {checkout_out}\n"
+                        log_file.write(error_msg)
+                        # We print critical errors to console even in quiet mode
+                        ui_strategy.clear_line()
+                        print(f"   ⚠️ Checkout failed for {commit_hash}. Check logs.")
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
                         continue
-                    except json.JSONDecodeError:
-                        pass  # File corrupt, re-run
 
-                # A. Time Travel
-                checkout_cmd = ["git", "checkout", "-f", commit_hash]
-                checkout_success, _ = adapter_subprocess.run_command(checkout_cmd, cwd=str(self.target_repo_path))
+                    # B. Run PMD (Quiet Mode)
+                    log_file.write(f"[EXEC] pmd check ...\n")
+                    pmd_cmd = [
+                        str(config.PMD_PATH), "check",
+                        "-d", str(self.target_repo_path),
+                        "-R", str(ruleset_path),
+                        "-f", "json",
+                        "-r", str(commit_output_path),
+                        "--no-cache"
+                    ]
 
-                if not checkout_success:
-                    print(f"\n   ⚠️ Critical: Checkout failed for {commit_hash}. Marking as processed to skip.")
-                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
-                    continue
+                    pmd_success, pmd_out = adapter_subprocess.run_command(
+                        pmd_cmd,
+                        allowed_exit_codes=[0, 4],
+                        verbose=False
+                    )
 
-                # B. Run PMD
-                pmd_cmd = [
-                    str(config.PMD_PATH), "check",
-                    "-d", str(self.target_repo_path),
-                    "-R", str(ruleset_path),
-                    "-f", "json",
-                    "-r", str(commit_output_path),
-                    "--no-cache"
-                ]
+                    # C. Update State
+                    if pmd_success:
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
+                        success_count += 1
+                        log_file.write("PMD Success\n")
+                    else:
+                        log_file.write(f"PMD Failed: {pmd_out}\n")
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
 
-                pmd_success, _ = adapter_subprocess.run_command(pmd_cmd, allowed_exit_codes=[0, 4])
+                self.state_manager.flush()
 
-                # C. Update State
-                if pmd_success:
-                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
-                    success_count += 1
-                else:
-                    print(f"\n   ⚠️ PMD Failed on commit {commit_hash}. Marking processed to avoid retry loop.")
-                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
-
-            # [FINAL SYNC] Flush buffer
-            self.state_manager.flush()
-
-        finally:
-            ui_strategy.clear_line()
-            print(f"   🔙 Restoring branch: {current_branch}...")
-            adapter_subprocess.run_command(["git", "checkout", "-f", current_branch], cwd=str(self.target_repo_path))
+            finally:
+                ui_strategy.clear_line()
+                print(f"   🔙 Restoring branch: {current_branch}...")
+                adapter_subprocess.run_command(
+                    ["git", "checkout", "-f", current_branch],
+                    cwd=str(self.target_repo_path),
+                    verbose=False
+                )
 
         print(f"✅ Batch Complete. Processed {success_count} new, Skipped {skipped_count} existing.")
         return True
