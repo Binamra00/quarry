@@ -20,35 +20,53 @@ class PMDMetrics(BaseMetrics):
         pmd_path = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
         repo_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
-        # [CRITICAL FIX 1.4] Batch Aggregation Logic
-        if not pmd_path.exists():
-            print(f"   ⚠️ Standard PMD file ({pmd_path.name}) missing. Checking for history batch files...")
+        # [ORGANIZATION] Search in the new raw subfolder first
+        raw_batch_dir = config.OUTPUTS_PATH / "pmd_raw" / project_name
 
-            batch_files = list(config.OUTPUTS_PATH.glob("pmd_out_*.json"))
+        aggregated_data = {"files": []}
+        found_data = False
 
+        # Strategy 1: Check for Batch Files in Subfolder
+        if raw_batch_dir.exists():
+            batch_files = list(raw_batch_dir.glob("pmd_out_*.json"))
             if batch_files:
-                print(f"   📊 Found {len(batch_files)} batch files. Aggregating data...")
-                aggregated_data = {"files": []}
-
+                print(f"   📊 Found {len(batch_files)} batch files in {raw_batch_dir.name}. Aggregating...")
                 for bf in batch_files:
                     try:
                         with open(bf, 'r') as f:
                             data = json.load(f)
                             if "files" in data:
                                 aggregated_data["files"].extend(data["files"])
-                    except Exception as e:
-                        print(f"    Skipping invalid JSON batch file: {bf.name}")
+                    except Exception:
+                        pass
+                found_data = True
 
-                pmd_data = aggregated_data
-            else:
-                print(f"   ❌ No PMD data found (Snapshot or Batch).")
-                return None
-        else:
+        # Strategy 2: Fallback to root (Legacy Support)
+        if not found_data:
+            batch_files_legacy = list(config.OUTPUTS_PATH.glob("pmd_out_*.json"))
+            if batch_files_legacy:
+                print(f"   ⚠️ Found legacy batch files in root. Aggregating...")
+                for bf in batch_files_legacy:
+                    try:
+                        with open(bf, 'r') as f:
+                            data = json.load(f)
+                            if "files" in data:
+                                aggregated_data["files"].extend(data["files"])
+                    except Exception:
+                        pass
+                found_data = True
+
+        # Strategy 3: Standard Snapshot File
+        if not found_data and pmd_path.exists():
             try:
                 with open(pmd_path, 'r') as f:
-                    pmd_data = json.load(f)
+                    return (json.load(f), 1)  # Return immediately
             except json.JSONDecodeError:
                 return None
+
+        if not found_data:
+            print(f"   ❌ No PMD data found.")
+            return None
 
         file_count = 1
         if repo_path.exists():
@@ -56,7 +74,7 @@ class PMDMetrics(BaseMetrics):
                 repo_data = json.load(f)
                 file_count = repo_data.get("content", {}).get("java_file_count", 1)
 
-        return (pmd_data, file_count)
+        return (aggregated_data, file_count)
 
     def calculate(self, data) -> dict:
         pmd_data, file_count = data

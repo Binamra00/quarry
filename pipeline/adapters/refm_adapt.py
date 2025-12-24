@@ -27,7 +27,6 @@ class RefactoringMinerAdapter(IAdapter):
     def _get_all_commits(self, repo_path: Path) -> List[str]:
         """Helper: Retrieves SHA-1 hashes of commits modifying .java files."""
         # [PHASE 0 FIX] Changed '--all' to 'HEAD' to only mine the main branch.
-        # This prevents analyzing dead feature branches.
         cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(repo_path))
 
@@ -50,6 +49,23 @@ class RefactoringMinerAdapter(IAdapter):
         if total_commits == 0:
             print("❌ No commits found to analyze.")
             return False
+
+        # [OPTIMIZATION] Smart Skip
+        # If the output file exists and has the same number of commits, skip execution.
+        if final_json_path.exists():
+            try:
+                with open(final_json_path, 'r') as f:
+                    data = json.load(f)
+                    processed_count = len(data.get("commits", []))
+
+                if processed_count >= total_commits:
+                    print(f"✅ Analysis already complete ({processed_count}/{total_commits} commits). Skipping.")
+                    return True
+                else:
+                    print(
+                        f"⚠️ Partial data found ({processed_count}/{total_commits}). Re-running to ensure consistency.")
+            except Exception:
+                print("⚠️ Corrupt output file detected. Re-running.")
 
         print(f"🎯 Target Analysis: {total_commits} commits found.")
         print(f"   📝 Logging raw output to: {log_path.name}")
