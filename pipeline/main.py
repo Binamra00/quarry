@@ -66,11 +66,13 @@ def main():
     if success and output:
         try:
             # Parse 'refs/remotes/origin/master' -> 'master'
-            detected = output.strip().split('/')[-1]
-            if detected:
-                default_branch = detected
+            # [REFACTOR] Renamed variable and specific exception handling
+            detected_branch = output.strip().split('/')[-1]
+            if detected_branch:
+                default_branch = detected_branch
                 print(f"   ✅ Detected Remote HEAD: {default_branch}")
-        except Exception:
+        except (IndexError, AttributeError):
+            # Fallback will handle this silently
             pass
     else:
         # Method 2: Fallback - Check if 'master' exists locally if remote check failed
