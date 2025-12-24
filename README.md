@@ -1,7 +1,7 @@
 # Smell-Ranker: Infrastructure & Architecture Documentation
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.5 (Phase 2.1 – Refactoring Complete)
+**Version:** 0.6 (Phase 3.2 – Stateful & Universal Pipeline)
 
 ---
 
@@ -9,21 +9,21 @@
 
 **Smell-Ranker** is an automated pipeline designed to generate a **“Fortified Ground Truth”** for code smell prioritization. It achieves this by mining software repositories to extract objective developer actions (refactoring, bug-fixing) and using them to score code smells detected by static analysis.
 
-The system operates on a **Hybrid Workflow** that leverages three distinct environments to ensure persistence, scalability, and reproducibility.
+The system operates on a **Universal Hybrid Workflow** that leverages three distinct environments to ensure persistence, scalability, and reproducibility.
 
 ### The Hybrid Workflow
 
 The architecture splits responsibilities across three layers:
 
-- **Persistent Storage (Google Drive):** Holds the “state” of the project (tools, input data, results).
+- **Persistent Storage (Google Drive / Local Disk):** Holds the “state” of the project (tools, input data, results).
 - **Development Environment (Local/GitHub):** Where the logic is written and versioned.
-- **Runtime Environment (Google Colab):** A disposable compute engine that executes the logic.
+- **Runtime Environment (Google Colab / Docker / Local):** A compute engine that executes the logic. The pipeline automatically detects its environment and adapts filesystem paths accordingly.
 
 ---
 
 ## 2. File Structure & Organization
 
-### A. Local Development (`smell-ranker/`)
+### A. Source Code (`smell-ranker/`)
 
 This is the source of truth for all code. It is version-controlled on GitHub.
 
@@ -34,7 +34,8 @@ smell-ranker/
 │ │ ├── init.py # Exposes adapters to the main pipeline
 │ │ ├── i_adapter.py # Interface for all adapters  
 │ │ ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
-│ │ └── pmd_adapt.py # Wrapper for PMD CLI logic
+│ │ ├── pmd_adapt.py # Standard PMD Adapter (Snapshot)
+│ │ └── pmd_history_adapt.py # Stateful Adapter for Time-Travel Analysis
 │ │
 │ ├── bin/ # Executable Shell Scripts (Entry Points)
 │ │ ├── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
@@ -49,12 +50,12 @@ smell-ranker/
 │ │ ├── init.py # Exposes factories to the main pipeline
 │ │ └── adapter_fact.py # Factory to create adapters based on tool name
 │ │
-│ ├── metrics/ # Metrics classes to generate analysis from adpaters output (Template Method Pattern)
+│ ├── metrics/ # Metrics classes to generate analysis from adapters output
 │ │ ├── init.py # Exposes metrics to the main pipeline
-│ │ ├── refm_mets.py # Metrics to analyze refm output
-│ │ ├── repo_mets.py # Base metrics for all repos
-│ │ └── pmd_mets.py # Metrics to analyze PMD output
-│ │ └── temp_mets.py # Template to reduce process duplication for adapter metrics classes
+│ │ ├── refm_mets.py # Metrics to analyze refm output (Purity, Signal)
+│ │ ├── repo_mets.py # Base metrics for all repos (Churn, Bus Factor)
+│ │ ├── pmd_mets.py # Metrics to analyze PMD output (Density, Hotspots)
+│ │ └── temp_mets.py # Template Method pattern for reporting lifecycle
 │ │
 │ │── rulesets/
 │ │ └── pmd_rules_00.xml # PMD Ruleset Configuration
@@ -63,157 +64,211 @@ smell-ranker/
 │ │ ├── init.py # Exposes utilities to the app
 │ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
 │ │ ├── ui_strategy.py # Universal Console output formatting (Strategy Pattern)
-│ │ └── allocate_tools.py # Locates tools in Drive if not present creates them at workspace root
+│ │ ├── batch_state.py # Stateful Manager for resumable batch processing
+│ │ └── allocate_tools.py # Auto-provisions external tools (PMD/RefM)
 │ │
 │ ├── main.py # FACADE: Main Python entry point
-│ ├── heuristic_seeds.json # Heuristic Thresholds to guide metirc analysis
-│ └──config.py # CONFIG: All paths (Drive, Tools) and settings
+│ ├── heuristic_seeds.json # Heuristic Thresholds to guide metric analysis
+│ └── config.py # CONFIG: Dynamic path resolution and settings
 │ 
 └── docs/ # Project Documentation
 │   └── Master Thesis Log.pdf
 └── .env
 └── .gitignore
-└──  requirements.txt
-└── .README.md
+└── requirements.txt
+└── README.md
 ```
-
----
-
-### B. Persistent Storage (Google Drive: `Thesis_Project/`)
-
-This folder structure is manually created once and persists across Colab sessions.
-
-```commandline
-Thesis_Project/
-├── tools/ # External Binaries
-│ ├── pmd-bin-7.18.0/ # PMD Static Analyzer
-│ └── RefactoringMiner_v3/ # RefactoringMiner (built from source)
-│
-├── repos/ # Input Data
-│ └── toy_project/ # 'refactoring-toy-example'
-│
-├── scripts/ # Code Sync Target
-│ └── (The 'smell-ranker' repo is cloned here)
-│
-└── outputs/ # Experiment Results
-├── refactorings.json # Output from Pass 1 (complete history)
-└── pmd_report.xml # Output from Pass 2
-```
-
----
-
 ## 3. Execution Flow (The “How-To”)
 
-The system is designed to be run from Google Colab, triggered by the  
-`01_pipeline_execution.ipynb` notebook.
+The system is designed to be run from **Google Colab** or a **local machine**.
+
+---
 
 ### Step 1: Initialization
 
-- **Trigger:** User runs `!bash exec_pipeline.sh` in Colab.
-- **Action:**  
-  `exec_pipeline.sh` detects its location, calculates the repository root, and calls `colab_env_setup.sh`.
-- **Result:**  
-  - Google Drive is mounted  
-  - `openjdk-17-jdk` is installed  
-  - `pydriller` is installed  
+**Trigger**
+- User runs:
+  - `!bash exec_pipeline.sh` (Colab)  
+  - `python -m pipeline.main` (Local)
+
+**Action**
+- The system detects the environment.
+  - **Colab**: Mounts Google Drive
+  - **Local**: Creates a `workspace_data/` directory
+
+**Result**
+- Tools (PMD, RefactoringMiner) are downloaded and provisioned automatically
+- Target repositories are cloned if missing
 
 ---
 
-### Step 2: Synchronization
+### Step 2: Analysis Phases
 
-- **Trigger:** `exec_pipeline.sh` calls `colab_git_setup_smell_ranker.sh` with the Git URL.
-- **Action:**  
-  The script checks whether `Thesis_Project/scripts/` already contains a Git repository.
-  - **If No:** runs `git clone` using the injected secure token  
-  - **If Yes:** runs `git pull`
-- **Result:**  
-  The Python code in Google Drive is identical to the local PyCharm/GitHub version.
+The pipeline executes the following stages sequentially or individually via flags.
 
 ---
 
-### Step 3: Execution
+#### Phase 0: Metric Verification
 
-- **Trigger:**  
-  `exec_pipeline.sh` sets executable permissions and calls:
+- **Module**: `repo_metrics.py`
+- **Action**: Mines the total commit history to calculate project stats (LOC, Churn, Age)
+- **Output**:  
+  - `repo_metrics_[repo_name].json`  
+  - Includes Churn Map
+
+---
+
+#### Phase 1: History Mining
+
+- **Module**: `refm_adapt.py`
+- **Strategy**: Forced-Loop  
+  Iterates explicitly through `git rev-list` to capture all commits (including detached heads) while filtering out non-code noise.
+- **Optimization**: Smart Skipping to bypass already processed commits
+- **Output**:  
+  - `refactorings_[repo_name].json`
+
+---
+
+#### Phase 2: Stateful Candidate Generation
+
+- **Module**: `pmd_history_adapt.py`
+- **Strategy**: Time-Travel Batching
+- **Stateful**: Uses `BatchStateManager` to track progress commit-by-commit  
+  - Resumes instantly after crashes
+- **Buffered**: Lazy Flushing to minimize disk I/O
+- **Silent Mode**:  
+  - Redirects verbose logs to `pmd_history_execution.log` to keep the console clean
+- **Output**:  
+  - `outputs/pmd_raw/[repo_name]/pmd_out_[sha].json` (thousands of files)
+
+---
+
+#### Phase 3: Aggregation & Metrics
+
+- **Module**: `pmd_mets.py`
+- **Action**: Aggregates fragmented batch files into a unified dataset
+- **Metrics**:
+  - Smell Density
+  - Intensity
+  - Hotspots
+- **Output**:  
+  - `pmd_metrics_[repo_name].json`
+
+---
+
+## 4. 🚀 Local Installation & Usage
+
+You can run **Smell-Ranker** on your local machine (Windows / Linux / macOS).  
+The system is fully self-contained.
+
+---
+
+### Prerequisites
+
+- Python 3.10+
+- Java 21 (required for PMD 7.x)
+- Git installed and accessible in `PATH`
+
+---
+
+### 1. Clone the Repository
 
 ```bash
-  python3 -m pipeline.main
- ```
+git clone https://github.com/Binamra00/smell-ranker.git
+cd smell-ranker
+```
+## 2. Setup Python Environment
 
-- **Action:**  
-- Python starts
-- `main.py` imports `config.py` and the adapters module
+It is recommended to use a virtual environment.
 
-#### Process
+```bash
+python3 -m venv venv
 
-- **Phase 0 (Metric Verification):**  
-Runs `repo_metrics.py` to mine the total commit history and calculate project stats (LOC, Churn, Age). Generates `repo_metrics_[repo_name].json`.
-- **Phase 1 (Analysis - Smoke Test):**  
-Calls `refm_adapt.run_rm_smoke_test()` to execute RefactoringMiner.
-  - *Forced-Loop Strategy:*  Iterates explicitly through the `git rev-list` to capture all commits, but filters for `*.java` files.
-  - Generates `refactorings.json`.
-- **Phase 1 (Metrics):** 
-    - Parses `refactorings_[repo_name].json` and calls `refm_mets.calculate_refm_metrics()` to calculate:
-        - Refactoring Density
-        - Commit Purity Score
-        - Signal Strength
-    - Outputs `refactoring_metrics_[repo_name].json`.
-- **Phase 2 (Candidate Generation):**
-    - Calls `pmd_adapt.run_pmd_smoke_test()` using the `pmd_rules_00.xml` ruleset to generate `pmd_candidates_toy_project.json`.
-- **Phase 2 (Metrics):** 
-    - Parses `pmd_[repo_name].json` and calls `pmd_mets.calculate_pmd_metrics()` to calculate:
-        - Smell Density
-        - Smell Intensity
-        - Rule Taxanomy
-        - Method Complexity Mean
-    - Outputs `pmd_metrics_[repo_name].json`.
-- **Phase 2.1 (Refactoring):**  
-    - *Architecture Hardening:* Refactored the monolithic script into a scalable architecture using Factory, Command, Adapter, Template Method, and Strategy design patterns.
-    - *Configuration Management:* Externalized hardcoded scientific heuristics (churn thresholds, rule weights) into `heuristic_params.json` for easier sensitivity analysis.
-    - *DevOps:* Implemented universal environment detection (Docker/Colab/Local) and silent logging mode to handle large-scale execution logs robustly.
+# Activate:
+# Linux/Mac: source venv/bin/activate
+# Windows:   venv\Scripts\activate
+
+pip install -r requirements.txt
+```
+## 3. Prepare Your Target Repository
+
+The pipeline does **not** auto-clone your target repository (except for `toy_project` in debug mode).  
+You must manually clone the repository you wish to analyze into the `repos/` folder.
+
+Run the tool once to initialize the workspace structure:
+
+```bash
+python -m pipeline.main --help
+```
+This creates the `workspace_data/repos` directory.
+
+Clone your target repository (e.g., `commons-lang`):
+
+```bash
+cd workspace_data/repos
+git clone https://github.com/apache/commons-lang.git
+```
+## 4. Run the Pipeline
+
+You can now analyze the repository you just cloned.
+
+```bash
+# General Syntax
+# --repo must match the folder name inside workspace_data/repos/
+python3 -m pipeline.main --repo commons-lang --stage all --batch-size 50
+```
+### Tools
+- PMD and RefactoringMiner are downloaded automatically to:  
+  `workspace_data/tools` (on first run)
+
+### Results
+- Output JSON files appear in:  
+  `workspace_data/outputs`
+
+### Logs
+- Execution logs are saved to:  
+  `workspace_data/outputs/pmd_history_execution_[repo].log`
+
 ---
 
-## 4. Design Principles & Patterns
+## 5. Design Principles & Patterns
 
-The architecture adheres strictly to software engineering best practices to ensure thesis defensibility.
+The architecture adheres strictly to software engineering best practices.
 
 | Principle | Implementation |
-|----------|----------------|
-| Separation of Concerns (SoC) | Logic (`pipeline/`), configuration (`config.py`), and adapters (`pipeline/adapters/`) are strictly distinct. |
-| Single Responsibility (SRP) | Each adapter handles exactly one tool; `ui.py` handles strictly display logic. |
-| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects, decoupling the request from the execution. |
-| Adapter Pattern | `IAdapter` interface standardizes diverse tools (Java-based PMD, Git-based RefactoringMiner) into a uniform Python contract. |
-| Open/Closed Principle (OCP) | The pipeline is open for extension (add new `SonarAdapter`) but closed for modification (no changes needed in `main.py`). |
-| Strategy Pattern | `ui.py` dynamically selects the visualization strategy (Jupyter Widget vs. standard `\r`) based on the runtime environment. |
-| DRY (Don’t Repeat Yourself) | `cmd_subprocess.py` centralizes all shell execution, error handling, and file streaming logic. |
-| Factory Method Pattern | `adapter_fact.py` encapsulates the logic for instantiating the correct tool adapters based on the requested stage. |
-| Template Method Pattern | `temp_mets.py` defines the skeleton algorithm for metric reporting, enforcing a consistent lifecycle across all metric calculators. |
+|---------|----------------|
+| Separation of Concerns | Logic (`pipeline/`), configuration (`config.py`), and adapters (`pipeline/adapters/`) are strictly distinct |
+| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects |
+| Adapter Pattern | `IAdapter` interface standardizes diverse tools (PMD, RefactoringMiner) |
+| Factory Method | `ToolFactory` encapsulates adapter instantiation logic |
+| Template Method | `BaseMetrics` defines the skeleton algorithm for metric reporting |
+| Strategy Pattern | `ui_strategy.py` selects visualization (Jupyter Widget vs. standard `\r`) |
+| Fail-Fast | Critical dependencies (e.g., PyDriller) are checked at startup |
+
 ---
 
-## 5. Toolchain Configuration
+## 6. Toolchain Configuration
 
 ### RefactoringMiner
-
-- **Version:** 3.0 (built from source)
-- **Build Requirement:** Java 17 (JDK)
-- **Role:** Pass 1 – History mining
-- **Execution Strategy:**  
-*Forced Loop* (explicit iteration over all commits via git rev-list --all --reverse -- *.java). This captures detached/merge history while filtering out non-code noise (e.g., docs/builds).
-
----
+- **Version**: 3.0.12
+- **Build Requirement**: Java 17+
+- **Role**: Pass 1 – History mining
 
 ### PMD
-
-- **Version:** 7.18.0 (binary distribution)
-- **Role:** Pass 2 – Candidate generation
-- **Detected Smells:** God Class, Long Method, Feature Envy
-- **Justification:**  
-Chosen over JDeodorant for feasibility and command-line compatibility.
+- **Version**: 7.19.0
+- **Role**: Pass 2 – Candidate generation
+- **Detected Smells**:
+  - God Class
+  - Long Method
+  - Feature Envy
+  - Cyclomatic Complexity
 
 ---
 
-## 6. Future Roadmap
+## 7. Future Roadmap
 
-- **Phase 3:** Implement `pass_1_fast_scan.py` to parse RefactoringMiner JSON output
-- **Phase 4:** Implement `pass_2_slow_analysis.py` to handle Git checkout and PMD loops
-- **Phase 5:** Implement `heuristics.py` to score overlap between Pass 1 and Pass 2 data
+- **Phase 4: Oracle Project Execution**  
+  Run the pipeline on `commons-lang` or `junit`
+
+- **Phase 5: Heuristic Correlator**  
+  Implement `overlap_score.py` to link Refactoring events (Pass 1) to PMD violations (Pass 2)
