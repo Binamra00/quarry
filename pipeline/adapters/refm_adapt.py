@@ -2,8 +2,8 @@ import json
 import os
 import time
 import subprocess
-import tempfile  # [FIX] Portable temp directories
-import uuid  # [FIX] Unique filenames for concurrency
+import tempfile
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -90,8 +90,7 @@ class RefactoringMinerAdapter(IAdapter):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    # [FIX] Generate a unique, portable temp file path
-                    # Using uuid ensures no collisions even if multiple scripts run in parallel
+                    # Generate a unique, portable temp file path
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
@@ -115,7 +114,7 @@ class RefactoringMinerAdapter(IAdapter):
 
                         valid_data_found = False
 
-                        # [LOGIC] Check if file exists and parse it
+                        # Check if file exists and parse it
                         if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
                             try:
                                 with open(temp_json_file, 'r') as f:
@@ -159,12 +158,21 @@ class RefactoringMinerAdapter(IAdapter):
                             new_commits_count += 1
 
                     finally:
-                        # [FIX] Guaranteed cleanup regardless of crashes or logic errors
+                        # [FIX] Robust cleanup with retries to handle transient OS locks
+                        max_delete_attempts = 5
                         if temp_json_file.exists():
-                            try:
-                                temp_json_file.unlink()
-                            except Exception:
-                                pass
+                            for attempt in range(max_delete_attempts):
+                                try:
+                                    temp_json_file.unlink()
+                                    break
+                                except (OSError, PermissionError) as e:
+                                    if attempt == max_delete_attempts - 1:
+                                        log_file.write(
+                                            f"\n[WARN] Failed to delete temp file {temp_json_file.name} "
+                                            f"after {max_delete_attempts} attempts: {e}\n"
+                                        )
+                                    else:
+                                        time.sleep(0.1)
 
                     # Checkpoint
                     current_time = time.time()
