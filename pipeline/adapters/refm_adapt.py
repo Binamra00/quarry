@@ -2,8 +2,9 @@ import json
 import os
 import time
 import subprocess
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
@@ -51,6 +52,32 @@ class RefactoringMinerAdapter(IAdapter):
                 print("   ⚠️ Existing output corrupt. Starting fresh.")
         return []
 
+    def _extract_json(self, raw_output: str) -> Optional[dict]:
+        """
+        Robustly finds and parses JSON from a string that might contain other logs.
+        Scans for the first '{' and the last '}'.
+        """
+        if not raw_output:
+            return None
+
+        try:
+            # Fast path: Try parsing the whole thing
+            return json.loads(raw_output)
+        except json.JSONDecodeError:
+            pass
+
+        # Robust path: Extract substring between first { and last }
+        try:
+            start = raw_output.find('{')
+            end = raw_output.rfind('}')
+            if start != -1 and end != -1:
+                json_str = raw_output[start: end + 1]
+                return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+        return None
+
     def execute(self) -> bool:
         print(f"--- ⚡ Starting {self.get_tool_name()} ---")
 
@@ -62,7 +89,7 @@ class RefactoringMinerAdapter(IAdapter):
 
         existing_data = self._load_existing_results()
 
-        # Defensive Key Access (Filter None)
+        # Defensive Key Access
         processed_shas = {
             c.get('sha1')
             for c in existing_data
@@ -83,48 +110,53 @@ class RefactoringMinerAdapter(IAdapter):
 
         last_checkpoint_time = time.time()
 
-        # Open log file once for the entire batch to stream stderr
+        # We append to the log file to preserve history
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(remaining_commits):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    # [FIX] Changed flag from -bc (Between Commits) to -c (Commit)
-                    # -bc requires two args (start end), -c requires one.
                     cmd = [str(config.RM_PATH), "-c", str(self.target_repo_path), commit_hash]
 
-                    # Direct subprocess to separate streams
+                    # Run subprocess capturing BOTH streams independently
                     result = subprocess.run(
                         cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=log_file,
+                        stdout=subprocess.PIPE,  # Capture JSON here
+                        stderr=subprocess.PIPE,  # Capture Logs here
                         text=True,
                         check=False
                     )
 
-                    if result.returncode == 0:
-                        try:
-                            commit_data = json.loads(result.stdout)
-                            if "commits" in commit_data:
-                                current_data.extend(commit_data["commits"])
-                                new_commits_count += 1
-                            else:
-                                # Increment count even for empty results
-                                current_data.append({
-                                    "repository": str(self.target_repo_path),
-                                    "sha1": commit_hash,
-                                    "refactorings": []
-                                })
-                                new_commits_count += 1
-                        except json.JSONDecodeError:
-                            log_file.write(
-                                f"\n[ERROR] JSON Decode Failed for {commit_hash}. Output snippet: {result.stdout[:100]}\n")
-                    else:
-                        # Stderr is already in the log file, just mark the error
-                        log_file.write(
-                            f"\n[ERROR] RefactoringMiner exited with code {result.returncode} for {commit_hash}\n")
+                    # 1. Try to parse JSON from stdout
+                    commit_data = self._extract_json(result.stdout)
 
+                    # 2. Logic: Success if we got valid data, regardless of exit code
+                    # (Java sometimes exits with non-zero on warnings, but data is valid)
+                    if commit_data and "commits" in commit_data:
+                        current_data.extend(commit_data["commits"])
+                        new_commits_count += 1
+                    else:
+                        # Fallback: Commit might be empty or actually failed
+                        # If stderr has "Exception", it failed. If just empty stdout, it's likely 0 refactorings.
+
+                        # Write logs to file for debugging
+                        if result.stderr.strip():
+                            log_file.write(f"\n[STDERR] {commit_hash}: {result.stderr.strip()}\n")
+
+                        # Record empty entry to avoid infinite re-processing loops
+                        current_data.append({
+                            "repository": str(self.target_repo_path),
+                            "sha1": commit_hash,
+                            "refactorings": []
+                        })
+                        new_commits_count += 1
+
+                        if result.returncode != 0 and not commit_data:
+                            log_file.write(
+                                f"[FAILURE] Exit Code {result.returncode} for {commit_hash}. Stdout: {result.stdout[:100]}\n")
+
+                    # Checkpoint Logic
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
