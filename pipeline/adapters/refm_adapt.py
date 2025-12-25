@@ -2,19 +2,20 @@ import json
 import os
 import time
 import subprocess
+import shutil
 from pathlib import Path
 from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-from pipeline.utils.json_parser import StackBasedJsonParser
 from pipeline.adapters.i_adapter import IAdapter
 
 
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner v3.0.
+    Strategy: 'Stateful Batching' with Explicit File I/O (The "Safety Valve").
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
@@ -80,7 +81,7 @@ class RefactoringMinerAdapter(IAdapter):
         log_path = self.get_log_path()
         last_checkpoint_time = time.time()
 
-        # [DEBUG] Ensure Environment Variables (JAVA_HOME) are passed
+        # [ENV] Pass environment variables (Java Home)
         env = os.environ.copy()
 
         with open(log_path, "a") as log_file:
@@ -89,7 +90,16 @@ class RefactoringMinerAdapter(IAdapter):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    cmd = [str(config.RM_PATH), "-c", str(self.target_repo_path), commit_hash]
+                    # [FIX] Use explicit temp file for JSON output (Bypasses stdout noise)
+                    temp_json_file = Path(f"/tmp/rm_{commit_hash}.json")
+
+                    # -c <repo> <sha> -json <file_path>
+                    cmd = [
+                        str(config.RM_PATH),
+                        "-c", str(self.target_repo_path),
+                        commit_hash,
+                        "-json", str(temp_json_file)
+                    ]
 
                     result = subprocess.run(
                         cmd,
@@ -97,38 +107,52 @@ class RefactoringMinerAdapter(IAdapter):
                         stderr=subprocess.PIPE,
                         text=True,
                         check=False,
-                        env=env  # [FIX] Pass environment to ensure Java works
+                        env=env
                     )
 
-                    candidates = list(StackBasedJsonParser.extract_all(result.stdout))
                     valid_data_found = False
 
-                    for commit_data in candidates:
-                        if "commits" in commit_data:
-                            current_data.extend(commit_data["commits"])
-                            valid_data_found = True
-                            break
-                        elif "refactorings" in commit_data:
-                            # [COPILOT FIX] Ensure integrity
-                            if "sha1" in commit_data:
-                                current_data.append(commit_data)
-                            else:
-                                current_data.append({
-                                    "repository": str(self.target_repo_path),
-                                    "sha1": commit_hash,
-                                    "refactorings": commit_data.get("refactorings", [])
-                                })
-                            valid_data_found = True
-                            break
+                    # [LOGIC] Check if file exists and parse it
+                    if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
+                        try:
+                            with open(temp_json_file, 'r') as f:
+                                commit_data = json.load(f)
+
+                            if commit_data:
+                                if "commits" in commit_data:
+                                    current_data.extend(commit_data["commits"])
+                                    valid_data_found = True
+                                elif "refactorings" in commit_data:
+                                    # [COPILOT FIX] Integrity Check
+                                    if "sha1" in commit_data:
+                                        current_data.append(commit_data)
+                                    else:
+                                        # Reconstruct metadata if missing
+                                        current_data.append({
+                                            "repository": str(self.target_repo_path),
+                                            "sha1": commit_hash,
+                                            "refactorings": commit_data.get("refactorings", [])
+                                        })
+                                    valid_data_found = True
+                        except json.JSONDecodeError:
+                            log_file.write(f"\n[ERROR] Corrupt JSON in temp file for {commit_hash}\n")
+                        finally:
+                            # Cleanup
+                            temp_json_file.unlink(missing_ok=True)
 
                     if valid_data_found:
                         new_commits_count += 1
                     else:
-                        # [DEBUGGING] Log why we failed to find data
-                        log_file.write(f"\n[FAILURE] No JSON found for {commit_hash}.\n")
-                        log_file.write(f"EXIT CODE: {result.returncode}\n")
-                        log_file.write(f"STDERR: {result.stderr.strip()}\n")
-                        log_file.write(f"STDOUT: {result.stdout.strip()[:500]}\n")  # Log first 500 chars
+                        # [COPILOT FIX] Distinguished Logging
+                        if result.returncode != 0:
+                            log_file.write(f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
+                            log_file.write(f"STDERR: {result.stderr.strip()}\n")
+                        else:
+                            # Exit 0 but no data? Likely 0 refactorings and tool didn't write file?
+                            # Or tool wrote to stdout despite -json flag?
+                            # We record empty to proceed.
+                            log_file.write(
+                                f"\n[INFO] No JSON file generated for {commit_hash} (Likely 0 refactorings).\n")
 
                         # Fallback
                         current_data.append({
@@ -138,6 +162,7 @@ class RefactoringMinerAdapter(IAdapter):
                         })
                         new_commits_count += 1
 
+                    # Checkpoint
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
