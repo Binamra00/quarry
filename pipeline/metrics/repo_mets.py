@@ -6,6 +6,10 @@ from pathlib import Path
 from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
 
+# [SWE PRINCIPLE] Custom Exception for better error handling
+class DependencyMissingError(Exception):
+    pass
+
 try:
     from pydriller import Repository
 except ImportError:
@@ -24,8 +28,10 @@ class RepoMetrics(BaseMetrics):
 
     def load_data(self):
         if not Repository:
-            print("❌ CRITICAL ERROR: PyDriller not installed. Stopping execution.")
-            sys.exit(1)
+            # [FIX] Anti-Pattern Resolved: Raise Exception instead of killing process
+            raise DependencyMissingError(
+                "PyDriller not installed. This stage requires 'pip install pydriller'."
+            )
 
         # [OPTIMIZATION] Smart Skip
         # Check if metrics already exist to avoid re-mining (which is slow)

@@ -20,6 +20,11 @@ class PMDHistoryAdapter(IAdapter):
         self.batch_size = batch_size
         self.state_manager = BatchStateManager(target_repo_path.name, "pmd_history")
 
+        # [SWE CONFIG] Checkpoint Interval
+        # Balance between Performance (High Interval) and Safety (Low Interval)
+        # 10 means we write to disk only once every 10 commits.
+        self.checkpoint_interval = 10
+
         # [ORGANIZATION] Define a dedicated subfolder for raw batch files
         self.raw_output_dir = config.OUTPUTS_PATH / "pmd_raw" / self.target_repo_path.name
         if not self.raw_output_dir.exists():
@@ -43,15 +48,19 @@ class PMDHistoryAdapter(IAdapter):
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
 
-        # Pre-Flight Check (Quietly)
+        # [FIX] Pre-Flight Check (Softened)
+        # Instead of failing immediately, we warn the user.
         status_success, status_out = adapter_subprocess.run_command(
             ["git", "status", "--porcelain"],
             cwd=str(self.target_repo_path),
             verbose=False
         )
         if status_success and status_out.strip():
-            print("❌ CRITICAL: Repository has uncommitted changes.")
-            return False
+            print("⚠️  WARNING: Repository has uncommitted changes.")
+            print("   Time-travel requires a clean state. Changes might be stashed or lost.")
+            print("   Proceeding in 3 seconds... (Ctrl+C to abort)")
+            import time
+            time.sleep(3)
 
         all_commits = self._get_commit_list()
         total_commits = len(all_commits)
@@ -93,6 +102,11 @@ class PMDHistoryAdapter(IAdapter):
                 for i, commit_hash in enumerate(batch):
                     global_index = batch_start_index + i
 
+                    # [SWE LOGIC] Checkpointing Strategy
+                    # Only write to disk if it's a checkpoint OR the very last item in batch
+                    is_last_in_batch = (i == len(batch) - 1)
+                    should_flush = ((i + 1) % self.checkpoint_interval == 0) or is_last_in_batch
+
                     # [UI] Update Progress Bar (Console)
                     ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
 
@@ -105,7 +119,9 @@ class PMDHistoryAdapter(IAdapter):
                         try:
                             with open(commit_output_path, 'r') as f:
                                 json.load(f)
-                            self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                            # [FIX] Lazy Flush: pass calculated boolean
+                            self.state_manager.save_progress(commit_hash, global_index, total_commits,
+                                                             flush=should_flush)
                             skipped_count += 1
                             log_file.write("Skipped (Output exists)\n")
                             continue
@@ -124,10 +140,11 @@ class PMDHistoryAdapter(IAdapter):
                     if not checkout_success:
                         error_msg = f"Checkout failed: {checkout_out}\n"
                         log_file.write(error_msg)
-                        # We print critical errors to console even in quiet mode
                         ui_strategy.clear_line()
                         print(f"   ⚠️ Checkout failed for {commit_hash}. Check logs.")
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
+
+                        # [FIX] Lazy Flush: pass calculated boolean
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
                         continue
 
                     # B. Run PMD (Quiet Mode)
@@ -149,13 +166,15 @@ class PMDHistoryAdapter(IAdapter):
 
                     # C. Update State
                     if pmd_success:
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
                         success_count += 1
                         log_file.write("PMD Success\n")
                     else:
                         log_file.write(f"PMD Failed: {pmd_out}\n")
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
 
+                    # [FIX] Lazy Flush: pass calculated boolean
+                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
+
+                # [SAFETY] Ensure final flush happens at end of loop (redundant but safe)
                 self.state_manager.flush()
 
             finally:
@@ -166,6 +185,8 @@ class PMDHistoryAdapter(IAdapter):
                     cwd=str(self.target_repo_path),
                     verbose=False
                 )
+                # [SAFETY] Double ensure flush happens if loop crashes
+                self.state_manager.flush()
 
         print(f"✅ Batch Complete. Processed {success_count} new, Skipped {skipped_count} existing.")
         return True
