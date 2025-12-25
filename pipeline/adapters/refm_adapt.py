@@ -8,7 +8,6 @@ from typing import List
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-# [NEW] Import the clean parser
 from pipeline.utils.json_parser import StackBasedJsonParser
 from pipeline.adapters.i_adapter import IAdapter
 
@@ -21,7 +20,6 @@ class RefactoringMinerAdapter(IAdapter):
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
-        # 300 seconds = 5 minutes.
         self.checkpoint_interval_seconds = 300
 
     def get_tool_name(self) -> str:
@@ -99,7 +97,6 @@ class RefactoringMinerAdapter(IAdapter):
                         check=False
                     )
 
-                    # [CLEAN] Delegate parsing to the utility
                     commit_data = StackBasedJsonParser.extract_json(result.stdout)
 
                     valid_data_found = False
@@ -109,15 +106,24 @@ class RefactoringMinerAdapter(IAdapter):
                             current_data.extend(commit_data["commits"])
                             valid_data_found = True
                         elif "refactorings" in commit_data:
-                            current_data.append(commit_data)
-                            valid_data_found = True
+                            # [CO-PILOT FIX] Ensure integrity before appending
+                            if "sha1" in commit_data:
+                                current_data.append(commit_data)
+                                valid_data_found = True
+                            else:
+                                # Reconstruct missing metadata if RM drops it
+                                current_data.append({
+                                    "repository": str(self.target_repo_path),
+                                    "sha1": commit_hash,
+                                    "refactorings": commit_data.get("refactorings", [])
+                                })
+                                valid_data_found = True
 
                     if valid_data_found:
                         new_commits_count += 1
                     else:
                         if result.returncode != 0:
                             log_file.write(f"\n[FAILURE] Exit Code {result.returncode} for {commit_hash}.\n")
-                            if result.stderr: log_file.write(f"STDERR: {result.stderr.strip()[:300]}\n")
 
                         # Fallback: Record empty entry
                         current_data.append({
