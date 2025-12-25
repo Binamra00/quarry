@@ -2,7 +2,8 @@ import json
 import os
 import time
 import subprocess
-import shutil
+import tempfile  # [FIX] Portable temp directories
+import uuid  # [FIX] Unique filenames for concurrency
 from pathlib import Path
 from typing import List
 
@@ -15,7 +16,7 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner v3.0.
-    Strategy: 'Stateful Batching' with Explicit File I/O (The "Safety Valve").
+    Strategy: 'Stateful Batching' with Explicit File I/O.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
@@ -81,7 +82,6 @@ class RefactoringMinerAdapter(IAdapter):
         log_path = self.get_log_path()
         last_checkpoint_time = time.time()
 
-        # [ENV] Pass environment variables (Java Home)
         env = os.environ.copy()
 
         with open(log_path, "a") as log_file:
@@ -90,77 +90,81 @@ class RefactoringMinerAdapter(IAdapter):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    # [FIX] Use explicit temp file for JSON output (Bypasses stdout noise)
-                    temp_json_file = Path(f"/tmp/rm_{commit_hash}.json")
+                    # [FIX] Generate a unique, portable temp file path
+                    # Using uuid ensures no collisions even if multiple scripts run in parallel
+                    unique_id = uuid.uuid4().hex[:8]
+                    temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
-                    # -c <repo> <sha> -json <file_path>
-                    cmd = [
-                        str(config.RM_PATH),
-                        "-c", str(self.target_repo_path),
-                        commit_hash,
-                        "-json", str(temp_json_file)
-                    ]
+                    try:
+                        # -c <repo> <sha> -json <file_path>
+                        cmd = [
+                            str(config.RM_PATH),
+                            "-c", str(self.target_repo_path),
+                            commit_hash,
+                            "-json", str(temp_json_file)
+                        ]
 
-                    result = subprocess.run(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        check=False,
-                        env=env
-                    )
+                        result = subprocess.run(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                            env=env
+                        )
 
-                    valid_data_found = False
+                        valid_data_found = False
 
-                    # [LOGIC] Check if file exists and parse it
-                    if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
-                        try:
-                            with open(temp_json_file, 'r') as f:
-                                commit_data = json.load(f)
+                        # [LOGIC] Check if file exists and parse it
+                        if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
+                            try:
+                                with open(temp_json_file, 'r') as f:
+                                    commit_data = json.load(f)
 
-                            if commit_data:
-                                if "commits" in commit_data:
-                                    current_data.extend(commit_data["commits"])
-                                    valid_data_found = True
-                                elif "refactorings" in commit_data:
-                                    # [COPILOT FIX] Integrity Check
-                                    if "sha1" in commit_data:
-                                        current_data.append(commit_data)
-                                    else:
-                                        # Reconstruct metadata if missing
-                                        current_data.append({
-                                            "repository": str(self.target_repo_path),
-                                            "sha1": commit_hash,
-                                            "refactorings": commit_data.get("refactorings", [])
-                                        })
-                                    valid_data_found = True
-                        except json.JSONDecodeError:
-                            log_file.write(f"\n[ERROR] Corrupt JSON in temp file for {commit_hash}\n")
-                        finally:
-                            # Cleanup
-                            temp_json_file.unlink(missing_ok=True)
+                                if commit_data:
+                                    if "commits" in commit_data:
+                                        current_data.extend(commit_data["commits"])
+                                        valid_data_found = True
+                                    elif "refactorings" in commit_data:
+                                        if "sha1" in commit_data:
+                                            current_data.append(commit_data)
+                                        else:
+                                            # Reconstruct metadata
+                                            current_data.append({
+                                                "repository": str(self.target_repo_path),
+                                                "sha1": commit_hash,
+                                                "refactorings": commit_data.get("refactorings", [])
+                                            })
+                                        valid_data_found = True
+                            except json.JSONDecodeError:
+                                log_file.write(f"\n[ERROR] Corrupt JSON in temp file for {commit_hash}\n")
 
-                    if valid_data_found:
-                        new_commits_count += 1
-                    else:
-                        # [COPILOT FIX] Distinguished Logging
-                        if result.returncode != 0:
-                            log_file.write(f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                            log_file.write(f"STDERR: {result.stderr.strip()}\n")
+                        if valid_data_found:
+                            new_commits_count += 1
                         else:
-                            # Exit 0 but no data? Likely 0 refactorings and tool didn't write file?
-                            # Or tool wrote to stdout despite -json flag?
-                            # We record empty to proceed.
-                            log_file.write(
-                                f"\n[INFO] No JSON file generated for {commit_hash} (Likely 0 refactorings).\n")
+                            if result.returncode != 0:
+                                log_file.write(
+                                    f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
+                                log_file.write(f"STDERR: {result.stderr.strip()}\n")
+                            else:
+                                log_file.write(
+                                    f"\n[INFO] No JSON file generated for {commit_hash} (Likely 0 refactorings).\n")
 
-                        # Fallback
-                        current_data.append({
-                            "repository": str(self.target_repo_path),
-                            "sha1": commit_hash,
-                            "refactorings": []
-                        })
-                        new_commits_count += 1
+                            # Fallback
+                            current_data.append({
+                                "repository": str(self.target_repo_path),
+                                "sha1": commit_hash,
+                                "refactorings": []
+                            })
+                            new_commits_count += 1
+
+                    finally:
+                        # [FIX] Guaranteed cleanup regardless of crashes or logic errors
+                        if temp_json_file.exists():
+                            try:
+                                temp_json_file.unlink()
+                            except Exception:
+                                pass
 
                     # Checkpoint
                     current_time = time.time()
