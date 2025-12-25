@@ -56,16 +56,15 @@ class RefmMetrics(BaseMetrics):
 
         commits_list = refm_data.get("commits", [])
         commits_with_refs = len(commits_list)
-        total_ops = 0
 
-        # [FIX] Easier Logic: Track Impure Commits directly (No double negative)
+        # [FIX] Dead Code: Removed unused 'total_ops' calculation
         commits_impure_count = 0
         ref_types = {}
 
         for commit in commits_list:
             refs = commit.get("refactorings", [])
             count = len(refs)
-            total_ops += count
+            # total_ops removed
 
             sha1 = commit.get("sha1")
             churn = int(churn_map.get(sha1, 0))
@@ -77,7 +76,6 @@ class RefmMetrics(BaseMetrics):
                 t = r.get("type", "Unknown")
                 ref_types[t] = ref_types.get(t, 0) + 1
 
-        # Calculate Pure based on Total - Impure
         commits_pure_count = commits_with_refs - commits_impure_count
 
         density_ratio = self.logic.calculate_density(commits_with_refs, total_commits)
@@ -93,7 +91,7 @@ class RefmMetrics(BaseMetrics):
                 "strategy": self.logic.__class__.__name__
             },
             "purity": {
-                "floss_commits": commits_impure_count,  # Renamed variable logic matches
+                "floss_commits": commits_impure_count,
                 "purity_score": round(purity_ratio * 100, 2),
                 "strategy": self.logic.__class__.__name__
             },
@@ -112,7 +110,8 @@ class RefmMetrics(BaseMetrics):
         print(f"│   └── Refactoring Density: {s['density_percent']}% (Target: >{TARGET_DENSITY}%)")
         print(f"├── [Dataset Purity]")
         print(f"│   ├── Floss Commits: {p['floss_commits']}")
-        print(f"│   └── Purity Score:  {p['purity_score']}% (Target: >{TARGET_PURITY}%)")
+        # [FIX] UI Glitch: Changed └── to ├── for middle item
+        print(f"│   ├── Purity Score:  {p['purity_score']}% (Target: >{TARGET_PURITY}%)")
         print(f"│   └── Strategy:      {p.get('strategy', 'Unknown')}")
         print(f"├── [Top Types]")
         for t, c in metrics["top_types"].items():

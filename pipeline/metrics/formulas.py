@@ -54,7 +54,13 @@ class StandardRefactoringLogic(IRefactoringLogic):
 class IStaticAnalysisLogic(ABC):
     @abstractmethod
     def calculate_density(self, total_smells: int, file_count: int) -> float:
-        """Returns density as Smells per File (Rate)."""
+        """
+        Returns static-analysis density as a rate in smells per file.
+
+        Unlike refactoring density, this is not a bounded ratio in [0.0, 1.0]:
+        the value can exceed 1.0 when, on average, there are multiple smells
+        per file.
+        """
         pass
 
     @abstractmethod
@@ -67,6 +73,15 @@ class IStaticAnalysisLogic(ABC):
 
 
 class StandardStaticLogic(IStaticAnalysisLogic):
+    """
+    Standard model for static analysis metrics using linear density and
+    arithmetic-mean complexity aggregation.
+
+    This strategy computes smell density as a simple rate of total smells per
+    file and aggregates complexity scores using the arithmetic mean, providing
+    a straightforward baseline.
+    """
+
     def calculate_density(self, total_smells: int, file_count: int) -> float:
         if file_count == 0:
             return 0.0
