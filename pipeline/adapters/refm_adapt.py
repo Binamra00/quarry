@@ -1,133 +1,134 @@
 import json
-import tempfile
-import subprocess
+import os
+import time  # [REQUIRED] For time-based checkpointing
 from pathlib import Path
 from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
+from pipeline.utils.batch_state import BatchStateManager
 from pipeline.adapters.i_adapter import IAdapter
 
 
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner v3.0.
-    Strategy: 'Forced-Loop' with 'Temp-to-Persistent' I/O.
+    Strategy: 'Stateful Batching' with Time-Based Checkpointing.
     """
+
+    def __init__(self, target_repo_path: Path, batch_size: int = 50):
+        super().__init__(target_repo_path)
+        # We ignore batch_size for logic, but keep it for interface compatibility
+        self.state_manager = BatchStateManager(target_repo_path.name, "refm_history")
+
+        # [ROBUST STRATEGY]
+        # Instead of commit counts, we use time.
+        # 300 seconds = 5 minutes.
+        # This balances I/O cost vs. potential data loss.
+        self.checkpoint_interval_seconds = 300
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
 
     def get_output_path(self) -> Path:
-        # [DECOUPLING] Dynamic naming based on the injected target
         project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
-    def _get_all_commits(self, repo_path: Path) -> List[str]:
-        """Helper: Retrieves SHA-1 hashes of commits modifying .java files."""
-        # [PHASE 0 FIX] Changed '--all' to 'HEAD' to only mine the main branch.
+    def _get_all_commits(self) -> List[str]:
         cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
-        success, output = adapter_subprocess.run_command(cmd, cwd=str(repo_path))
-
+        success, output = adapter_subprocess.run_command(
+            cmd,
+            cwd=str(self.target_repo_path),
+            verbose=False
+        )
         if success and output:
             return output.strip().split('\n')
-        else:
-            print("⚠️ Failed to list commits or no Java commits found.")
-            return []
+        return []
+
+    def _load_existing_results(self) -> List[dict]:
+        output_path = self.get_output_path()
+        if output_path.exists():
+            try:
+                with open(output_path, 'r') as f:
+                    data = json.load(f)
+                    return data.get("commits", [])
+            except json.JSONDecodeError:
+                print("   ⚠️ Existing output corrupt. Starting fresh.")
+        return []
 
     def execute(self) -> bool:
         print(f"--- ⚡ Starting {self.get_tool_name()} ---")
 
-        final_json_path = self.get_output_path()
+        all_commits = self._get_all_commits()
+        total_commits = len(all_commits)
+        if total_commits == 0:
+            print("❌ No commits found.")
+            return False
+
+        # Load State
+        existing_data = self._load_existing_results()
+        processed_shas = {c['sha1'] for c in existing_data}
+        remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
+
+        if not remaining_commits:
+            print(f"✅ Analysis already complete ({len(existing_data)} commits).")
+            return True
+
+        print(f"   🔄 Resuming: Found {len(existing_data)} existing. Processing {len(remaining_commits)} new commits...")
+
+        current_data = existing_data
+        new_commits_count = 0
         log_path = self.get_log_path()
 
-        # [DECOUPLING] Use the injected path
-        commits = self._get_all_commits(self.target_repo_path)
-        total_commits = len(commits)
+        # [TIMER START]
+        last_checkpoint_time = time.time()
 
-        if total_commits == 0:
-            print("❌ No commits found to analyze.")
-            return False
-
-        # [OPTIMIZATION] Smart Skip
-        # If the output file exists and has the same number of commits, skip execution.
-        if final_json_path.exists():
+        with open(log_path, "a") as log_file:
             try:
-                with open(final_json_path, 'r') as f:
-                    data = json.load(f)
-                    processed_count = len(data.get("commits", []))
+                for i, commit_hash in enumerate(remaining_commits):
+                    ui_strategy.update_progress(i + 1, len(remaining_commits),
+                                                prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                if processed_count >= total_commits:
-                    print(f"✅ Analysis already complete ({processed_count}/{total_commits} commits). Skipping.")
-                    return True
-                else:
-                    print(
-                        f"⚠️ Partial data found ({processed_count}/{total_commits}). Re-running to ensure consistency.")
-            except Exception:
-                print("⚠️ Corrupt output file detected. Re-running.")
+                    cmd = [str(config.RM_PATH), "-bc", str(self.target_repo_path), commit_hash]
+                    success, output_json = adapter_subprocess.run_command(cmd, verbose=False)
 
-        print(f"🎯 Target Analysis: {total_commits} commits found.")
-        print(f"   📝 Logging raw output to: {log_path.name}")
+                    if success:
+                        try:
+                            commit_data = json.loads(output_json)
+                            if "commits" in commit_data:
+                                current_data.extend(commit_data["commits"])
+                                new_commits_count += 1
+                        except json.JSONDecodeError:
+                            log_file.write(f"ERROR: Invalid JSON for {commit_hash}\n")
+                    else:
+                        log_file.write(f"ERROR: Failed to mine {commit_hash}\n")
 
-        all_refactorings = []
-        success_count = 0
+                    # [DYNAMIC CHECKPOINT LOGIC]
+                    # Flush if enough time has passed OR it's the very last commit
+                    current_time = time.time()
+                    time_diff = current_time - last_checkpoint_time
+                    is_last = (i == len(remaining_commits) - 1)
 
-        with open(log_path, "w") as log_file:
-            log_file.write(f"--- RefactoringMiner Log: {self.target_repo_path.name} ---\n")
+                    if time_diff >= self.checkpoint_interval_seconds or is_last:
+                        self._flush_to_disk(current_data)
+                        log_file.write(f"Checkpoint saved at {commit_hash} (Time since last: {int(time_diff)}s)\n")
+                        last_checkpoint_time = current_time  # Reset timer
 
-            with tempfile.TemporaryDirectory() as temp_dir_str:
-                temp_dir = Path(temp_dir_str)
-                print(f"   [Performance] Using temporary local buffer: {temp_dir}")
+            except KeyboardInterrupt:
+                print("\n⚠️  Interrupt detected! Saving progress...")
+                self._flush_to_disk(current_data)
+                return False
 
-                for i, commit_hash in enumerate(commits):
-                    ui_strategy.update_progress(i + 1, total_commits, prefix="   ⏳ Progress:")
+        print(f"✅ Success. Added {new_commits_count} new commits. Total: {len(current_data)}")
+        return True
 
-                    temp_json_path = temp_dir / f"commit_{commit_hash}.json"
-
-                    # [DECOUPLING] Run tool against the injected path
-                    cmd = [
-                        str(config.RM_PATH), "-c", str(self.target_repo_path),
-                        commit_hash, "-json", str(temp_json_path)
-                    ]
-
-                    try:
-                        log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
-                        log_file.flush()
-
-                        subprocess_result = subprocess.run(
-                            cmd,
-                            stdout=log_file,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            check=False
-                        )
-
-                        if subprocess_result.returncode == 0 and temp_json_path.exists():
-                            try:
-                                with open(temp_json_path, 'r') as f:
-                                    data = json.load(f)
-                                    if "commits" in data:
-                                        all_refactorings.extend(data["commits"])
-                                success_count += 1
-                            except json.JSONDecodeError:
-                                log_file.write(f"[ERROR] Invalid JSON for {commit_hash}\n")
-                        else:
-                            log_file.write(f"[ERROR] Non-zero exit or missing output for {commit_hash}\n")
-
-                    except Exception as e:
-                        log_file.write(f"[EXCEPTION] {e}\n")
-
-        ui_strategy.clear_line()
-
-        print(f"   Processed {total_commits} commits.")
-        print(f"   💾 Saving results to: {final_json_path.name}")
+    def _flush_to_disk(self, data: List[dict]):
+        output_path = self.get_output_path()
+        temp_path = output_path.with_suffix(".tmp")
         try:
-            with open(final_json_path, 'w') as f:
-                json.dump({"commits": all_refactorings}, f, indent=2)
-
-            print(f"✅ {self.get_tool_name()} Success! Analyzed {success_count}/{total_commits} commits.")
-            return True
+            with open(temp_path, 'w') as f:
+                json.dump({"commits": data}, f, indent=2)
+            os.replace(temp_path, output_path)
         except Exception as e:
-            print(f"❌ Failed to save final output: {e}")
-            return False
+            print(f"   ❌ Save failed: {e}")
