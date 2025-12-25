@@ -110,7 +110,6 @@ class RefactoringMinerAdapter(IAdapter):
 
         last_checkpoint_time = time.time()
 
-        # We append to the log file to preserve history
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(remaining_commits):
@@ -119,32 +118,36 @@ class RefactoringMinerAdapter(IAdapter):
 
                     cmd = [str(config.RM_PATH), "-c", str(self.target_repo_path), commit_hash]
 
-                    # Run subprocess capturing BOTH streams independently
                     result = subprocess.run(
                         cmd,
-                        stdout=subprocess.PIPE,  # Capture JSON here
-                        stderr=subprocess.PIPE,  # Capture Logs here
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                         text=True,
                         check=False
                     )
 
-                    # 1. Try to parse JSON from stdout
                     commit_data = self._extract_json(result.stdout)
 
-                    # 2. Logic: Success if we got valid data, regardless of exit code
-                    # (Java sometimes exits with non-zero on warnings, but data is valid)
-                    if commit_data and "commits" in commit_data:
-                        current_data.extend(commit_data["commits"])
+                    # [FIX] Handle both List Wrapper ("commits") and Direct Object ("refactorings")
+                    valid_data_found = False
+
+                    if commit_data:
+                        if "commits" in commit_data:
+                            # Batch mode output
+                            current_data.extend(commit_data["commits"])
+                            valid_data_found = True
+                        elif "refactorings" in commit_data:
+                            # Single commit mode output (The -c flag format)
+                            current_data.append(commit_data)
+                            valid_data_found = True
+
+                    if valid_data_found:
                         new_commits_count += 1
                     else:
                         # Fallback: Commit might be empty or actually failed
-                        # If stderr has "Exception", it failed. If just empty stdout, it's likely 0 refactorings.
-
-                        # Write logs to file for debugging
                         if result.stderr.strip():
                             log_file.write(f"\n[STDERR] {commit_hash}: {result.stderr.strip()}\n")
 
-                        # Record empty entry to avoid infinite re-processing loops
                         current_data.append({
                             "repository": str(self.target_repo_path),
                             "sha1": commit_hash,
@@ -156,7 +159,6 @@ class RefactoringMinerAdapter(IAdapter):
                             log_file.write(
                                 f"[FAILURE] Exit Code {result.returncode} for {commit_hash}. Stdout: {result.stdout[:100]}\n")
 
-                    # Checkpoint Logic
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
