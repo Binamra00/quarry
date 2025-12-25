@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import subprocess
 from pathlib import Path
 from typing import List
 
@@ -18,9 +19,6 @@ class RefactoringMinerAdapter(IAdapter):
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
-        # Note: batch_size is ignored here as we process the full history
-        # using time-based checkpoints for safety.
-
         # 300 seconds = 5 minutes.
         self.checkpoint_interval_seconds = 300
 
@@ -62,14 +60,13 @@ class RefactoringMinerAdapter(IAdapter):
             print("❌ No commits found.")
             return False
 
-        # Load State
         existing_data = self._load_existing_results()
 
-        # [FIX] Defensive Key Access
+        # [FIX] Safer Comprehension
         processed_shas = {
-            c.get('sha1')
+            c['sha1']
             for c in existing_data
-            if isinstance(c, dict) and 'sha1' in c
+            if isinstance(c, dict) and 'sha1' in c and c['sha1'] is not None
         }
 
         remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
@@ -80,7 +77,6 @@ class RefactoringMinerAdapter(IAdapter):
 
         print(f"   🔄 Resuming: Found {len(existing_data)} existing. Processing {len(remaining_commits)} new commits...")
 
-        # Initialize current_data with what we already have
         current_data = existing_data
         new_commits_count = 0
         log_path = self.get_log_path()
@@ -94,28 +90,36 @@ class RefactoringMinerAdapter(IAdapter):
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
                     cmd = [str(config.RM_PATH), "-bc", str(self.target_repo_path), commit_hash]
-                    success, output_json = adapter_subprocess.run_command(cmd, verbose=False)
 
-                    if success:
+                    result = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=log_file,
+                        text=True,
+                        check=False
+                    )
+
+                    if result.returncode == 0:
                         try:
-                            commit_data = json.loads(output_json)
+                            commit_data = json.loads(result.stdout)
                             if "commits" in commit_data:
                                 current_data.extend(commit_data["commits"])
                                 new_commits_count += 1
                             else:
-                                # [CRITICAL FIX] If output is valid but empty, record "empty" entry
-                                # so we don't re-process this commit next time.
+                                # [FIX] Increment count even for empty results
                                 current_data.append({
                                     "repository": str(self.target_repo_path),
                                     "sha1": commit_hash,
                                     "refactorings": []
                                 })
+                                new_commits_count += 1
                         except json.JSONDecodeError:
-                            log_file.write(f"ERROR: Invalid JSON for {commit_hash}\n")
+                            log_file.write(
+                                f"\n[ERROR] JSON Decode Failed for {commit_hash}. Output snippet: {result.stdout[:100]}\n")
                     else:
-                        log_file.write(f"ERROR: Failed to mine {commit_hash}\n")
+                        log_file.write(
+                            f"\n[ERROR] RefactoringMiner exited with code {result.returncode} for {commit_hash}\n")
 
-                    # [DYNAMIC CHECKPOINT LOGIC]
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
@@ -126,7 +130,6 @@ class RefactoringMinerAdapter(IAdapter):
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Saving progress...")
-                # Log handle might be closed if we aren't careful, so pass None/handle appropriately
                 self._flush_to_disk(current_data, log_file)
                 return False
 
@@ -141,9 +144,9 @@ class RefactoringMinerAdapter(IAdapter):
                 json.dump({"commits": data}, f, indent=2)
             os.replace(temp_path, output_path)
             if log_file:
-                log_file.write(f"Checkpoint saved. Total commits: {len(data)}\n")
+                log_file.write(f"\n[CHECKPOINT] Saved {len(data)} commits.\n")
         except Exception as e:
             msg = f"   ❌ Save failed: {e}"
             print(msg)
             if log_file:
-                log_file.write(msg + "\n")
+                log_file.write(f"\n[ERROR] {msg}\n")
