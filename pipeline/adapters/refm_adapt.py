@@ -2,20 +2,21 @@ import json
 import os
 import time
 import subprocess
-import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
+# [NEW] Import the clean parser
+from pipeline.utils.json_parser import StackBasedJsonParser
 from pipeline.adapters.i_adapter import IAdapter
 
 
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner v3.0.
-    Strategy: 'Stateful Batching' with Time-Based Checkpointing.
+    Strategy: 'Stateful Batching' with Deterministic Stream Parsing.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
@@ -52,32 +53,6 @@ class RefactoringMinerAdapter(IAdapter):
                 print("   ⚠️ Existing output corrupt. Starting fresh.")
         return []
 
-    def _extract_json(self, raw_output: str) -> Optional[dict]:
-        """
-        Robustly finds and parses JSON from a string that might contain other logs.
-        Scans for the first '{' and the last '}'.
-        """
-        if not raw_output:
-            return None
-
-        try:
-            # Fast path: Try parsing the whole thing
-            return json.loads(raw_output)
-        except json.JSONDecodeError:
-            pass
-
-        # Robust path: Extract substring between first { and last }
-        try:
-            start = raw_output.find('{')
-            end = raw_output.rfind('}')
-            if start != -1 and end != -1:
-                json_str = raw_output[start: end + 1]
-                return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-
-        return None
-
     def execute(self) -> bool:
         print(f"--- ⚡ Starting {self.get_tool_name()} ---")
 
@@ -89,7 +64,6 @@ class RefactoringMinerAdapter(IAdapter):
 
         existing_data = self._load_existing_results()
 
-        # Defensive Key Access
         processed_shas = {
             c.get('sha1')
             for c in existing_data
@@ -107,7 +81,6 @@ class RefactoringMinerAdapter(IAdapter):
         current_data = existing_data
         new_commits_count = 0
         log_path = self.get_log_path()
-
         last_checkpoint_time = time.time()
 
         with open(log_path, "a") as log_file:
@@ -126,38 +99,33 @@ class RefactoringMinerAdapter(IAdapter):
                         check=False
                     )
 
-                    commit_data = self._extract_json(result.stdout)
+                    # [CLEAN] Delegate parsing to the utility
+                    commit_data = StackBasedJsonParser.extract_json(result.stdout)
 
-                    # [FIX] Handle both List Wrapper ("commits") and Direct Object ("refactorings")
                     valid_data_found = False
 
                     if commit_data:
                         if "commits" in commit_data:
-                            # Batch mode output
                             current_data.extend(commit_data["commits"])
                             valid_data_found = True
                         elif "refactorings" in commit_data:
-                            # Single commit mode output (The -c flag format)
                             current_data.append(commit_data)
                             valid_data_found = True
 
                     if valid_data_found:
                         new_commits_count += 1
                     else:
-                        # Fallback: Commit might be empty or actually failed
-                        if result.stderr.strip():
-                            log_file.write(f"\n[STDERR] {commit_hash}: {result.stderr.strip()}\n")
+                        if result.returncode != 0:
+                            log_file.write(f"\n[FAILURE] Exit Code {result.returncode} for {commit_hash}.\n")
+                            if result.stderr: log_file.write(f"STDERR: {result.stderr.strip()[:300]}\n")
 
+                        # Fallback: Record empty entry
                         current_data.append({
                             "repository": str(self.target_repo_path),
                             "sha1": commit_hash,
                             "refactorings": []
                         })
                         new_commits_count += 1
-
-                        if result.returncode != 0 and not commit_data:
-                            log_file.write(
-                                f"[FAILURE] Exit Code {result.returncode} for {commit_hash}. Stdout: {result.stdout[:100]}\n")
 
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
@@ -176,6 +144,7 @@ class RefactoringMinerAdapter(IAdapter):
         return True
 
     def _flush_to_disk(self, data: List[dict], log_file=None):
+        if not data: return
         output_path = self.get_output_path()
         temp_path = output_path.with_suffix(".tmp")
         try:
