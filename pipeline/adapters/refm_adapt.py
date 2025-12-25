@@ -1,13 +1,12 @@
 import json
 import os
-import time  # [REQUIRED] For time-based checkpointing
+import time
 from pathlib import Path
 from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-from pipeline.utils.batch_state import BatchStateManager
 from pipeline.adapters.i_adapter import IAdapter
 
 
@@ -17,15 +16,12 @@ class RefactoringMinerAdapter(IAdapter):
     Strategy: 'Stateful Batching' with Time-Based Checkpointing.
     """
 
-    def __init__(self, target_repo_path: Path, batch_size: int = 50):
+    def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
-        # We ignore batch_size for logic, but keep it for interface compatibility
-        self.state_manager = BatchStateManager(target_repo_path.name, "refm_history")
+        # Note: batch_size is ignored here as we process the full history
+        # using time-based checkpoints for safety.
 
-        # [ROBUST STRATEGY]
-        # Instead of commit counts, we use time.
         # 300 seconds = 5 minutes.
-        # This balances I/O cost vs. potential data loss.
         self.checkpoint_interval_seconds = 300
 
     def get_tool_name(self) -> str:
@@ -68,7 +64,14 @@ class RefactoringMinerAdapter(IAdapter):
 
         # Load State
         existing_data = self._load_existing_results()
-        processed_shas = {c['sha1'] for c in existing_data}
+
+        # [FIX] Defensive Key Access
+        processed_shas = {
+            c.get('sha1')
+            for c in existing_data
+            if isinstance(c, dict) and 'sha1' in c
+        }
+
         remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
 
         if not remaining_commits:
@@ -77,11 +80,11 @@ class RefactoringMinerAdapter(IAdapter):
 
         print(f"   🔄 Resuming: Found {len(existing_data)} existing. Processing {len(remaining_commits)} new commits...")
 
+        # Initialize current_data with what we already have
         current_data = existing_data
         new_commits_count = 0
         log_path = self.get_log_path()
 
-        # [TIMER START]
         last_checkpoint_time = time.time()
 
         with open(log_path, "a") as log_file:
@@ -99,36 +102,48 @@ class RefactoringMinerAdapter(IAdapter):
                             if "commits" in commit_data:
                                 current_data.extend(commit_data["commits"])
                                 new_commits_count += 1
+                            else:
+                                # [CRITICAL FIX] If output is valid but empty, record "empty" entry
+                                # so we don't re-process this commit next time.
+                                current_data.append({
+                                    "repository": str(self.target_repo_path),
+                                    "sha1": commit_hash,
+                                    "refactorings": []
+                                })
                         except json.JSONDecodeError:
                             log_file.write(f"ERROR: Invalid JSON for {commit_hash}\n")
                     else:
                         log_file.write(f"ERROR: Failed to mine {commit_hash}\n")
 
                     # [DYNAMIC CHECKPOINT LOGIC]
-                    # Flush if enough time has passed OR it's the very last commit
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
 
                     if time_diff >= self.checkpoint_interval_seconds or is_last:
-                        self._flush_to_disk(current_data)
-                        log_file.write(f"Checkpoint saved at {commit_hash} (Time since last: {int(time_diff)}s)\n")
-                        last_checkpoint_time = current_time  # Reset timer
+                        self._flush_to_disk(current_data, log_file)
+                        last_checkpoint_time = current_time
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Saving progress...")
-                self._flush_to_disk(current_data)
+                # Log handle might be closed if we aren't careful, so pass None/handle appropriately
+                self._flush_to_disk(current_data, log_file)
                 return False
 
         print(f"✅ Success. Added {new_commits_count} new commits. Total: {len(current_data)}")
         return True
 
-    def _flush_to_disk(self, data: List[dict]):
+    def _flush_to_disk(self, data: List[dict], log_file=None):
         output_path = self.get_output_path()
         temp_path = output_path.with_suffix(".tmp")
         try:
             with open(temp_path, 'w') as f:
                 json.dump({"commits": data}, f, indent=2)
             os.replace(temp_path, output_path)
+            if log_file:
+                log_file.write(f"Checkpoint saved. Total commits: {len(data)}\n")
         except Exception as e:
-            print(f"   ❌ Save failed: {e}")
+            msg = f"   ❌ Save failed: {e}"
+            print(msg)
+            if log_file:
+                log_file.write(msg + "\n")
