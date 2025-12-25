@@ -19,6 +19,10 @@ class RefactoringMinerAdapter(IAdapter):
     Strategy: 'Stateful Batching' with Explicit File I/O.
     """
 
+    # [CONFIG] Retry constants for file cleanup
+    MAX_DELETE_ATTEMPTS = 5
+    BASE_CLEANUP_DELAY = 0.1
+
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
         self.checkpoint_interval_seconds = 300
@@ -90,12 +94,10 @@ class RefactoringMinerAdapter(IAdapter):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    # Generate a unique, portable temp file path
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
                     try:
-                        # -c <repo> <sha> -json <file_path>
                         cmd = [
                             str(config.RM_PATH),
                             "-c", str(self.target_repo_path),
@@ -114,7 +116,6 @@ class RefactoringMinerAdapter(IAdapter):
 
                         valid_data_found = False
 
-                        # Check if file exists and parse it
                         if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
                             try:
                                 with open(temp_json_file, 'r') as f:
@@ -128,7 +129,6 @@ class RefactoringMinerAdapter(IAdapter):
                                         if "sha1" in commit_data:
                                             current_data.append(commit_data)
                                         else:
-                                            # Reconstruct metadata
                                             current_data.append({
                                                 "repository": str(self.target_repo_path),
                                                 "sha1": commit_hash,
@@ -149,7 +149,6 @@ class RefactoringMinerAdapter(IAdapter):
                                 log_file.write(
                                     f"\n[INFO] No JSON file generated for {commit_hash} (Likely 0 refactorings).\n")
 
-                            # Fallback
                             current_data.append({
                                 "repository": str(self.target_repo_path),
                                 "sha1": commit_hash,
@@ -158,23 +157,23 @@ class RefactoringMinerAdapter(IAdapter):
                             new_commits_count += 1
 
                     finally:
-                        # [FIX] Robust cleanup with retries to handle transient OS locks
-                        max_delete_attempts = 5
+                        # [FIX] Robust cleanup with exponential backoff for OS locks
                         if temp_json_file.exists():
-                            for attempt in range(max_delete_attempts):
+                            for attempt in range(self.MAX_DELETE_ATTEMPTS):
                                 try:
                                     temp_json_file.unlink()
                                     break
                                 except (OSError, PermissionError) as e:
-                                    if attempt == max_delete_attempts - 1:
+                                    if attempt == self.MAX_DELETE_ATTEMPTS - 1:
                                         log_file.write(
                                             f"\n[WARN] Failed to delete temp file {temp_json_file.name} "
-                                            f"after {max_delete_attempts} attempts: {e}\n"
+                                            f"after {self.MAX_DELETE_ATTEMPTS} attempts: {e}\n"
                                         )
                                     else:
-                                        time.sleep(0.1)
+                                        # Exponential backoff: 0.1, 0.2, 0.4, 0.8, 1.0 (capped)
+                                        delay = min(1.0, self.BASE_CLEANUP_DELAY * (2 ** attempt))
+                                        time.sleep(delay)
 
-                    # Checkpoint
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
