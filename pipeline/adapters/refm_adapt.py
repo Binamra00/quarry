@@ -170,7 +170,7 @@ class RefactoringMinerAdapter(IAdapter):
                                             f"after {self.MAX_DELETE_ATTEMPTS} attempts: {e}\n"
                                         )
                                     else:
-                                        # Exponential backoff: 0.1, 0.2, 0.4, 0.8, 1.0 (capped)
+                                        # Exponential backoff: 0.1, 0.2, 0.4, 0.8
                                         delay = min(1.0, self.BASE_CLEANUP_DELAY * (2 ** attempt))
                                         time.sleep(delay)
 
