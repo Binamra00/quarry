@@ -62,7 +62,7 @@ smell-ranker/
 │ │ 
 │ ├── utils/ # Python Utility Package
 │ │ ├── init.py # Exposes utilities to the app
-│ │ ├── cmd_subprocess.py # Subprocess for running shell commands safely
+│ │ ├── adapter_subprocess.py # Subprocess for running shell commands safely
 │ │ ├── ui_strategy.py # Universal Console output formatting (Strategy Pattern)
 │ │ ├── batch_state.py # Stateful Manager for resumable batch processing
 │ │ └── allocate_tools.py # Auto-provisions external tools (PMD/RefM)

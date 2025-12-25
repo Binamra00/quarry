@@ -1,11 +1,20 @@
 import json
 import statistics
+import sys
 from pathlib import Path
 from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
-
+from pipeline.metrics.formulas import StandardStaticLogic, IStaticAnalysisLogic
 
 class PMDMetrics(BaseMetrics):
+
+    def __init__(self, target_repo_path: Path):
+        super().__init__(target_repo_path)
+        # [STRATEGY INJECTION]
+        self.logic: IStaticAnalysisLogic = StandardStaticLogic()
+
+    def get_tool_name(self) -> str:
+        return "PMD Metrics"
 
     def get_tool_name(self) -> str:
         return "PMD Metrics"
@@ -37,8 +46,9 @@ class PMDMetrics(BaseMetrics):
                             data = json.load(f)
                             if "files" in data:
                                 aggregated_data["files"].extend(data["files"])
-                    except Exception:
-                        pass
+                    # [FIX] Specific Exception Handling with Observability
+                    except (json.JSONDecodeError, OSError) as e:
+                        print(f"   ⚠️ [Data Loss] Skipping corrupt batch file: {bf.name} -> {e}", file=sys.stderr)
                 found_data = True
 
         # Strategy 2: Fallback to root (Legacy Support)
@@ -52,8 +62,9 @@ class PMDMetrics(BaseMetrics):
                             data = json.load(f)
                             if "files" in data:
                                 aggregated_data["files"].extend(data["files"])
-                    except Exception:
-                        pass
+                    # [FIX] Specific Exception Handling
+                    except (json.JSONDecodeError, OSError) as e:
+                        print(f"   ⚠️ [Data Loss] Skipping corrupt legacy file: {bf.name} -> {e}", file=sys.stderr)
                 found_data = True
 
         # Strategy 3: Standard Snapshot File
@@ -62,6 +73,7 @@ class PMDMetrics(BaseMetrics):
                 with open(pmd_path, 'r') as f:
                     return (json.load(f), 1)  # Return immediately
             except json.JSONDecodeError:
+                print(f"   ❌ Error: Snapshot file {pmd_path.name} is corrupt.", file=sys.stderr)
                 return None
 
         if not found_data:
@@ -70,9 +82,12 @@ class PMDMetrics(BaseMetrics):
 
         file_count = 1
         if repo_path.exists():
-            with open(repo_path, 'r') as f:
-                repo_data = json.load(f)
-                file_count = repo_data.get("content", {}).get("java_file_count", 1)
+            try:
+                with open(repo_path, 'r') as f:
+                    repo_data = json.load(f)
+                    file_count = repo_data.get("content", {}).get("java_file_count", 1)
+            except json.JSONDecodeError:
+                print(f"   ⚠️ Warning: repo_metrics.json is corrupt. Defaulting file count to 1.", file=sys.stderr)
 
         return (aggregated_data, file_count)
 
@@ -86,7 +101,7 @@ class PMDMetrics(BaseMetrics):
 
         total_smells = 0
         complexity_scores = []
-        hotspots = {}
+        hotspots_map = {}
 
         for f in files:
             violations = f.get("violations", [])
@@ -94,29 +109,33 @@ class PMDMetrics(BaseMetrics):
             total_smells += count
 
             fname = Path(f["filename"]).name
-            hotspots[fname] = hotspots.get(fname, 0) + count
+            hotspots_map[fname] = hotspots_map.get(fname, 0) + count
 
             for v in violations:
                 if v.get("rule") == COMPLEXITY_RULE_NAME:
                     desc = v.get("description", "")
-                    # [REFACTOR] Specific Exception Handling
-                    # Catches parsing errors, but lets SystemExit/KeyboardInterrupt through
                     try:
                         score = int(desc.split("complexity of")[-1].strip(" ."))
                         complexity_scores.append(score)
                     except (ValueError, IndexError, AttributeError):
                         pass
 
-        density = total_smells / file_count if file_count > 0 else 0
-        avg_comp = statistics.mean(complexity_scores) if complexity_scores else 0
+        # [DECOUPLED LOGIC]
+        # 1. Density Formula
+        density = self.logic.calculate_density(total_smells, file_count)
 
-        top_hotspots = dict(sorted(hotspots.items(), key=lambda x: x[1], reverse=True)[:HOTSPOT_LIMIT])
+        # 2. Complexity Formula (Mean vs Median?)
+        avg_comp = self.logic.calculate_complexity_aggregation(complexity_scores)
+
+        # 3. Hotspot Logic (Absolute Count vs Normalized?)
+        top_hotspots = self.logic.identify_hotspots(hotspots_map, HOTSPOT_LIMIT)
 
         return {
             "density": {"total_smells": total_smells, "per_file": round(density, 2)},
             "complexity": {
                 "metric_used": COMPLEXITY_RULE_NAME,
-                "avg_score": round(avg_comp, 1)
+                "avg_score": round(avg_comp, 1),
+                "strategy": self.logic.__class__.__name__
             },
             "hotspots": top_hotspots
         }
