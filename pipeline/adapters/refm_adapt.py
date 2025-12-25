@@ -97,31 +97,34 @@ class RefactoringMinerAdapter(IAdapter):
                         check=False
                     )
 
-                    commit_data = StackBasedJsonParser.extract_json(result.stdout)
-
+                    # [FIX] Extract ALL potential JSON objects from the stream
+                    candidates = list(StackBasedJsonParser.extract_all(result.stdout))
                     valid_data_found = False
 
-                    if commit_data:
+                    # Iterate through candidates to find the DATA object (not logs)
+                    for commit_data in candidates:
                         if "commits" in commit_data:
                             current_data.extend(commit_data["commits"])
                             valid_data_found = True
+                            break  # Found it
                         elif "refactorings" in commit_data:
-                            # [CO-PILOT FIX] Ensure integrity before appending
+                            # [COPILOT FIX] Ensure integrity before appending
                             if "sha1" in commit_data:
                                 current_data.append(commit_data)
-                                valid_data_found = True
                             else:
-                                # Reconstruct missing metadata if RM drops it
+                                # Reconstruct metadata if tool dropped it
                                 current_data.append({
                                     "repository": str(self.target_repo_path),
                                     "sha1": commit_hash,
                                     "refactorings": commit_data.get("refactorings", [])
                                 })
-                                valid_data_found = True
+                            valid_data_found = True
+                            break  # Found it
 
                     if valid_data_found:
                         new_commits_count += 1
                     else:
+                        # True Failure or truly empty commit (if no candidates found)
                         if result.returncode != 0:
                             log_file.write(f"\n[FAILURE] Exit Code {result.returncode} for {commit_hash}.\n")
 
