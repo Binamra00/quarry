@@ -1,4 +1,4 @@
-import sys  # [REQUIRED]
+import sys  # Used for sys.maxsize to represent an unlimited batch size
 from typing import List
 from pathlib import Path
 from pipeline.adapters.i_adapter import IAdapter

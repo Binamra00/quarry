@@ -62,11 +62,10 @@ class RefactoringMinerAdapter(IAdapter):
 
         existing_data = self._load_existing_results()
 
-        # [FIX] Safer Comprehension
         processed_shas = {
-            c['sha1']
+            c.get('sha1')
             for c in existing_data
-            if isinstance(c, dict) and 'sha1' in c and c['sha1'] is not None
+            if isinstance(c, dict) and c.get('sha1') is not None
         }
 
         remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
@@ -83,6 +82,7 @@ class RefactoringMinerAdapter(IAdapter):
 
         last_checkpoint_time = time.time()
 
+        # Open log file once for the entire batch to stream stderr
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(remaining_commits):
@@ -91,6 +91,9 @@ class RefactoringMinerAdapter(IAdapter):
 
                     cmd = [str(config.RM_PATH), "-bc", str(self.target_repo_path), commit_hash]
 
+                    # [DOCS] Exception to Consistency:
+                    # We bypass adapter_subprocess here to directly split stdout (JSON) from stderr (Logs).
+                    # Mixing them causes JSONDecodeError because RefactoringMiner is "chatty" on stderr.
                     result = subprocess.run(
                         cmd,
                         stdout=subprocess.PIPE,
@@ -106,7 +109,6 @@ class RefactoringMinerAdapter(IAdapter):
                                 current_data.extend(commit_data["commits"])
                                 new_commits_count += 1
                             else:
-                                # [FIX] Increment count even for empty results
                                 current_data.append({
                                     "repository": str(self.target_repo_path),
                                     "sha1": commit_hash,

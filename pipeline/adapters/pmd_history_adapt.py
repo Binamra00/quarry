@@ -87,17 +87,12 @@ class PMDHistoryAdapter(IAdapter):
                 for i, commit_hash in enumerate(batch):
                     global_index = batch_start_index + i
 
-                    # [FIX] Robust Timer Logic
+                    # [LOGIC] Determine flush need
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     time_based_flush = time_diff >= self.checkpoint_interval_seconds
                     is_last_in_batch = (i == len(batch) - 1)
-
                     should_flush = time_based_flush or is_last_in_batch
-
-                    # [FIX] Reset timer on ANY flush to prevent immediate double-flush
-                    if should_flush:
-                        last_checkpoint_time = current_time
 
                     ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
                     log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
@@ -112,11 +107,12 @@ class PMDHistoryAdapter(IAdapter):
                                                              flush=should_flush)
                             skipped_count += 1
                             log_file.write("Skipped (Output exists)\n")
+                            # [FIX] Update timer if we flush, even on skip
+                            if should_flush: last_checkpoint_time = current_time
                             continue
                         except json.JSONDecodeError:
                             log_file.write("Output corrupt. Re-running.\n")
 
-                    # [CRITICAL RESTORATION] Git Error Handling
                     log_file.write(f"[EXEC] git checkout -f {commit_hash}\n")
                     checkout_success, checkout_out = adapter_subprocess.run_command(
                         ["git", "checkout", "-f", commit_hash],
@@ -125,10 +121,11 @@ class PMDHistoryAdapter(IAdapter):
                     )
 
                     if not checkout_success:
-                        error_msg = f"Checkout failed: {checkout_out}\n"
-                        log_file.write(error_msg)
-                        # We MUST skip PMD analysis if checkout failed to avoid poisoning data
+                        # [FIX] Clean log formatting and increment count
+                        log_file.write(f"Checkout failed: {checkout_out.strip()}\n")
+                        skipped_count += 1
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
+                        if should_flush: last_checkpoint_time = current_time
                         continue
 
                     log_file.write(f"[EXEC] pmd check ...\n")
@@ -144,6 +141,10 @@ class PMDHistoryAdapter(IAdapter):
                         log_file.write(f"PMD Failed: {pmd_out}\n")
 
                     self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
+
+                    # [FIX] Reset timer only after successful flush cycle
+                    if should_flush:
+                        last_checkpoint_time = current_time
 
                 self.state_manager.flush()
 
