@@ -1,4 +1,5 @@
 import json
+import time  # [FIX] Moved import to top-level (PEP 8)
 from pathlib import Path
 from typing import List
 
@@ -49,7 +50,6 @@ class PMDHistoryAdapter(IAdapter):
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
 
         # [FIX] Pre-Flight Check (Softened)
-        # Instead of failing immediately, we warn the user.
         status_success, status_out = adapter_subprocess.run_command(
             ["git", "status", "--porcelain"],
             cwd=str(self.target_repo_path),
@@ -59,7 +59,7 @@ class PMDHistoryAdapter(IAdapter):
             print("⚠️  WARNING: Repository has uncommitted changes.")
             print("   Time-travel requires a clean state. Changes might be stashed or lost.")
             print("   Proceeding in 3 seconds... (Ctrl+C to abort)")
-            import time
+            # [FIX] time.sleep() uses the top-level import now
             time.sleep(3)
 
         all_commits = self._get_commit_list()
@@ -103,14 +103,13 @@ class PMDHistoryAdapter(IAdapter):
                     global_index = batch_start_index + i
 
                     # [SWE LOGIC] Checkpointing Strategy
-                    # Only write to disk if it's a checkpoint OR the very last item in batch
+                    # Only write to disk if we've hit a checkpoint boundary OR the very last item in batch.
+                    # Note: with checkpoint_interval == 10, this flushes after 10, 20, 30... items.
                     is_last_in_batch = (i == len(batch) - 1)
                     should_flush = ((i + 1) % self.checkpoint_interval == 0) or is_last_in_batch
 
-                    # [UI] Update Progress Bar (Console)
                     ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]:")
 
-                    # [LOG] Write intent to file
                     log_file.write(f"\n[COMMIT {commit_hash}] ----------------\n")
 
                     commit_output_path = self.raw_output_dir / f"pmd_out_{commit_hash}.json"
@@ -119,7 +118,6 @@ class PMDHistoryAdapter(IAdapter):
                         try:
                             with open(commit_output_path, 'r') as f:
                                 json.load(f)
-                            # [FIX] Lazy Flush: pass calculated boolean
                             self.state_manager.save_progress(commit_hash, global_index, total_commits,
                                                              flush=should_flush)
                             skipped_count += 1
@@ -143,7 +141,6 @@ class PMDHistoryAdapter(IAdapter):
                         ui_strategy.clear_line()
                         print(f"   ⚠️ Checkout failed for {commit_hash}. Check logs.")
 
-                        # [FIX] Lazy Flush: pass calculated boolean
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
                         continue
 
@@ -171,7 +168,6 @@ class PMDHistoryAdapter(IAdapter):
                     else:
                         log_file.write(f"PMD Failed: {pmd_out}\n")
 
-                    # [FIX] Lazy Flush: pass calculated boolean
                     self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
 
                 # [SAFETY] Ensure final flush happens at end of loop (redundant but safe)
@@ -185,7 +181,6 @@ class PMDHistoryAdapter(IAdapter):
                     cwd=str(self.target_repo_path),
                     verbose=False
                 )
-                # [SAFETY] Double ensure flush happens if loop crashes
                 self.state_manager.flush()
 
         print(f"✅ Batch Complete. Processed {success_count} new, Skipped {skipped_count} existing.")

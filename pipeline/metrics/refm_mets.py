@@ -9,10 +9,6 @@ class RefmMetrics(BaseMetrics):
 
     def __init__(self, target_repo_path: Path):
         super().__init__(target_repo_path)
-
-        # [STRATEGY INJECTION]
-        # In the future, this could be loaded from config:
-        # e.g., if config.MODE == "experimental": self.logic = ExperimentalRefactoringLogic()
         sensitivity = config.HEURISTICS.get("refactoring", {}).get("churn_sensitivity", 20)
         self.logic: IRefactoringLogic = StandardRefactoringLogic(sensitivity)
 
@@ -24,9 +20,7 @@ class RefmMetrics(BaseMetrics):
         return config.OUTPUTS_PATH / f"refactoring_metrics_{project_name}.json"
 
     def load_data(self):
-        # [DECOUPLING] Dynamic loading based on project name
         project_name = self.target_repo_path.name
-
         refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
@@ -34,7 +28,6 @@ class RefmMetrics(BaseMetrics):
             print(f"⚠️ Refactoring output not found: {refm_json_path.name}")
             return None
 
-        # 1. Load RefactoringMiner Output
         try:
             with open(refm_json_path, 'r') as f:
                 refm_data = json.load(f)
@@ -42,7 +35,6 @@ class RefmMetrics(BaseMetrics):
             print("❌ Error decoding RefactoringMiner JSON")
             return None
 
-        # 2. Load Repo Metrics (Context & Churn Map)
         total_commits = 0
         churn_map = {}
 
@@ -65,7 +57,9 @@ class RefmMetrics(BaseMetrics):
         commits_list = refm_data.get("commits", [])
         commits_with_refs = len(commits_list)
         total_ops = 0
-        commits_pure_count = 0  # Track pure, not impure (easier logic)
+
+        # [FIX] Easier Logic: Track Impure Commits directly (No double negative)
+        commits_impure_count = 0
         ref_types = {}
 
         for commit in commits_list:
@@ -76,19 +70,18 @@ class RefmMetrics(BaseMetrics):
             sha1 = commit.get("sha1")
             churn = int(churn_map.get(sha1, 0))
 
-            # [DECOUPLED LOGIC]
-            # The formula is no longer here. We just ask the logic object.
-            if not self.logic.is_impure(churn, count):
-                commits_pure_count += 1
+            if self.logic.is_impure(churn, count):
+                commits_impure_count += 1
 
             for r in refs:
                 t = r.get("type", "Unknown")
                 ref_types[t] = ref_types.get(t, 0) + 1
 
-        # [DECOUPLED LOGIC]
-        density = self.logic.calculate_density(commits_with_refs, total_commits)
-        purity = self.logic.calculate_purity_score(commits_pure_count, commits_with_refs)
-        floss_commits = commits_with_refs - commits_pure_count
+        # Calculate Pure based on Total - Impure
+        commits_pure_count = commits_with_refs - commits_impure_count
+
+        density_ratio = self.logic.calculate_density(commits_with_refs, total_commits)
+        purity_ratio = self.logic.calculate_purity_score(commits_pure_count, commits_with_refs)
 
         sorted_types = dict(sorted(ref_types.items(), key=lambda x: x[1], reverse=True)[:10])
 
@@ -96,12 +89,13 @@ class RefmMetrics(BaseMetrics):
             "scope": {
                 "total_commits": total_commits,
                 "commits_with_refs": commits_with_refs,
-                "density_percent": round(density, 2)
+                "density_percent": round(density_ratio * 100, 2),
+                "strategy": self.logic.__class__.__name__
             },
             "purity": {
-                "floss_commits": floss_commits,
-                "purity_score": round(purity, 2),
-                "strategy": self.logic.__class__.__name__  # Metadata for reproducibility
+                "floss_commits": commits_impure_count,  # Renamed variable logic matches
+                "purity_score": round(purity_ratio * 100, 2),
+                "strategy": self.logic.__class__.__name__
             },
             "top_types": sorted_types
         }
@@ -119,6 +113,7 @@ class RefmMetrics(BaseMetrics):
         print(f"├── [Dataset Purity]")
         print(f"│   ├── Floss Commits: {p['floss_commits']}")
         print(f"│   └── Purity Score:  {p['purity_score']}% (Target: >{TARGET_PURITY}%)")
+        print(f"│   └── Strategy:      {p.get('strategy', 'Unknown')}")
         print(f"├── [Top Types]")
         for t, c in metrics["top_types"].items():
             print(f"│   ├── {t}: {c}")
