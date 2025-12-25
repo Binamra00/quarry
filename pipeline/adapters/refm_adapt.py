@@ -15,7 +15,6 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner v3.0.
-    Strategy: 'Stateful Batching' with Deterministic Stream Parsing.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
@@ -81,6 +80,9 @@ class RefactoringMinerAdapter(IAdapter):
         log_path = self.get_log_path()
         last_checkpoint_time = time.time()
 
+        # [DEBUG] Ensure Environment Variables (JAVA_HOME) are passed
+        env = os.environ.copy()
+
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(remaining_commits):
@@ -94,41 +96,41 @@ class RefactoringMinerAdapter(IAdapter):
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
-                        check=False
+                        check=False,
+                        env=env  # [FIX] Pass environment to ensure Java works
                     )
 
-                    # [FIX] Extract ALL potential JSON objects from the stream
                     candidates = list(StackBasedJsonParser.extract_all(result.stdout))
                     valid_data_found = False
 
-                    # Iterate through candidates to find the DATA object (not logs)
                     for commit_data in candidates:
                         if "commits" in commit_data:
                             current_data.extend(commit_data["commits"])
                             valid_data_found = True
-                            break  # Found it
+                            break
                         elif "refactorings" in commit_data:
-                            # [COPILOT FIX] Ensure integrity before appending
+                            # [COPILOT FIX] Ensure integrity
                             if "sha1" in commit_data:
                                 current_data.append(commit_data)
                             else:
-                                # Reconstruct metadata if tool dropped it
                                 current_data.append({
                                     "repository": str(self.target_repo_path),
                                     "sha1": commit_hash,
                                     "refactorings": commit_data.get("refactorings", [])
                                 })
                             valid_data_found = True
-                            break  # Found it
+                            break
 
                     if valid_data_found:
                         new_commits_count += 1
                     else:
-                        # True Failure or truly empty commit (if no candidates found)
-                        if result.returncode != 0:
-                            log_file.write(f"\n[FAILURE] Exit Code {result.returncode} for {commit_hash}.\n")
+                        # [DEBUGGING] Log why we failed to find data
+                        log_file.write(f"\n[FAILURE] No JSON found for {commit_hash}.\n")
+                        log_file.write(f"EXIT CODE: {result.returncode}\n")
+                        log_file.write(f"STDERR: {result.stderr.strip()}\n")
+                        log_file.write(f"STDOUT: {result.stdout.strip()[:500]}\n")  # Log first 500 chars
 
-                        # Fallback: Record empty entry
+                        # Fallback
                         current_data.append({
                             "repository": str(self.target_repo_path),
                             "sha1": commit_hash,
