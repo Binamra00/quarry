@@ -62,6 +62,7 @@ class RefactoringMinerAdapter(IAdapter):
 
         existing_data = self._load_existing_results()
 
+        # Defensive Key Access (Filter None)
         processed_shas = {
             c.get('sha1')
             for c in existing_data
@@ -89,11 +90,11 @@ class RefactoringMinerAdapter(IAdapter):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
-                    cmd = [str(config.RM_PATH), "-bc", str(self.target_repo_path), commit_hash]
+                    # [FIX] Changed flag from -bc (Between Commits) to -c (Commit)
+                    # -bc requires two args (start end), -c requires one.
+                    cmd = [str(config.RM_PATH), "-c", str(self.target_repo_path), commit_hash]
 
-                    # [DOCS] Exception to Consistency:
-                    # We bypass adapter_subprocess here to directly split stdout (JSON) from stderr (Logs).
-                    # Mixing them causes JSONDecodeError because RefactoringMiner is "chatty" on stderr.
+                    # Direct subprocess to separate streams
                     result = subprocess.run(
                         cmd,
                         stdout=subprocess.PIPE,
@@ -109,6 +110,7 @@ class RefactoringMinerAdapter(IAdapter):
                                 current_data.extend(commit_data["commits"])
                                 new_commits_count += 1
                             else:
+                                # Increment count even for empty results
                                 current_data.append({
                                     "repository": str(self.target_repo_path),
                                     "sha1": commit_hash,
@@ -119,6 +121,7 @@ class RefactoringMinerAdapter(IAdapter):
                             log_file.write(
                                 f"\n[ERROR] JSON Decode Failed for {commit_hash}. Output snippet: {result.stdout[:100]}\n")
                     else:
+                        # Stderr is already in the log file, just mark the error
                         log_file.write(
                             f"\n[ERROR] RefactoringMiner exited with code {result.returncode} for {commit_hash}\n")
 
