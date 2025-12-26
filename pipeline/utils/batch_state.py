@@ -19,7 +19,7 @@ class BatchStateManager:
         self.state_file = config.OUTPUTS_PATH / f"batch_status_{tool_name}_{repo_name}.json"
         self.state = self._load_state()
         # Optimization: fast lookup set for O(1) checks
-        # [FIX] Use .get() to ensure robustness against missing keys in older state files
+        # Use .get() to ensure robustness against missing keys in older state files
         self.processed_set = set(self.state.get("processed_shas", []))
 
     def _load_state(self) -> Dict:
@@ -86,12 +86,11 @@ class BatchStateManager:
         if flush:
             success = self.flush()
             if not success:
-                # [FIX] Log explicit warning if persistence fails
                 print(f"   ⚠️ Warning: Progress for {commit_hash[:7]} was NOT saved to disk.")
 
     def flush(self) -> bool:
         """
-        [FIX] Atomic Write Strategy.
+        Atomic Write Strategy.
         Writes to a temp file first, then renames it.
         Returns True if successful, False otherwise.
         """
@@ -113,7 +112,7 @@ class BatchStateManager:
             if temp_path.exists():
                 try:
                     temp_path.unlink()
-                except OSError:
-                    # Best-effort cleanup: if temp file can't be deleted, there's nothing else to do.
-                    pass
+                except OSError as cleanup_err:
+                    # [FIX] Best-effort cleanup: log but do not raise
+                    print(f"    Warning: Unable to delete temporary state file '{temp_path}': {cleanup_err}")
             return False

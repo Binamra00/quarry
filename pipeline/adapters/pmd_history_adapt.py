@@ -91,17 +91,25 @@ class PMDHistoryAdapter(IAdapter):
         # [FIX] Use configured PMD ruleset path from config
         ruleset_path = config.PMD_RULESET_PATH
 
+        # [FIX] Fail-Fast: Verify ruleset exists before processing 5000 commits
+        if not Path(ruleset_path).exists():
+            print(f"❌ Ruleset not found at: {ruleset_path}")
+            return False
+
+        # [FIX] Calculate start index ONCE before loop to prevent drift
+        batch_start_index = self.state_manager.get_next_start_index()
+
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(batch):
-                    global_index = self.state_manager.get_next_start_index() + i
+                    # [FIX] Use stable start index
+                    global_index = batch_start_index + i
 
                     # 1. UI Update
                     ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]")
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
-                        # Even for already processed commits, advance progress state to avoid reprocessing them.
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
@@ -111,11 +119,7 @@ class PMDHistoryAdapter(IAdapter):
                                                                          verbose=False)
 
                     if not checkout_success:
-                        log_file.write(
-                            f"[FATAL] Could not checkout {commit_hash}. Skipping this run (will retry next time).\n")
-                        # [FIX] Do NOT save progress here. Logic: If we save, we skip it forever.
-                        # By continuing without saving, the global index won't advance for this commit,
-                        # but since we are iterating a fixed batch, we just lose one cycle of work, which is safe.
+                        log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping run (retry later).\n")
                         continue
 
                     # 4. Run PMD (Isolated Temp File)
@@ -131,47 +135,64 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    pmd_success, pmd_out = adapter_subprocess.run_command(
-                        pmd_cmd,
-                        allowed_exit_codes=[0, 4],  # 0=OK, 4=Violations Found
-                        verbose=False,
-                        timeout=300  # 5 minutes per commit max
-                    )
-
-                    # 5. Capture & Append Data (JSONL)
+                    # [FIX] Initialize status
+                    run_status = "unknown"
                     violation_data = []
-                    if pmd_success and temp_json_path.exists() and temp_json_path.stat().st_size > 0:
-                        try:
-                            with open(temp_json_path, 'r') as temp_file:
-                                raw_json = json.load(temp_file)
-                                # PMD returns { "files": [ ... ] }
-                                violation_data = raw_json.get("files", [])
-                            success_count += 1
-                        except json.JSONDecodeError:
-                            log_file.write(f"[WARN] Corrupt PMD output for {commit_hash}\n")
-                        finally:
-                            # Cleanup temp file
+
+                    try:
+                        pmd_success, pmd_out = adapter_subprocess.run_command(
+                            pmd_cmd,
+                            allowed_exit_codes=[0, 4],
+                            verbose=False,
+                            timeout=300
+                        )
+
+                        # 5. Capture Data
+                        if pmd_success and temp_json_path.exists() and temp_json_path.stat().st_size > 0:
+                            try:
+                                with open(temp_json_path, 'r') as temp_file:
+                                    raw_json = json.load(temp_file)
+                                    violation_data = raw_json.get("files", [])
+                                success_count += 1
+                                run_status = "success"
+                            except json.JSONDecodeError:
+                                log_file.write(f"[WARN] Corrupt PMD output for {commit_hash}\n")
+                                run_status = "corrupt_output"
+                        else:
+                            if not pmd_success:
+                                # Determine failure type
+                                if "TIMEOUT" in pmd_out:
+                                    run_status = "timeout"
+                                else:
+                                    run_status = "crash"
+
+                                # Log with truncation
+                                output_str = "" if pmd_out is None else str(pmd_out)
+                                if len(output_str) > 200:
+                                    output_str = output_str[:200] + "... [output truncated]"
+                                log_file.write(f"[FAILURE] PMD {run_status} on {commit_hash}. Output: {output_str}\n")
+                            else:
+                                # Success but no file (empty result)
+                                run_status = "success"
+
+                    finally:
+                        # [FIX] Guaranteed cleanup
+                        if temp_json_path.exists():
                             try:
                                 temp_json_path.unlink()
                             except OSError as e:
-                                log_file.write(f"[WARN] Could not delete temporary JSON file {temp_json_path}: {e}\n")
-                    else:
-                        if not pmd_success:
-                            # [FIX] Safer logging with truncation indicator
-                            output_str = "" if pmd_out is None else str(pmd_out)
-                            if len(output_str) > 200:
-                                output_str = output_str[:200] + "... [output truncated]"
-                            log_file.write(f"[FAILURE] PMD crashed on {commit_hash}. Output: {output_str}\n")
+                                log_file.write(f"[WARN] Could not delete temp file: {e}\n")
 
                     # 6. Stream to JSONL (Atomic Append)
+                    # [FIX] Added status field for scientific validity
                     record = {
                         "sha": commit_hash,
                         "timestamp": int(time.time()),
+                        "status": run_status,
                         "violations": violation_data
                     }
 
                     try:
-                        # [FIX] Renamed 'jf' to 'jsonl_file'
                         with open(self.jsonl_output_path, "a") as jsonl_file:
                             jsonl_file.write(json.dumps(record) + "\n")
                     except Exception as e:
@@ -189,11 +210,14 @@ class PMDHistoryAdapter(IAdapter):
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Saving progress...")
-                # [FIX] Removed redundant self.state_manager.flush() here, handled in finally
+                # [FIX] Explicit flush on interrupt
+                try:
+                    self.state_manager.flush()
+                except Exception as e:
+                    log_file.write(f"[CRITICAL] Flush failed on interrupt: {e}\n")
                 return False
 
             finally:
-                # 8. Safety Restore
                 ui_strategy.clear_line()
                 print(f"   🔙 Restoring branch: {current_branch}...")
                 adapter_subprocess.run_command(

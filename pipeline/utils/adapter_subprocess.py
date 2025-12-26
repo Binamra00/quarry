@@ -29,7 +29,7 @@ def run_command(
             # Use append mode 'a' to prevent overwriting previous logs
             with open(log_file_path, "a") as f:
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
-                f.flush()  # [FIX] Ensure header is written before subprocess writes
+                f.flush()  # Ensure header is written before subprocess writes
 
                 result = subprocess.run(
                     command,
@@ -38,7 +38,7 @@ def run_command(
                     stderr=subprocess.STDOUT,
                     check=False,
                     timeout=timeout,
-                    text=True  # [FIX] Ensure text mode so file writing works
+                    text=True  # Ensure text mode so file writing works
                 )
                 output_content = f"Log saved to {log_file_path.name}"
         else:
@@ -64,30 +64,33 @@ def run_command(
 
     except subprocess.TimeoutExpired as e:
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
+
+        # [FIX] Safe attribute access (handle None if logging to file)
+        partial_stdout = e.stdout if e.stdout else ""
+        partial_stderr = e.stderr if e.stderr else ""
+
         if verbose:
             print(msg)
-            # [FIX] Print partial output if available for debugging
-            partial_stdout = (e.stdout or "").strip() if hasattr(e, "stdout") else ""
-            partial_stderr = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
             if partial_stdout:
                 print("   [STDOUT before timeout]:")
-                print(partial_stdout)
+                print(partial_stdout.strip())
             if partial_stderr:
                 print("   [STDERR before timeout]:")
-                print(partial_stderr)
+                print(partial_stderr.strip())
 
         if log_file_path:
             with open(log_file_path, "a") as f:
                 f.write(f"\n{msg}\n")
-                # [FIX] Log partial output to file
-                partial_stdout = (e.stdout or "").strip() if hasattr(e, "stdout") else ""
-                partial_stderr = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
+                # Log partial output if we captured it (Memory Mode)
                 if partial_stdout:
                     f.write("\n[STDOUT before timeout]:\n")
-                    f.write(partial_stdout + "\n")
+                    f.write(partial_stdout.strip() + "\n")
                 if partial_stderr:
                     f.write("\n[STDERR before timeout]:\n")
-                    f.write(partial_stderr + "\n")
+                    f.write(partial_stderr.strip() + "\n")
+                # If File Mode, output is already in the file, so we append a note
+                if not partial_stdout and not partial_stderr:
+                    f.write("\n(Note: Partial output is above in this log file)\n")
 
         return False, "TIMEOUT"
 
