@@ -88,21 +88,20 @@ class PMDHistoryAdapter(IAdapter):
         last_checkpoint_time = time.time()
         success_count = 0
 
-        # [FIX] Use configured PMD ruleset path from config
+        # Use configured PMD ruleset path from config
         ruleset_path = config.PMD_RULESET_PATH
 
-        # [FIX] Fail-Fast: Verify ruleset exists before processing 5000 commits
+        # Fail-Fast: Verify ruleset exists before processing 5000 commits
         if not Path(ruleset_path).exists():
             print(f"❌ Ruleset not found at: {ruleset_path}")
             return False
 
-        # [FIX] Calculate start index ONCE before loop to prevent drift
+        # Calculate start index ONCE before loop to prevent drift
         batch_start_index = self.state_manager.get_next_start_index()
 
         with open(log_path, "a") as log_file:
             try:
                 for i, commit_hash in enumerate(batch):
-                    # [FIX] Use stable start index
                     global_index = batch_start_index + i
 
                     # 1. UI Update
@@ -111,9 +110,10 @@ class PMDHistoryAdapter(IAdapter):
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
-                        # NOTE: When resuming an interrupted run, commits already marked as processed
-                        # in the state manager are skipped and no new JSONL record is written for them.
-                        # This implies the JSONL file grows append-only across runs.
+                        # NOTE: Commits in the state manager (processed_set) are skipped.
+                        # No new JSONL record is written for them. This is intentional:
+                        # the JSONL log grows append-only across runs to preserve history
+                        # while the state manager prevents duplicate processing.
                         continue
 
                     # 3. Time Travel
@@ -123,7 +123,21 @@ class PMDHistoryAdapter(IAdapter):
 
                     if not checkout_success:
                         log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping run.\n")
-                        # [FIX] Poison Pill Strategy: Mark as processed to prevent infinite retry loops on broken commits
+
+                        # [FIX] Emit a JSONL record for this failed checkout to keep data consistent
+                        try:
+                            status_record = {
+                                "sha": commit_hash,
+                                "timestamp": int(time.time()),
+                                "status": "checkout_failed",
+                                "violations": []
+                            }
+                            with open(self.jsonl_output_path, "a") as jsonl_file:
+                                jsonl_file.write(json.dumps(status_record) + "\n")
+                        except Exception as e:
+                            log_file.write(f"[WARN] Failed to write checkout_failed record to JSONL: {e}\n")
+
+                        # Poison Pill: Mark as processed to prevent infinite loops
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
@@ -140,9 +154,9 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    # Initialize status data container
+                    # [FIX] Clearer default status
+                    run_status = "initialization_failed"
                     violation_data = []
-                    run_status = "unknown"
 
                     try:
                         pmd_success, pmd_out = adapter_subprocess.run_command(
@@ -166,7 +180,8 @@ class PMDHistoryAdapter(IAdapter):
                         else:
                             if not pmd_success:
                                 # Determine failure type
-                                if "TIMEOUT" in pmd_out:
+                                # [FIX] Robust check for timeout string
+                                if isinstance(pmd_out, str) and pmd_out.strip() == "TIMEOUT":
                                     run_status = "timeout"
                                 else:
                                     run_status = "crash"
@@ -177,11 +192,13 @@ class PMDHistoryAdapter(IAdapter):
                                     output_str = output_str[:200] + "... [output truncated]"
                                 log_file.write(f"[FAILURE] PMD {run_status} on {commit_hash}. Output: {output_str}\n")
                             else:
-                                # Success but no file (empty result)
+                                # Success but no file (empty result / no violations)
+                                # [FIX] This counts as a success
                                 run_status = "success"
+                                success_count += 1
 
                     finally:
-                        # [FIX] Guaranteed cleanup
+                        # Guaranteed cleanup
                         if temp_json_path.exists():
                             try:
                                 temp_json_path.unlink()
@@ -189,7 +206,6 @@ class PMDHistoryAdapter(IAdapter):
                                 log_file.write(f"[WARN] Could not delete temp file: {e}\n")
 
                     # 6. Stream to JSONL (Atomic Append)
-                    # [FIX] Added status field for scientific validity
                     record = {
                         "sha": commit_hash,
                         "timestamp": int(time.time()),
@@ -215,7 +231,6 @@ class PMDHistoryAdapter(IAdapter):
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Saving progress...")
-                # [FIX] Explicit flush on interrupt
                 try:
                     self.state_manager.flush()
                 except Exception as e:
