@@ -1,7 +1,7 @@
 # Smell-Ranker: Infrastructure & Architecture Documentation
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.6 (Phase 3.2 – Stateful & Universal Pipeline)
+**Version:** 0.7 (Phase 3.3 – Scalability & Resilience Hardening)
 
 ---
 
@@ -78,7 +78,39 @@ smell-ranker/
 └── requirements.txt
 └── README.md
 ```
-## 3. Execution Flow (The “How-To”)
+## 3. The Execution Pipeline
+
+The `main.py` facade coordinates the analysis modules sequentially:
+
+### Phase 0: Verification & Baseline
+- **Dynamic Branch Detection:** Automatically identifies `main` vs. `master` to force the repository into a consistent state.
+- **Repo Mining:** `repo_mets.py` calculates the global denominator (Total Commits) and baseline heuristics.
+
+### Phase 1: History Mining (RefactoringMiner)
+- **Scanning:** `RefactoringMinerAdapter` scans the full Git object history to identify architectural changes without requiring physical file checkouts.
+- **Resilience:** Uses Explicit File I/O to separate data streams from control logs, preventing parser corruption.
+
+### Phase 2: Stateful Candidate Generation (PMD)
+- **Time-Travel Strategy:** `PMDHistoryAdapter` physically checks out each commit in history to run static analysis.
+- **Atomic JSONL Streaming:** Results are streamed to a unified `.jsonl` log (JSON Lines) rather than fragmented files, solving inode exhaustion risks.
+- **Poison Pill Defense:** Automatically identifies and quarantines corrupt Git commits to prevent infinite retry loops.
+- **Crash Recovery:** The `BatchStateManager` persists progress atomically. If the process is killed (e.g., Colab timeout), it resumes exactly where it left off ("Lazarus" capability).
+
+## 4. Key Data Artifacts
+
+All results are stored in the `persistent_storage` path (e.g., Google Drive).
+
+| Artifact | Format | Description |
+|--------|--------|-------------|
+| `repo_metrics_[repo].json` | JSON | Project metadata (Age, Churn, Languages). |
+| `refactorings_[repo].json` | JSON | List of all refactoring operations detected in history. |
+| `pmd_history_[repo].jsonl` | JSONL | Unified Event Stream. Contains every PMD run (Success/Failure/Violations) in a single, append-only log file. |
+| `pmd_metrics_[repo].json` | JSON | Aggregated density and hotspot analysis. |
+| `batch_status_[tool]_[repo].json` | JSON | State File. Tracks the last successfully processed commit index for resume capability. |
+| `*_execution_[repo].log` | Text | Diagnostic Log. Records only critical failures (checkouts, crashes, timeouts). |
+
+
+## 5. Execution Flow (The “How-To”)
 
 The system is designed to be run from **Google Colab** or a **local machine**.
 
@@ -156,7 +188,7 @@ The pipeline executes the following stages sequentially or individually via flag
 
 ---
 
-## 4. 🚀 Local Installation & Usage
+## 6. 🚀 Local Installation & Usage
 
 You can run **Smell-Ranker** on your local machine (Windows / Linux / macOS).  
 The system is fully self-contained.
@@ -221,7 +253,7 @@ Go back to the main `smell-ranker` directory to run the pipeline:
 cd ../..
 ```
 
-## 4. Run the Pipeline
+## 7. Run the Pipeline
 
 You can now analyze the repository you just cloned.
 
@@ -244,7 +276,7 @@ python3 -m pipeline.main --repo commons-lang --stage all --batch-size 50
 
 ---
 
-## 5. Design Principles & Patterns
+## 8. Design Principles & Patterns
 
 The architecture adheres strictly to software engineering best practices.
 
@@ -260,7 +292,7 @@ The architecture adheres strictly to software engineering best practices.
 
 ---
 
-## 6. Toolchain Configuration
+## 9. Toolchain Configuration
 
 ### RefactoringMiner
 - **Version**: 3.0.12
@@ -278,10 +310,9 @@ The architecture adheres strictly to software engineering best practices.
 
 ---
 
-## 7. Future Roadmap
+## 10. Future Roadmap
 
-- **Phase 4: Oracle Project Execution**  
-  Run the pipeline on `commons-lang` or `junit`
-
-- **Phase 5: Heuristic Correlator**  
+- **Phase 4: Heuristic Correlator**  
   Implement `overlap_score.py` to link Refactoring events (Pass 1) to PMD violations (Pass 2)
+- **Phase 5: Oracle Project Execution**  
+  Run the pipeline on `commons-lang` or `junit`
