@@ -111,6 +111,9 @@ class PMDHistoryAdapter(IAdapter):
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                        # NOTE: When resuming an interrupted run, commits already marked as processed
+                        # in the state manager are skipped and no new JSONL record is written for them.
+                        # This implies the JSONL file grows append-only across runs.
                         continue
 
                     # 3. Time Travel
@@ -119,7 +122,9 @@ class PMDHistoryAdapter(IAdapter):
                                                                          verbose=False)
 
                     if not checkout_success:
-                        log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping run (retry later).\n")
+                        log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping run.\n")
+                        # [FIX] Poison Pill Strategy: Mark as processed to prevent infinite retry loops on broken commits
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
                     # 4. Run PMD (Isolated Temp File)
@@ -135,9 +140,9 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    # [FIX] Initialize status
-                    run_status = "unknown"
+                    # Initialize status data container
                     violation_data = []
+                    run_status = "unknown"
 
                     try:
                         pmd_success, pmd_out = adapter_subprocess.run_command(

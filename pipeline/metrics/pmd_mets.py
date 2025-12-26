@@ -21,18 +21,66 @@ class PMDMetrics(BaseMetrics):
         return config.OUTPUTS_PATH / f"pmd_metrics_{project_name}.json"
 
     def load_data(self):
+        """
+        Loads PMD data from the new JSONL Stream (Phase 3.2)
+        Falls back to legacy directory globbing if stream is missing.
+        """
         project_name = self.target_repo_path.name
-        pmd_path = config.OUTPUTS_PATH / f"pmd_candidates_{project_name}.json"
+
+        # [NEW] Primary Source: The JSONL History Stream
+        jsonl_path = config.OUTPUTS_PATH / f"pmd_history_{project_name}.jsonl"
+
+        # Legacy/Auxiliary paths
         repo_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
         raw_batch_dir = config.OUTPUTS_PATH / "pmd_raw" / project_name
 
         aggregated_data = {"files": []}
         found_data = False
+        processed_commits = 0
 
-        if raw_batch_dir.exists():
+        # ---------------------------------------------------------
+        # STRATEGY 1: Stream Loading (New Architecture)
+        # ---------------------------------------------------------
+        if jsonl_path.exists():
+            print(f"   📊 Found JSONL history stream: {jsonl_path.name}. Aggregating...")
+            try:
+                with open(jsonl_path, 'r') as f:
+                    for line_num, line in enumerate(f):
+                        line = line.strip()
+                        if not line: continue
+
+                        try:
+                            record = json.loads(line)
+
+                            # [LOGIC] Only aggregate successful runs
+                            # If 'status' is missing (legacy data), assume success
+                            status = record.get("status", "success")
+
+                            if status == "success":
+                                # Map the 'violations' field from JSONL to the 'files' list
+                                # expected by the calculation logic.
+                                # Structure: [{"filename": "...", "violations": [...]}, ...]
+                                file_violations = record.get("violations", [])
+                                if file_violations:
+                                    aggregated_data["files"].extend(file_violations)
+                                processed_commits += 1
+
+                        except json.JSONDecodeError:
+                            print(f"   ⚠️ Skipping corrupt line {line_num + 1} in JSONL", file=sys.stderr)
+
+                found_data = True
+                print(f"   ✅ Aggregated valid data from {processed_commits} historical commits.")
+
+            except Exception as e:
+                print(f"   ❌ Error reading JSONL stream: {e}", file=sys.stderr)
+
+        # ---------------------------------------------------------
+        # STRATEGY 2: Legacy Batch Files (Fallback)
+        # ---------------------------------------------------------
+        if not found_data and raw_batch_dir.exists():
             batch_files = list(raw_batch_dir.glob("pmd_out_*.json"))
             if batch_files:
-                print(f"   📊 Found {len(batch_files)} batch files in {raw_batch_dir.name}. Aggregating...")
+                print(f"   ⚠️ JSONL missing. Falling back to {len(batch_files)} legacy batch files...")
                 for bf in batch_files:
                     try:
                         with open(bf, 'r') as f:
@@ -40,37 +88,16 @@ class PMDMetrics(BaseMetrics):
                             if "files" in data:
                                 aggregated_data["files"].extend(data["files"])
                     except (json.JSONDecodeError, OSError) as e:
-                        # [FIX] Standardized Log Format (Removed brackets)
                         print(f"   ⚠️ Data Loss: Skipping corrupt batch file {bf.name} -> {e}", file=sys.stderr)
                 found_data = True
 
         if not found_data:
-            batch_files_legacy = list(config.OUTPUTS_PATH.glob("pmd_out_*.json"))
-            if batch_files_legacy:
-                print(f"   ⚠️ Found legacy batch files in root. Aggregating...")
-                for bf in batch_files_legacy:
-                    try:
-                        with open(bf, 'r') as f:
-                            data = json.load(f)
-                            if "files" in data:
-                                aggregated_data["files"].extend(data["files"])
-                    except (json.JSONDecodeError, OSError) as e:
-                        # [FIX] Standardized Log Format
-                        print(f"   ⚠️ Data Loss: Skipping corrupt legacy file {bf.name} -> {e}", file=sys.stderr)
-                found_data = True
-
-        if not found_data and pmd_path.exists():
-            try:
-                with open(pmd_path, 'r') as f:
-                    return (json.load(f), 1)
-            except json.JSONDecodeError:
-                print(f"   ❌ Error: Snapshot file {pmd_path.name} is corrupt.", file=sys.stderr)
-                return None
-
-        if not found_data:
-            print(f"   ❌ No PMD data found.")
+            print(f"   ❌ No PMD data found (Checked JSONL stream and Legacy directory).")
             return None
 
+        # ---------------------------------------------------------
+        # Metadata Loading (File Count for Density Calculation)
+        # ---------------------------------------------------------
         file_count = 1
         if repo_path.exists():
             try:
@@ -83,6 +110,10 @@ class PMDMetrics(BaseMetrics):
         return (aggregated_data, file_count)
 
     def calculate(self, data) -> dict:
+        """
+        Pure Business Logic.
+        Agnostic to whether data came from JSONL, JSON, or DB.
+        """
         pmd_data, file_count = data
         files = pmd_data.get("files", [])
 
