@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import tempfile
 import uuid
@@ -61,8 +60,8 @@ class PMDHistoryAdapter(IAdapter):
 
     def _get_total_commit_count(self) -> int:
         cmd = ["git", "rev-list", "--count", "HEAD", "--", "*.java"]
-        s, o = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
-        return int(o.strip()) if s and o else 0
+        success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
+        return int(output.strip()) if success and output else 0
 
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
@@ -78,21 +77,19 @@ class PMDHistoryAdapter(IAdapter):
         print(f"   📊 Batch Scope: {len(batch)} commits")
 
         # Detect current branch to restore later
-        s, current_branch = adapter_subprocess.run_command(
+        success, current_branch = adapter_subprocess.run_command(
             ["git", "symbolic-ref", "--short", "HEAD"],
             cwd=str(self.target_repo_path),
             verbose=False
         )
-        current_branch = current_branch.strip() if s else "main"
+        current_branch = current_branch.strip() if success else "main"
 
         log_path = self.get_output_path()
         last_checkpoint_time = time.time()
         success_count = 0
 
-        # [FIX] Removed unused environment variable setup
-
-        # [FIX] Corrected path to use REPO_ROOT
-        ruleset_path = config.REPO_ROOT / "pipeline" / "static_analysis" / "pmd_rules_00.xml"
+        # [FIX] Use configured PMD ruleset path from config
+        ruleset_path = config.PMD_RULESET_PATH
 
         with open(log_path, "a") as log_file:
             try:
@@ -104,18 +101,21 @@ class PMDHistoryAdapter(IAdapter):
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
-                        # [FIX] Even for already processed commits, advance progress state to avoid reprocessing them.
+                        # Even for already processed commits, advance progress state to avoid reprocessing them.
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
                     # 3. Time Travel
                     checkout_cmd = ["git", "checkout", "-f", commit_hash]
-                    c_success, _ = adapter_subprocess.run_command(checkout_cmd, cwd=str(self.target_repo_path),
-                                                                  verbose=False)
+                    checkout_success, _ = adapter_subprocess.run_command(checkout_cmd, cwd=str(self.target_repo_path),
+                                                                         verbose=False)
 
-                    if not c_success:
-                        log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping.\n")
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=True)
+                    if not checkout_success:
+                        log_file.write(
+                            f"[FATAL] Could not checkout {commit_hash}. Skipping this run (will retry next time).\n")
+                        # [FIX] Do NOT save progress here. Logic: If we save, we skip it forever.
+                        # By continuing without saving, the global index won't advance for this commit,
+                        # but since we are iterating a fixed batch, we just lose one cycle of work, which is safe.
                         continue
 
                     # 4. Run PMD (Isolated Temp File)
@@ -142,8 +142,8 @@ class PMDHistoryAdapter(IAdapter):
                     violation_data = []
                     if pmd_success and temp_json_path.exists() and temp_json_path.stat().st_size > 0:
                         try:
-                            with open(temp_json_path, 'r') as tf:
-                                raw_json = json.load(tf)
+                            with open(temp_json_path, 'r') as temp_file:
+                                raw_json = json.load(temp_file)
                                 # PMD returns { "files": [ ... ] }
                                 violation_data = raw_json.get("files", [])
                             success_count += 1
@@ -154,11 +154,14 @@ class PMDHistoryAdapter(IAdapter):
                             try:
                                 temp_json_path.unlink()
                             except OSError as e:
-                                # [FIX] Added logging for failed cleanup
                                 log_file.write(f"[WARN] Could not delete temporary JSON file {temp_json_path}: {e}\n")
                     else:
                         if not pmd_success:
-                            log_file.write(f"[FAILURE] PMD crashed on {commit_hash}. Output: {pmd_out[:200]}\n")
+                            # [FIX] Safer logging with truncation indicator
+                            output_str = "" if pmd_out is None else str(pmd_out)
+                            if len(output_str) > 200:
+                                output_str = output_str[:200] + "... [output truncated]"
+                            log_file.write(f"[FAILURE] PMD crashed on {commit_hash}. Output: {output_str}\n")
 
                     # 6. Stream to JSONL (Atomic Append)
                     record = {
@@ -168,8 +171,9 @@ class PMDHistoryAdapter(IAdapter):
                     }
 
                     try:
-                        with open(self.jsonl_output_path, "a") as jf:
-                            jf.write(json.dumps(record) + "\n")
+                        # [FIX] Renamed 'jf' to 'jsonl_file'
+                        with open(self.jsonl_output_path, "a") as jsonl_file:
+                            jsonl_file.write(json.dumps(record) + "\n")
                     except Exception as e:
                         log_file.write(f"[CRITICAL] Could not write to JSONL: {e}\n")
 
@@ -185,7 +189,7 @@ class PMDHistoryAdapter(IAdapter):
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Saving progress...")
-                self.state_manager.flush()
+                # [FIX] Removed redundant self.state_manager.flush() here, handled in finally
                 return False
 
             finally:

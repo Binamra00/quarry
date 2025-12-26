@@ -26,9 +26,10 @@ def run_command(
     try:
         if log_file_path:
             # OPTION A: Stream to File (Silent Mode / Debug Log)
+            # Use append mode 'a' to prevent overwriting previous logs
             with open(log_file_path, "a") as f:
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
-                f.flush()
+                f.flush()  # [FIX] Ensure header is written before subprocess writes
 
                 result = subprocess.run(
                     command,
@@ -37,7 +38,7 @@ def run_command(
                     stderr=subprocess.STDOUT,
                     check=False,
                     timeout=timeout,
-                    text=True  # [FIX] Ensure text mode for file writing
+                    text=True  # [FIX] Ensure text mode so file writing works
                 )
                 output_content = f"Log saved to {log_file_path.name}"
         else:
@@ -61,13 +62,33 @@ def run_command(
                 print(f"❌ Command Failed (Exit Code {exit_code})")
             return False, output_content
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
         if verbose:
             print(msg)
+            # [FIX] Print partial output if available for debugging
+            partial_stdout = (e.stdout or "").strip() if hasattr(e, "stdout") else ""
+            partial_stderr = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
+            if partial_stdout:
+                print("   [STDOUT before timeout]:")
+                print(partial_stdout)
+            if partial_stderr:
+                print("   [STDERR before timeout]:")
+                print(partial_stderr)
+
         if log_file_path:
             with open(log_file_path, "a") as f:
                 f.write(f"\n{msg}\n")
+                # [FIX] Log partial output to file
+                partial_stdout = (e.stdout or "").strip() if hasattr(e, "stdout") else ""
+                partial_stderr = (e.stderr or "").strip() if hasattr(e, "stderr") else ""
+                if partial_stdout:
+                    f.write("\n[STDOUT before timeout]:\n")
+                    f.write(partial_stdout + "\n")
+                if partial_stderr:
+                    f.write("\n[STDERR before timeout]:\n")
+                    f.write(partial_stderr + "\n")
+
         return False, "TIMEOUT"
 
     except FileNotFoundError:

@@ -19,6 +19,7 @@ class BatchStateManager:
         self.state_file = config.OUTPUTS_PATH / f"batch_status_{tool_name}_{repo_name}.json"
         self.state = self._load_state()
         # Optimization: fast lookup set for O(1) checks
+        # [FIX] Use .get() to ensure robustness against missing keys in older state files
         self.processed_set = set(self.state.get("processed_shas", []))
 
     def _load_state(self) -> Dict:
@@ -30,14 +31,17 @@ class BatchStateManager:
                     print(f"   🔄 Loaded Batch State from: {self.state_file.name}")
                     return data
             except json.JSONDecodeError:
+                # If corrupt, archive it and start fresh rather than crashing
                 timestamp = int(time.time())
                 corrupt_path = self.state_file.with_suffix(f".corrupt_{timestamp}.json")
                 print(f"   ⚠️ State file corrupted. Archiving to: {corrupt_path.name}")
                 try:
                     shutil.move(str(self.state_file), str(corrupt_path))
                 except OSError:
+                    # Best-effort archival only
                     pass
 
+        # Default State Schema
         return {
             "repo": self.repo_name,
             "tool": self.tool_name,
@@ -57,8 +61,18 @@ class BatchStateManager:
     def save_progress(self, commit_hash: str, index: int, total: int, flush: bool = False):
         """
         Updates the in-memory state.
+
+        Args:
+            commit_hash: The SHA just processed.
+            index: The global index of this SHA.
+            total: Total commits in history.
+            flush: If True, forces a physical disk write immediately.
         """
+        # 1. Update Memory
         if commit_hash not in self.processed_set:
+            # Ensure the key exists (handling migration from older state schemas)
+            if "processed_shas" not in self.state:
+                self.state["processed_shas"] = []
             self.state["processed_shas"].append(commit_hash)
             self.processed_set.add(commit_hash)
 
@@ -66,28 +80,40 @@ class BatchStateManager:
 
         if index >= total - 1:
             self.state["is_complete"] = True
-            flush = True
+            flush = True  # Always flush on completion
 
+        # 2. Persist to Disk (Slow - Only if requested)
         if flush:
-            self.flush()
+            success = self.flush()
+            if not success:
+                # [FIX] Log explicit warning if persistence fails
+                print(f"   ⚠️ Warning: Progress for {commit_hash[:7]} was NOT saved to disk.")
 
-    def flush(self):
+    def flush(self) -> bool:
         """
-        Atomic Write Strategy.
+        [FIX] Atomic Write Strategy.
         Writes to a temp file first, then renames it.
+        Returns True if successful, False otherwise.
         """
         temp_path = self.state_file.with_suffix(".tmp")
         try:
+            # 1. Write to temp file
             with open(temp_path, 'w') as f:
                 json.dump(self.state, f, indent=2)
 
+            # 2. Atomic Rename (POSIX compliant)
+            # If crash happens before this line, original file is untouched.
+            # If crash happens after, new file is in place.
             os.replace(temp_path, self.state_file)
+            return True
 
         except Exception as e:
             print(f"   ⚠️ Failed to save batch state: {e}")
+            # Try to clean up temp file if possible
             if temp_path.exists():
                 try:
                     temp_path.unlink()
                 except OSError:
                     # Best-effort cleanup: if temp file can't be deleted, there's nothing else to do.
                     pass
+            return False
