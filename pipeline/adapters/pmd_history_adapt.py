@@ -44,7 +44,9 @@ class PMDHistoryAdapter(IAdapter):
             cwd=str(self.target_repo_path),
             verbose=False
         )
-        if not success or not output:
+
+        # [FIX] Robust check for empty/whitespace-only output
+        if not success or not output or not output.strip():
             return []
 
         all_commits = output.strip().split('\n')
@@ -61,7 +63,8 @@ class PMDHistoryAdapter(IAdapter):
     def _get_total_commit_count(self) -> int:
         cmd = ["git", "rev-list", "--count", "HEAD", "--", "*.java"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
-        return int(output.strip()) if success and output else 0
+        # [FIX] Ensure output is not empty/whitespace before converting to int
+        return int(output.strip()) if success and output and output.strip() else 0
 
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
@@ -69,7 +72,7 @@ class PMDHistoryAdapter(IAdapter):
         # 1. Verification
         total_commits = self._get_total_commit_count()
 
-        # [FIX] Handle empty repository case
+        # Handle empty repository case
         if total_commits == 0:
             print("❌ No Java commits found to analyze.")
             return False
@@ -97,7 +100,7 @@ class PMDHistoryAdapter(IAdapter):
         # Use configured PMD ruleset path from config
         ruleset_path = config.PMD_RULESET_PATH
 
-        # Fail-Fast: Verify ruleset exists before processing 5000 commits
+        # Fail-Fast: Verify ruleset exists before processing commits
         if not Path(ruleset_path).exists():
             print(f"❌ Ruleset not found at: {ruleset_path}")
             return False
@@ -116,8 +119,8 @@ class PMDHistoryAdapter(IAdapter):
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
-                        # NOTE: Commits in the state manager (processed_set) are skipped.
-                        # No new JSONL record is written for them. This is intentional.
+                        # NOTE: Commits in the state manager are skipped.
+                        # No new JSONL record is written for them to preserve append-only history.
                         continue
 
                     # 3. Time Travel
@@ -126,9 +129,10 @@ class PMDHistoryAdapter(IAdapter):
                                                                          verbose=False)
 
                     if not checkout_success:
-                        log_file.write(f"[FATAL] Could not checkout {commit_hash}. Skipping run.\n")
+                        # [FIX] Changed FATAL to ERROR as execution continues
+                        log_file.write(f"[ERROR] Could not checkout {commit_hash}. Skipping run.\n")
 
-                        # [FIX] Emit a JSONL record for this failed checkout to keep data consistent
+                        # Emit a JSONL record for this failed checkout to keep data consistent
                         try:
                             status_record = {
                                 "sha": commit_hash,
@@ -141,7 +145,7 @@ class PMDHistoryAdapter(IAdapter):
                         except Exception as e:
                             log_file.write(f"[WARN] Failed to write checkout_failed record to JSONL: {e}\n")
 
-                        # [FIX] Mark as processed to prevent retry/infinite loops on this commit
+                        # Mark as processed to prevent retry/infinite loops on this commit
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
@@ -158,8 +162,8 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    # [FIX] Safer default status
-                    run_status = "pending"
+                    # [FIX] Removed redundant 'run_status = pending' initialization
+                    # Initialize violation data container
                     violation_data = []
 
                     try:
