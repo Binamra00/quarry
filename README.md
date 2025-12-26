@@ -209,7 +209,7 @@ The system is fully self-contained.
 git clone https://github.com/Binamra00/smell-ranker.git
 cd smell-ranker
 ```
-## 2. Setup Python Environment
+### 2. Setup Python Environment
 
 It is recommended to use a virtual environment.
 
