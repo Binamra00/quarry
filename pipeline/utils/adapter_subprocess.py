@@ -7,54 +7,66 @@ from typing import List, Tuple, Optional
 def run_command(
         command: List[str],
         cwd: Optional[str] = None,
-        allowed_exit_codes: List[int] = [0],
+        allowed_exit_codes: Optional[List[int]] = None,
         log_file_path: Optional[Path] = None,
-        verbose: bool = True  # [NEW] Flag to silence console output
+        verbose: bool = True,
+        timeout: int = 600
 ) -> Tuple[bool, str]:
     """
-    Executes a shell command safely.
+    Executes a shell command safely with timeouts and atomic logging.
 
     Args:
-        command (list): The command to run.
-        cwd (str): Working directory.
-        allowed_exit_codes (list): Codes considered 'Success' (e.g., [0, 4] for PMD).
-        log_file_path (Path): If provided, writes stdout/stderr to this file
-                              instead of capturing it in memory.
-        verbose (bool): If True, prints [EXEC] and errors to console.
-                        If False, runs silently (useful for loops).
+        command: The command and its arguments as a list of strings.
+        cwd: Optional working directory in which to execute the command.
+        allowed_exit_codes: List of exit codes that are considered successful.
+            Defaults to [0] if not provided.
+        log_file_path: Optional path to a log file to which output is streamed.
+        verbose: If True, prints execution details and error messages.
+        timeout: Maximum time to wait for the command to complete, in seconds.
+            Defaults to 600 seconds.
 
     Returns:
-        tuple: (success (bool), output_summary (str))
+        A tuple (success, output) where success is True if the command
+        completed with an allowed exit code, and output contains either
+        captured output or a status/message string.
     """
+    if allowed_exit_codes is None:
+        allowed_exit_codes = [0]
+
     cmd_str = " ".join(command)
 
-    # [LOGIC] Only print to console if verbose is True
     if verbose:
         print(f"   [EXEC]: {cmd_str}")
 
     try:
         if log_file_path:
-            # OPTION A: Stream to File (Silent Mode via File)
-            # We open the file and let the subprocess write to it directly
-            with open(log_file_path, "w") as f:
+            # OPTION A: Stream to File (Silent Mode / Debug Log)
+            # Use append mode 'a' to prevent overwriting previous logs
+            with open(log_file_path, "a") as f:
+                f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
+                f.flush()  # Ensure header is written before subprocess writes
+
                 result = subprocess.run(
                     command,
                     cwd=cwd,
                     stdout=f,
-                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
-                    text=True,
-                    check=False
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    timeout=timeout,
+                    text=True  # Ensure text mode so file writing works
                 )
-            # Output summary is just the path to the log
+
+            # [FIX] Unindented: This assignment is part of return preparation, not file IO
             output_content = f"Log saved to {log_file_path.name}"
         else:
-            # OPTION B: Capture to Memory (Verbose/Default)
+            # OPTION B: Capture to Memory (Standard)
             result = subprocess.run(
                 command,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                timeout=timeout
             )
             output_content = result.stdout.strip() + "\n" + result.stderr.strip()
 
@@ -65,24 +77,47 @@ def run_command(
         else:
             if verbose:
                 print(f"❌ Command Failed (Exit Code {exit_code})")
-
-            # If we logged to a file, print the last 10 lines for immediate context
-            if log_file_path and log_file_path.exists() and verbose:
-                print(f"   Last 10 lines of log ({log_file_path.name}):")
-                try:
-                    subprocess.run(
-                        ["tail", "-n", "10", str(log_file_path)],
-                        check=False
-                    )
-                except Exception as e:
-                    print(f"   (Could not read log tail: {e})")
-
             return False, output_content
+
+    except subprocess.TimeoutExpired as e:
+        msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
+
+        # Safe attribute access (handle None if logging to file)
+        partial_stdout = e.stdout if e.stdout else ""
+        partial_stderr = e.stderr if e.stderr else ""
+
+        if verbose:
+            print(msg)
+            if partial_stdout:
+                print("   [STDOUT before timeout]:")
+                print(partial_stdout.strip())
+            if partial_stderr:
+                print("   [STDERR before timeout]:")
+                print(partial_stderr.strip())
+
+        if log_file_path:
+            with open(log_file_path, "a") as f:
+                f.write(f"\n{msg}\n")
+                # Log partial output if we captured it (Memory Mode)
+                if partial_stdout:
+                    f.write("\n[STDOUT before timeout]:\n")
+                    f.write(partial_stdout.strip() + "\n")
+                if partial_stderr:
+                    f.write("\n[STDERR before timeout]:\n")
+                    f.write(partial_stderr.strip() + "\n")
+
+                # Better message for File Mode
+                if not partial_stdout and not partial_stderr:
+                    f.write(
+                        "\n(Note: Command output, if any, was streamed directly to this log file above before the timeout.)\n")
+
+        return False, "TIMEOUT"
 
     except FileNotFoundError:
         if verbose:
             print(f"❌ Executable not found: {command[0]}")
         return False, "Command not found"
+
     except Exception as e:
         if verbose:
             print(f"❌ Unexpected Error: {e}")
