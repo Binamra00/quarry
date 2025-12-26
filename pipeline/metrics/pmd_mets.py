@@ -47,7 +47,9 @@ class PMDMetrics(BaseMetrics):
                 with open(jsonl_path, 'r') as f:
                     for line_num, line in enumerate(f):
                         line = line.strip()
-                        if not line: continue
+                        # [FIX] PEP 8: Avoid compound statements
+                        if not line:
+                            continue
 
                         try:
                             record = json.loads(line)
@@ -59,10 +61,11 @@ class PMDMetrics(BaseMetrics):
                             if status == "success":
                                 # Map the 'violations' field from JSONL to the 'files' list
                                 # expected by the calculation logic.
-                                # Structure: [{"filename": "...", "violations": [...]}, ...]
                                 file_violations = record.get("violations", [])
                                 if file_violations:
                                     aggregated_data["files"].extend(file_violations)
+
+                                # [FIX] Increment for ALL successful commits, even if 0 violations
                                 processed_commits += 1
 
                         except json.JSONDecodeError:
@@ -96,7 +99,7 @@ class PMDMetrics(BaseMetrics):
             return None
 
         # ---------------------------------------------------------
-        # Metadata Loading (File Count for Density Calculation)
+        # Metadata Loading
         # ---------------------------------------------------------
         file_count = 1
         if repo_path.exists():
@@ -110,10 +113,7 @@ class PMDMetrics(BaseMetrics):
         return (aggregated_data, file_count)
 
     def calculate(self, data) -> dict:
-        """
-        Pure Business Logic.
-        Agnostic to whether data came from JSONL, JSON, or DB.
-        """
+        """Pure Business Logic."""
         pmd_data, file_count = data
         files = pmd_data.get("files", [])
 
@@ -163,7 +163,6 @@ class PMDMetrics(BaseMetrics):
     def print_report(self, metrics: dict):
         d = metrics["density"]
         c = metrics["complexity"]
-
         print(f"├── [Density] (Cumulative History)")
         print(f"│   ├── Total Smells: {d['total_smells']}")
         print(f"│   └── Smells/File:  {d['per_file']}")

@@ -14,6 +14,21 @@ def run_command(
 ) -> Tuple[bool, str]:
     """
     Executes a shell command safely with timeouts and atomic logging.
+
+    Args:
+        command: The command and its arguments as a list of strings.
+        cwd: Optional working directory in which to execute the command.
+        allowed_exit_codes: List of exit codes that are considered successful.
+            Defaults to [0] if not provided.
+        log_file_path: Optional path to a log file to which output is streamed.
+        verbose: If True, prints execution details and error messages.
+        timeout: Maximum time to wait for the command to complete, in seconds.
+            Defaults to 600 seconds.
+
+    Returns:
+        A tuple (success, output) where success is True if the command
+        completed with an allowed exit code, and output contains either
+        captured output or a status/message string.
     """
     if allowed_exit_codes is None:
         allowed_exit_codes = [0]
@@ -40,7 +55,9 @@ def run_command(
                     timeout=timeout,
                     text=True  # Ensure text mode so file writing works
                 )
-                output_content = f"Log saved to {log_file_path.name}"
+
+            # [FIX] Unindented: This assignment is part of return preparation, not file IO
+            output_content = f"Log saved to {log_file_path.name}"
         else:
             # OPTION B: Capture to Memory (Standard)
             result = subprocess.run(
@@ -65,7 +82,7 @@ def run_command(
     except subprocess.TimeoutExpired as e:
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
 
-        # [FIX] Safe attribute access (handle None if logging to file)
+        # Safe attribute access (handle None if logging to file)
         partial_stdout = e.stdout if e.stdout else ""
         partial_stderr = e.stderr if e.stderr else ""
 
@@ -88,9 +105,11 @@ def run_command(
                 if partial_stderr:
                     f.write("\n[STDERR before timeout]:\n")
                     f.write(partial_stderr.strip() + "\n")
-                # If File Mode, output is already in the file, so we append a note
+
+                # Better message for File Mode
                 if not partial_stdout and not partial_stderr:
-                    f.write("\n(Note: Partial output is above in this log file)\n")
+                    f.write(
+                        "\n(Note: Command output, if any, was streamed directly to this log file above before the timeout.)\n")
 
         return False, "TIMEOUT"
 

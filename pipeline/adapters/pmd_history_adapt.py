@@ -68,10 +68,16 @@ class PMDHistoryAdapter(IAdapter):
 
         # 1. Verification
         total_commits = self._get_total_commit_count()
+
+        # [FIX] Handle empty repository case
+        if total_commits == 0:
+            print("❌ No Java commits found to analyze.")
+            return False
+
         batch = self._get_commit_batch()
 
         if not batch:
-            print("✅ Analysis already complete.")
+            print(f"✅ Analysis already complete for all {total_commits} commits.")
             return True
 
         print(f"   📊 Batch Scope: {len(batch)} commits")
@@ -111,9 +117,7 @@ class PMDHistoryAdapter(IAdapter):
                     if self.state_manager.is_commit_processed(commit_hash):
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         # NOTE: Commits in the state manager (processed_set) are skipped.
-                        # No new JSONL record is written for them. This is intentional:
-                        # the JSONL log grows append-only across runs to preserve history
-                        # while the state manager prevents duplicate processing.
+                        # No new JSONL record is written for them. This is intentional.
                         continue
 
                     # 3. Time Travel
@@ -137,7 +141,7 @@ class PMDHistoryAdapter(IAdapter):
                         except Exception as e:
                             log_file.write(f"[WARN] Failed to write checkout_failed record to JSONL: {e}\n")
 
-                        # Poison Pill: Mark as processed to prevent infinite loops
+                        # [FIX] Mark as processed to prevent retry/infinite loops on this commit
                         self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
@@ -154,8 +158,8 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    # [FIX] Clearer default status
-                    run_status = "initialization_failed"
+                    # [FIX] Safer default status
+                    run_status = "pending"
                     violation_data = []
 
                     try:
@@ -180,7 +184,6 @@ class PMDHistoryAdapter(IAdapter):
                         else:
                             if not pmd_success:
                                 # Determine failure type
-                                # [FIX] Robust check for timeout string
                                 if isinstance(pmd_out, str) and pmd_out.strip() == "TIMEOUT":
                                     run_status = "timeout"
                                 else:
@@ -193,7 +196,6 @@ class PMDHistoryAdapter(IAdapter):
                                 log_file.write(f"[FAILURE] PMD {run_status} on {commit_hash}. Output: {output_str}\n")
                             else:
                                 # Success but no file (empty result / no violations)
-                                # [FIX] This counts as a success
                                 run_status = "success"
                                 success_count += 1
 
