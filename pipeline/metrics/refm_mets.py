@@ -106,7 +106,7 @@ class RefmMetrics(BaseMetrics):
         TARGET_PURITY = refm_conf.get("purity_target_percent", 80.0)
 
         print(f"├── [Dataset Scope]")
-        print(f"│   ├── Total Commits: {s['total_commits']}")
+        print(f"│   ├── Refactored Commits: {s['commits_with_refs']}")
         print(f"│   └── Refactoring Density: {s['density_percent']}% (Target: >{TARGET_DENSITY}%)")
         print(f"├── [Dataset Purity]")
         print(f"│   ├── Floss Commits: {p['floss_commits']}")
