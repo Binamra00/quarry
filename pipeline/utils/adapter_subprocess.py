@@ -7,26 +7,14 @@ from typing import List, Tuple, Optional
 def run_command(
         command: List[str],
         cwd: Optional[str] = None,
-        allowed_exit_codes: Optional[List[int]] = None,  # [FIX] Removed mutable default
+        allowed_exit_codes: Optional[List[int]] = None,
         log_file_path: Optional[Path] = None,
         verbose: bool = True,
-        timeout: int = 600  # [FIX] Added default timeout (10 minutes)
+        timeout: int = 600
 ) -> Tuple[bool, str]:
     """
     Executes a shell command safely with timeouts and atomic logging.
-
-    Args:
-        command: The command arguments.
-        cwd: Current working directory.
-        allowed_exit_codes: List of return codes considered successful.
-        log_file_path: Path to write stdout/stderr to (bypass memory).
-        verbose: Whether to print to console.
-        timeout: Max execution time in seconds.
-
-    Returns:
-        (success, output_content)
     """
-    # [FIX] Handle mutable default argument
     if allowed_exit_codes is None:
         allowed_exit_codes = [0]
 
@@ -38,19 +26,18 @@ def run_command(
     try:
         if log_file_path:
             # OPTION A: Stream to File (Silent Mode / Debug Log)
-            # Use append mode 'a' to prevent overwriting previous logs in the same session
             with open(log_file_path, "a") as f:
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
                 f.flush()
 
-                # [FIX] Added timeout
                 result = subprocess.run(
                     command,
                     cwd=cwd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     check=False,
-                    timeout=timeout
+                    timeout=timeout,
+                    text=True  # [FIX] Ensure text mode for file writing
                 )
                 output_content = f"Log saved to {log_file_path.name}"
         else:
@@ -61,7 +48,7 @@ def run_command(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=timeout  # [FIX] Added timeout
+                timeout=timeout
             )
             output_content = result.stdout.strip() + "\n" + result.stderr.strip()
 
@@ -78,7 +65,6 @@ def run_command(
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
         if verbose:
             print(msg)
-        # Log the timeout event to the file if one was provided
         if log_file_path:
             with open(log_file_path, "a") as f:
                 f.write(f"\n{msg}\n")

@@ -3,7 +3,6 @@ import os
 import time
 import tempfile
 import uuid
-import subprocess
 from pathlib import Path
 from typing import List
 
@@ -26,7 +25,7 @@ class PMDHistoryAdapter(IAdapter):
         self.state_manager = BatchStateManager(target_repo_path.name, "pmd_history")
         self.checkpoint_interval_seconds = 300
 
-        # [FIX] Output to a single JSONL file instead of a directory
+        # Output to a single JSONL file instead of a directory
         self.jsonl_output_path = config.OUTPUTS_PATH / f"pmd_history_{self.target_repo_path.name}.jsonl"
 
     def get_tool_name(self) -> str:
@@ -53,7 +52,6 @@ class PMDHistoryAdapter(IAdapter):
         total_commits = len(all_commits)
 
         # 2. Ask State Manager for the next slice
-        # (This handles the "resume" logic transparently)
         next_start = self.state_manager.get_next_start_index()
 
         if next_start >= total_commits:
@@ -91,11 +89,10 @@ class PMDHistoryAdapter(IAdapter):
         last_checkpoint_time = time.time()
         success_count = 0
 
-        # [ENV] Pass environment variables
-        env = os.environ.copy()
+        # [FIX] Removed unused environment variable setup
 
-        # Define ruleset path
-        ruleset_path = config.PIPELINE_ROOT / "pipeline" / "static_analysis" / "pmd_rules_00.xml"
+        # [FIX] Corrected path to use REPO_ROOT
+        ruleset_path = config.REPO_ROOT / "pipeline" / "static_analysis" / "pmd_rules_00.xml"
 
         with open(log_path, "a") as log_file:
             try:
@@ -107,6 +104,8 @@ class PMDHistoryAdapter(IAdapter):
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
+                        # [FIX] Even for already processed commits, advance progress state to avoid reprocessing them.
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
                         continue
 
                     # 3. Time Travel
@@ -120,7 +119,6 @@ class PMDHistoryAdapter(IAdapter):
                         continue
 
                     # 4. Run PMD (Isolated Temp File)
-                    # [FIX] Use safe temp file pattern
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_path = Path(tempfile.gettempdir()) / f"pmd_{commit_hash}_{unique_id}.json"
 
@@ -133,7 +131,6 @@ class PMDHistoryAdapter(IAdapter):
                         "--no-cache"
                     ]
 
-                    # [FIX] Added timeout logic via updated adapter_subprocess
                     pmd_success, pmd_out = adapter_subprocess.run_command(
                         pmd_cmd,
                         allowed_exit_codes=[0, 4],  # 0=OK, 4=Violations Found
@@ -156,14 +153,14 @@ class PMDHistoryAdapter(IAdapter):
                             # Cleanup temp file
                             try:
                                 temp_json_path.unlink()
-                            except OSError:
-                                pass
+                            except OSError as e:
+                                # [FIX] Added logging for failed cleanup
+                                log_file.write(f"[WARN] Could not delete temporary JSON file {temp_json_path}: {e}\n")
                     else:
                         if not pmd_success:
                             log_file.write(f"[FAILURE] PMD crashed on {commit_hash}. Output: {pmd_out[:200]}\n")
 
                     # 6. Stream to JSONL (Atomic Append)
-                    # We store: Metadata + Violations
                     record = {
                         "sha": commit_hash,
                         "timestamp": int(time.time()),
