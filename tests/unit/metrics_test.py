@@ -16,7 +16,7 @@ class TestRefactoringFormulas:
         self.logic = StandardRefactoringLogic(churn_sensitivity=20)
 
     def test_density_zero_division(self):
-        """Test 1: Should return 0.0 if total history is 0 (Brand new repo)."""
+        """Test 1: Should return 0.0 if total history is 0 (Brand new repo)"""
         # Input: 0 total commits
         result = self.logic.calculate_density(ref_commits=5, total_commits=0)
         assert result == 0.0

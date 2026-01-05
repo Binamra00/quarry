@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 def mock_config_paths(monkeypatch, tmp_path):
     """
     Automatically redirects config.OUTPUTS_PATH to a temp directory
-    for EVERY test. This guarantees isolation.
+    for EVERY test. This guarantees isolation
     """
     # Create a fake output directory in the temp folder
     fake_outputs = tmp_path / "outputs"
