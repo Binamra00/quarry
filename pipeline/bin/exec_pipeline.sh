@@ -66,10 +66,12 @@ if [ "$JAVA_INSTALLED" = false ]; then
     fi
 fi
 
-# Check Python Libs
-if ! python3 -c "import pydriller, dotenv, IPython" 2>/dev/null; then
-    echo "📦 Installing Python dependencies..."
-    pip install pydriller python-dotenv ipython > /dev/null
+# Check Python Libs (Updated for Testing Framework)
+# We check for 'pytest' to ensure the test harness is ready.
+if ! python3 -c "import pydriller, dotenv, IPython, pytest" 2>/dev/null; then
+    echo "📦 Installing Python dependencies (Runtime + Testing)..."
+    # Added pytest and pytest-mock to the installation list
+    pip install pydriller python-dotenv ipython pytest pytest-mock > /dev/null
     echo "✅ Dependencies installed."
 fi
 
