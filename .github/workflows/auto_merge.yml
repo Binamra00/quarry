@@ -41,4 +41,4 @@ jobs:
             echo "ℹ️ PR already exists."
           fi
 
-  # DELETE JOB 2 (trigger_review) - It is no longer needed!
+  # DELETE JOB 2 (trigger_review) - It is no longer needed
