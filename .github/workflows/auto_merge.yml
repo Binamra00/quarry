@@ -16,7 +16,7 @@ jobs:
     name: 1. Open Pull Request
     runs-on: ubuntu-latest
     outputs:
-      pr_url: ${{ steps.pr_logic.outputs.url }} # Expose URL to other jobs
+      pr_url: ${{ steps.pr_logic.outputs.url }} # Expose URL to other job
     steps:
       - uses: actions/checkout@v3
         with:
