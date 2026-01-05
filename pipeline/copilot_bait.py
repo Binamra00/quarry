@@ -1,21 +1,28 @@
+# copilot_bait.py
 import json
 import os
+import sys  # Unused import
 
 
-def connect_to_database():
-    # TRIGGER 1: Hardcoded Secret (High Severity)
-    # Copilot should flag this immediately as a security risk.
-    aws_access_key = "AKIA1234567890EXAMPLE"
+def calculate_metrics(data):
+    # SMEL 1: Hardcoded Secret
+    api_key = "12345-ABCDE-SECRET-KEY"
 
-    # TRIGGER 2: Unused Variable (Code Quality)
-    # This variable is assigned but never used.
-    unused_counter = 100
+    # SMELL 2: Obvious Logic Error (Infinite Loop)
+    counter = 0
+    while True:
+        counter += 1
+        print(f"Processing item {counter}")
+        # Missing break condition!
 
-    try:
-        print("Connecting...")
-    # TRIGGER 3: Bare Except (Best Practice Violation)
-    # Catching all exceptions silences errors and makes debugging impossible.
-    except:
-        pass
+    return counter
 
-    return True
+
+def main():
+    print("Starting process...")
+    result = calculate_metrics(None)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
