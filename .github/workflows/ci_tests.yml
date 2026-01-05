@@ -1,5 +1,5 @@
 name: Smell-Ranker CI
-# Run tests with Pytest on push and pull request events
+# Run tests with Pytest on push and pull request events.
 on:
   push:
     branches: [ "main", "dev" ]

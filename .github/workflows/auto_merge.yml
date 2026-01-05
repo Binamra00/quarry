@@ -59,13 +59,15 @@ jobs:
     needs: infrastructure_pr # Waits for Job 1
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Copilot Agent
+      - name: Assign Copilot Reviewer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
-          echo "🤖 Triggering Copilot on: $PR_URL"
-          gh pr comment "$PR_URL" --body "ci/review"
+          echo "🤖 Force-assigning Copilot to: $PR_URL"
+          
+          # Try the standard slug "copilot" first
+          gh pr edit "$PR_URL" --add-reviewer "copilot"
           
           # Optional: Add a tiny sleep to ensure comment propagates
           sleep 5
