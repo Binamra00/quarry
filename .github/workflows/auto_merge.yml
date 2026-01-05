@@ -16,19 +16,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create PR and Enable Auto-Merge
+      - name: Create PR, Trigger Bot, and Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_EXISTS=$(gh pr list --base main --head dev --json number --jq 'length')
 
           if [ "$PR_EXISTS" -eq 0 ]; then
-            # 1. Capture the Commit Message for the Title
+            # 1. Capture Title
             COMMIT_MSG=$(git log -1 --pretty=%s)
             
-            echo "🚀 Creating PR with title: $COMMIT_MSG"
-            
-            # 2. Create PR with explicit title
+            # 2. Create PR
+            echo "🚀 Creating PR..."
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
@@ -37,15 +36,23 @@ jobs:
               
             echo "✅ PR Created: $PR_URL"
             
-            echo "⏳ Waiting 10s for PR stabilization..."
+            echo "⏳ Waiting 10s for stabilization..."
             sleep 10
+
+            # 3. TRIGGER BOT (Moved here!)
+            # We explicitly comment to wake up Copilot
+            gh pr comment "$PR_URL" --body "ci/review"
+            echo "🤖 Copilot triggered."
             
-            # 3. Enable Auto-Merge
+            # 4. Enable Auto-Merge
             gh pr merge "$PR_URL" --auto --merge
             echo "✅ Auto-Merge Enabled."
             
           else
-            echo "ℹ️ PR exists. Ensuring auto-merge..."
+            echo "ℹ️ PR exists. Ensuring state..."
             PR_URL=$(gh pr list --base main --head dev --json url --jq '.[0].url')
+            
+            # Ensure trigger and merge are active
+            gh pr comment "$PR_URL" --body "ci/review"
             gh pr merge "$PR_URL" --auto --merge
           fi
