@@ -69,19 +69,3 @@ jobs:
           
           # Optional: Add a tiny sleep to ensure comment propagates
           sleep 5
-
-# ====================================================
-  # JOB 3: DEPLOYMENT - ENABLE MERGE  <- DELETE THIS JOB
-  # ====================================================
-  enable_merge:
-    name: 3. Set Auto-Merge
-    needs: [infrastructure_pr, trigger_review]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Enable Auto-Merge
-        env:
-           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-           PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
-           echo "🚀 Enabling Auto-Merge on: $PR_URL"
-           gh pr merge "$PR_URL" --auto --merge
