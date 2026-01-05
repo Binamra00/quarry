@@ -36,6 +36,8 @@ jobs:
     # 4. Run the Tests
     # This executes your BVA and Unit tests
     - name: Run Test Suite
+      env:
+        PYTHONPATH: .
       run: |
         # The -v flag gives verbose output so you see exactly which tests passed
         pytest tests/ -v
