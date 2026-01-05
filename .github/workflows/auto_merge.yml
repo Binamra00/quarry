@@ -25,20 +25,20 @@ jobs:
           if [ "$PR_EXISTS" -eq 0 ]; then
             echo "🚀 No PR found. Creating one..."
             
-            # Create the PR with Copilot as the reviewer
+            # Create the PR with dynamic title/body from commits
+            # --fill uses your commit message as the PR Title & Description
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
-              --title "Auto-Deploy: Merge Dev to Main" \
-              --body "Automated PR triggered by push to dev branch. Validating changes..." \
+              --fill \
               --reviewer copilot)
               
             echo "✅ PR Created: $PR_URL"
             
-            # 2. Enable Auto-Merge
-            # REMOVED '--delete-branch' to preserve 'dev'
+            # 2. Enable Auto-Merge immediately
+            # Since you removed "Require Approvals", this will merge as soon as Tests pass!
             gh pr merge "$PR_URL" --auto --merge
-            echo "✅ Auto-Merge Enabled (Dev branch will remain)."
+            echo "✅ Auto-Merge Enabled."
             
           else
             echo "ℹ️ PR already exists. Ensuring settings are correct..."
@@ -46,9 +46,9 @@ jobs:
             # Get the existing PR URL
             PR_URL=$(gh pr list --base main --head dev --json url --jq '.[0].url')
             
-            # Ensure Copilot is requested (in case it was missed)
+            # Ensure Copilot is requested (for your records)
             gh pr edit "$PR_URL" --add-reviewer copilot
             
-            # Ensure auto-merge is on (without deleting branch)
+            # Ensure auto-merge is on
             gh pr merge "$PR_URL" --auto --merge
           fi
