@@ -8,7 +8,7 @@ from pipeline import config
 class TestBatchStateManager:
 
     def test_initialization_fresh(self):
-        """Test 1: Should create default state if no file exists"""
+        """Test 1: Should create default state if no file exists."""
         manager = BatchStateManager("test_repo", "pmd")
 
         assert manager.state["last_index"] == -1
