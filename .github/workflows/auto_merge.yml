@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # <--- CRITICAL FIX: Downloads full history so 'gh' can compare branches
+          fetch-depth: 0  # CRITICAL: Downloads full history for --fill
 
       - name: Create PR and Enable Auto-Merge
         env:
@@ -28,12 +28,11 @@ jobs:
             echo "🚀 No PR found. Creating one..."
             
             # Create the PR with dynamic title/body from commits
-            # --fill uses the commit info. This requires the history we just fetched.
+            # REMOVED '--reviewer copilot' (Handled by CODEOWNERS and ci_tests.yml)
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
-              --fill \
-              --reviewer copilot)
+              --fill)
               
             echo "✅ PR Created: $PR_URL"
             
@@ -46,9 +45,6 @@ jobs:
             
             # Get the existing PR URL
             PR_URL=$(gh pr list --base main --head dev --json url --jq '.[0].url')
-            
-            # Ensure Copilot is requested
-            gh pr edit "$PR_URL" --add-reviewer copilot
             
             # Ensure auto-merge is on
             gh pr merge "$PR_URL" --auto --merge
