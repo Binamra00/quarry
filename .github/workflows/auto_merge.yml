@@ -1,6 +1,5 @@
 name: Dev Delivery Logic
 
-# Trigger execution when code is pushed to 'dev'
 on:
   push:
     branches: [ "dev" ]
@@ -21,34 +20,32 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Check if a PR already exists from dev -> main
           PR_EXISTS=$(gh pr list --base main --head dev --json number --jq 'length')
 
           if [ "$PR_EXISTS" -eq 0 ]; then
-            echo "🚀 No PR found. Creating one..."
+            # 1. Capture the Commit Message for the Title
+            COMMIT_MSG=$(git log -1 --pretty=%s)
             
-            # Create the PR
+            echo "🚀 Creating PR with title: $COMMIT_MSG"
+            
+            # 2. Create PR with explicit title
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
-              --fill)
+              --title "$COMMIT_MSG" \
+              --body "Automated delivery pipeline.")
               
             echo "✅ PR Created: $PR_URL"
             
-            # --- THE FIX: WAIT FOR GITHUB TO STABILIZE ---
-            echo "⏳ Waiting 10s for PR state to stabilize..."
+            echo "⏳ Waiting 10s for PR stabilization..."
             sleep 10
             
-            # 2. Enable Auto-Merge (Now safe)
+            # 3. Enable Auto-Merge
             gh pr merge "$PR_URL" --auto --merge
             echo "✅ Auto-Merge Enabled."
             
           else
-            echo "ℹ️ PR already exists. Ensuring settings are correct..."
-            
-            # Get the existing PR URL
+            echo "ℹ️ PR exists. Ensuring auto-merge..."
             PR_URL=$(gh pr list --base main --head dev --json url --jq '.[0].url')
-            
-            # Ensure auto-merge is on
             gh pr merge "$PR_URL" --auto --merge
           fi
