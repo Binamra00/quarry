@@ -62,7 +62,7 @@ jobs:
     steps:
       - name: Assign Copilot Reviewer
         env:
-          # CRITICAL CHANGE: Use PAT to have permission to assign reviewers
+          # CRITICAL CHANGE: Use PAT to have permission to assign reviewer
           GH_TOKEN: ${{ secrets.BOT_PAT }}
         run: |
           PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
