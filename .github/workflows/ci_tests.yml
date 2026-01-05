@@ -1,0 +1,63 @@
+name: Smell-Ranker CI
+
+# Trigger execution on:
+# 1. Any push to 'main' or 'dev' branches
+# 2. Any Pull Request targeting 'main'
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main" ]
+
+# Define the jobs to run
+jobs:
+  test:
+    name: Run Pytest Suite
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Checkout the code from the repository
+    - uses: actions/checkout@v3
+
+    # 2. Install Python 3.10
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.10"
+
+    # 3. Install Dependencies
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pytest pytest-mock
+
+    # 4. Run the Tests
+    - name: Run Test Suite
+      env:
+        PYTHONPATH: .
+      run: |
+        pytest tests/ -v
+
+  # ======================================================
+  # NEW JOB: Auto-Assign Reviewer (Must be aligned with 'test')
+  # ======================================================
+  auto-request-review:
+    needs: test # Only runs if tests pass
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' # Only runs on PRs
+    permissions:
+      pull-requests: write # Required to modify PRs
+    steps:
+      - name: Request Copilot Review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Verify 'copilot' is the correct user handle for your org
+          gh pr edit ${{ github.event.pull_request.html_url }} --add-reviewer copilot
+
+      - name: Trigger Bot with Comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.html_url }} --body "ci/review"
