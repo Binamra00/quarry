@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
-import subprocess
 from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
 
@@ -14,93 +13,137 @@ from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
 class TestPMDAdapterIntegration:
     """Verifies PMD execution logic and error handling."""
 
-    @patch("subprocess.run")
-    def test_pmd_exit_code_4_is_success(self, mock_subprocess):
+    @patch("pipeline.adapters.pmd_history_adapt.BatchStateManager")
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    def test_pmd_configuration_allows_exit_code_4(self, mock_run_command, mock_state_manager):
         """
-        Test 1: PMD returns exit code 4 when violations are found.
-        The adapter MUST treat this as success, not a crash.
+        Test 1: Verify that PMD execution is configured to accept Exit Code 4.
         """
-        # Setup: Mock the subprocess to return exit code 4
-        mock_process = MagicMock()
-        mock_process.returncode = 4
-        mock_process.stdout = '{"files": []}'  # Minimal valid JSON output
-        mock_subprocess.return_value = mock_process
-
-        # Action: Initialize adapter (paths don't need to be real due to mocks)
+        # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
+        # Mock internal helpers to isolate the execute loop
+        adapter._get_total_commit_count = MagicMock(return_value=1)
+        adapter._get_commit_batch = MagicMock(return_value=["sha1"])
 
-        # We mock the internal _run_command to isolate logic
-        # But here we test the subprocess interaction logic specifically
-        # For this test, we verify the adapter's interpreting logic
-        is_success = adapter._is_success_code(4)
+        # Mock sequence of run_command calls:
+        # 1. git symbolic-ref (get branch) -> Success
+        # 2. git checkout (time travel) -> Success
+        # 3. PMD Execution -> Success (We only care about the ARGS passed here)
+        # 4. git checkout (restore) -> Success
+        mock_run_command.side_effect = [
+            (True, "main"),  # 1. Get Branch
+            (True, ""),  # 2. Checkout Commit
+            (True, ""),  # 3. PMD Run
+            (True, "")  # 4. Restore Branch
+        ]
 
-        # Assert
-        assert is_success is True, "PMD Exit Code 4 should be classified as Success"
+        # Action
+        # We need to mock open() because execute() writes logs
+        with patch("builtins.open", mock_open()):
+            adapter.execute()
 
-    @patch("subprocess.run")
-    def test_pmd_timeout_handling(self, mock_subprocess):
+        # Assert: Find the PMD call and check its arguments
+        pmd_call_found = False
+        for call_args in mock_run_command.call_args_list:
+            args, kwargs = call_args
+            cmd_list = args[0]
+            # Identify the PMD command by looking for the binary path or 'check' arg
+            if cmd_list and "check" in cmd_list:
+                # CRITICAL CHECK: Did we allow exit code 4?
+                if kwargs.get("allowed_exit_codes") == [0, 4]:
+                    pmd_call_found = True
+                    break
+
+        assert pmd_call_found, "PMD command must be called with allowed_exit_codes=[0, 4]"
+
+    @patch("pipeline.adapters.pmd_history_adapt.BatchStateManager")
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    def test_pmd_timeout_recording(self, mock_run_command, mock_state_manager):
         """
         Test 2: The Poison Pill Simulation.
-        If PMD hangs, the adapter should catch TimeoutExpired and return None.
+        If PMD times out, the adapter should record "status": "timeout" in JSONL.
         """
-        # Setup: Simulate a hang
-        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd="pmd", timeout=300)
-
+        # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
+        adapter._get_total_commit_count = MagicMock(return_value=1)
+        adapter._get_commit_batch = MagicMock(return_value=["sha1"])
 
-        # Action: Run a command (private method access for testing)
-        # We assume the adapter uses a wrapper method for subprocess
-        # If accessing directly, we verify the exception handling block
-        try:
-            # Simulate the safe_subprocess call you likely have in utils
-            from pipeline.utils.adapter_subprocess import run_tool_command
-            result = run_tool_command(["pmd"], timeout=10)
-        except Exception:
-            pytest.fail("The utility should handle the timeout, not crash.")
+        # Mock sequence: PMD FAILS with TIMEOUT string
+        mock_run_command.side_effect = [
+            (True, "main"),  # Branch
+            (True, ""),  # Checkout
+            (False, "TIMEOUT"),  # PMD FAILS
+            (True, "")  # Restore
+        ]
 
-        # If your adapter catches it internally:
-        # assert result is None (depending on implementation)
+        # Action & Assert
+        # We assume the adapter writes to the JSONL file. We capture that write.
+        with patch("builtins.open", mock_open()) as mock_file:
+            adapter.execute()
+
+            # Inspect writes to find the JSONL record
+            handle = mock_file()
+            found_timeout_record = False
+            for name, args, kwargs in handle.write.mock_calls:
+                written_str = args[0]
+                if '"status": "timeout"' in written_str:
+                    found_timeout_record = True
+                    break
+
+            assert found_timeout_record, "Adapter should write 'timeout' status to JSONL log on failure"
+
+    @patch("pipeline.adapters.pmd_history_adapt.BatchStateManager")
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    def test_git_checkout_safety(self, mock_run_command, mock_state_manager):
+        """
+        Test 3: Time-Travel Safety.
+        Verify that we ALWAYS checkout main after processing, even if code crashes.
+        """
+        adapter = PMDHistoryAdapter(Path("dummy_repo"))
+        adapter._get_total_commit_count = MagicMock(return_value=1)
+        adapter._get_commit_batch = MagicMock(return_value=["sha1"])
+
+        # Mock sequence: Crash during PMD execution
+        mock_run_command.side_effect = [
+            (True, "main"),
+            (True, ""),
+            RuntimeError("Simulated Crash"),  # CRASH!
+            (True, "")  # The Restore call (Should still happen)
+        ]
+
+        # Action
+        with pytest.raises(RuntimeError):
+            with patch("builtins.open", mock_open()):
+                adapter.execute()
+
+        # Assert: Verify the LAST call to run_command was restoring main
+        last_call = mock_run_command.call_args
+        cmd_arg = last_call[0][0]
+        # We expect: ['git', 'checkout', '-f', 'main']
+        assert cmd_arg[0] == "git" and cmd_arg[1] == "checkout", "Must attempt git checkout in finally block"
+        assert cmd_arg[3] == "main", "Must restore to the captured branch (main)"
 
 
 class TestRefmAdapterIntegration:
-    """Verifies RefactoringMiner orchestration."""
 
-    @patch("pipeline.adapters.refm_adapt.Repository")  # Mock PyDriller
-    @patch("subprocess.run")
-    def test_git_checkout_safety(self, mock_subprocess, mock_repo):
-        """
-        Test 3: Time-Travel Safety.
-        Verify that we ALWAYS checkout main after processing, even if it fails.
-        """
-        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
-
-        # Setup: Mock the 'git' object on the adapter
-        adapter.repo_git = MagicMock()
-
-        # Action: Simulate a crash during analysis
-        with pytest.raises(RuntimeError):
-            # We force a crash inside the context manager
-            with adapter._checkout_context("some-sha"):
-                raise RuntimeError("Simulated Crash")
-
-        # Assert: The cleanup code must have run
-        # Verify 'git checkout main' was called
-        adapter.repo_git.checkout.assert_called_with("main")
-
-    def test_smart_skipping_logic(self):
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._load_existing_results")
+    def test_smart_skipping_logic(self, mock_load, mock_get_commits):
         """
         Test 4: Resume Capability.
-        If output file exists, run() should return immediately.
+        If output matches input list, execute() should return True immediately.
         """
-        # Setup: Create a temp file to simulate existing output
-        with patch("pathlib.Path.exists") as mock_exists:
-            mock_exists.return_value = True  # File exists!
+        # Setup
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_get_commits.return_value = ["sha1", "sha2"]
+        # Simulate all commits already processed
+        mock_load.return_value = [{"sha1": "sha1"}, {"sha1": "sha2"}]
 
-            adapter = RefactoringMinerAdapter(Path("dummy_repo"))
-
-            # Action
-            result = adapter.run()
+        # Action
+        # Mock subprocess to ensure it is NOT called
+        with patch("subprocess.run") as mock_subprocess:
+            result = adapter.execute()
 
             # Assert
-            assert result is not None
-            # It should skip execution (we can verify no subprocess was called if we mocked it)
+            assert result is True
+            mock_subprocess.assert_not_called()
