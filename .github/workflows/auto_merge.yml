@@ -9,50 +9,79 @@ permissions:
   pull-requests: write
 
 jobs:
-  open-and-merge:
+  # ====================================================
+  # JOB 1: LOGISTICS - OPEN THE PR
+  # ====================================================
+  infrastructure_pr:
+    name: 1. Open Pull Request
     runs-on: ubuntu-latest
+    outputs:
+      pr_url: ${{ steps.pr_logic.outputs.url }} # Expose URL to other jobs
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Create PR, Trigger Bot, and Merge
+      - name: Create or Identify PR
+        id: pr_logic
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Check for existing PR
           PR_EXISTS=$(gh pr list --base main --head dev --json number --jq 'length')
+          PR_URL=""
 
           if [ "$PR_EXISTS" -eq 0 ]; then
-            # 1. Capture Title
+            # Capture Title from git history
             COMMIT_MSG=$(git log -1 --pretty=%s)
             
-            # 2. Create PR
-            echo "🚀 Creating PR..."
+            echo "🚀 Creating PR: $COMMIT_MSG"
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
               --title "$COMMIT_MSG" \
               --body "Automated delivery pipeline.")
-              
-            echo "✅ PR Created: $PR_URL"
-            
-            echo "⏳ Waiting 10s for stabilization..."
-            sleep 10
-
-            # 3. TRIGGER BOT (Moved here!)
-            # We explicitly comment to wake up Copilot
-            gh pr comment "$PR_URL" --body "ci/review"
-            echo "🤖 Copilot triggered."
-            
-            # 4. Enable Auto-Merge
-            gh pr merge "$PR_URL" --auto --merge
-            echo "✅ Auto-Merge Enabled."
-            
           else
-            echo "ℹ️ PR exists. Ensuring state..."
+            echo "ℹ️ PR exists. Fetching URL..."
             PR_URL=$(gh pr list --base main --head dev --json url --jq '.[0].url')
-            
-            # Ensure trigger and merge are active
-            gh pr comment "$PR_URL" --body "ci/review"
-            gh pr merge "$PR_URL" --auto --merge
           fi
+
+          echo "✅ Target PR: $PR_URL"
+          
+          # MAGIC: Write the URL to the GitHub Output buffer so Job 2 can see it
+          echo "url=$PR_URL" >> $GITHUB_OUTPUT
+
+  # ====================================================
+  # JOB 2: QUALITY - TRIGGER REVIEW
+  # ====================================================
+  trigger_review:
+    name: 2. Execute Review
+    needs: infrastructure_pr # Waits for Job 1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Copilot Agent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
+          echo "🤖 Triggering Copilot on: $PR_URL"
+          gh pr comment "$PR_URL" --body "ci/review"
+          
+          # Optional: Add a tiny sleep to ensure comment propagates
+          sleep 5
+
+  # ====================================================
+  # JOB 3: DEPLOYMENT - ENABLE MERGE
+  # ====================================================
+  enable_merge:
+    name: 3. Set Auto-Merge
+    needs: [infrastructure_pr, trigger_review] # Waits for Job 1 & 2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable Auto-Merge
+        env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+           PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
+           echo "🚀 Enabling Auto-Merge on: $PR_URL"
+           gh pr merge "$PR_URL" --auto --merge
