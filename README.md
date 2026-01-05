@@ -1,7 +1,7 @@
 # Smell-Ranker: Infrastructure & Architecture Documentation
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.7 (Phase 3.3 – Scalability & Resilience Hardening)
+**Version:** 0.8 (Phase 3.4 – DevOps & Automation)
 
 ---
 
@@ -28,7 +28,21 @@ The architecture splits responsibilities across three layers:
 This is the source of truth for all code. It is version-controlled on GitHub.
 
 ```commandline
-smell-ranker/    
+smell-ranker/
+├── .github/ # CI/CD Automation
+│   ├── workflows/
+│   │   ├── ci_tests.yml # The Verifier (Runs Pytest)
+│   │   └── dev_delivery.yml # The Logistics Manager (Auto-Merge)
+│   └── CODEOWNERS # Defines @copilot as the required reviewer
+│
+├── tests/ # Testing Harness (Pytest Pyramid)
+│   ├── conftest.py # Global Fixtures (Mocked Config)
+│   ├── unit/ # Layer 1: Logic Verification (BVA)
+│   │   ├── batch_state_test.py
+│   │   └── metrics_test.py
+│   └── integration/ # Layer 2: Mocked Toolchain
+│       └── adapters_test.py
+│    
 ├── pipeline/ # The main Python Application Package
 │ ├── adapters/ # Tool Adapters Package (Adapter Pattern)
 │ │ ├── init.py # Exposes adapters to the main pipeline
@@ -280,15 +294,18 @@ python3 -m pipeline.main --repo commons-lang --stage all --batch-size 50
 
 The architecture adheres strictly to software engineering best practices.
 
-| Principle | Implementation |
-|---------|----------------|
-| Separation of Concerns | Logic (`pipeline/`), configuration (`config.py`), and adapters (`pipeline/adapters/`) are strictly distinct |
-| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects |
-| Adapter Pattern | `IAdapter` interface standardizes diverse tools (PMD, RefactoringMiner) |
-| Factory Method | `ToolFactory` encapsulates adapter instantiation logic |
-| Template Method | `BaseMetrics` defines the skeleton algorithm for metric reporting |
-| Strategy Pattern | `ui_strategy.py` selects visualization (Jupyter Widget vs. standard `\r`) |
-| Fail-Fast | Critical dependencies (e.g., PyDriller) are checked at startup |
+| Principle | Implementation                                                                                        |
+|---------|-------------------------------------------------------------------------------------------------------|
+| Continuous Integration | `ci_tests.yml` enforces "Shift-Left" verification on every push                                       |
+| Continuous Delivery | `auto_merge.yml` automates PR creation, review, and merging                                           |
+| Idempotency | `BatchStateManager` allows the pipeline to resume safely after crashes                                        |
+| Separation of Concerns | Logic `pipeline/`, configuration `config.py`, and adapters `pipeline/adapters/` are strictly distinct |
+| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects                                    |
+| Adapter Pattern | `IAdapter` interface standardizes diverse tools (PMD, RefactoringMiner)                               |
+| Factory Method | `ToolFactory` encapsulates adapter instantiation logic                                                |
+| Template Method | `BaseMetrics` defines the skeleton algorithm for metric reporting                                     |
+| Strategy Pattern | `ui_strategy.py` selects visualization (Jupyter Widget vs. standard `\r`)                             |
+| Fail-Fast | Critical dependencies (e.g., PyDriller) are checked at startup                                        |
 
 ---
 
@@ -310,9 +327,35 @@ The architecture adheres strictly to software engineering best practices.
 
 ---
 
-## 10. Future Roadmap
+## 10. Verification & QA (The "Zero-Touch" Pipeline)
 
-- **Phase 4: Heuristic Correlator**  
-  Implement `overlap_score.py` to link Refactoring events (Pass 1) to PMD violations (Pass 2)
-- **Phase 5: Oracle Project Execution**  
-  Run the pipeline on `commons-lang` or `junit`
+The reliability of Smell-Ranker is guaranteed by a **3-Layer Testing Pyramid** that runs automatically on every push to `dev`. We currently maintain a **100% Pass Rate** across 17 distinct test scenarios.
+
+### Layer 1: Logic Verification (Unit)
+- **Math Safety**: Validates that density/purity formulas handle edge cases (e.g., `total_commits=0`) without crashing (BVA).
+- **State Resilience**: Verified the "Lazarus Protocol" — the system correctly identifies corrupt state files, archives them, and self-heals.
+- **Idempotency**: Proven that processing the same commit multiple times does not skew metrics.
+
+### Layer 2: Tool Orchestration (Integration)
+- **Poison Pill Defense**: Verified that if an external tool (PMD) hangs, the pipeline catches the timeout, logs it, and continues.
+- **Exit Code Semantics**: Confirmed that PMD `Exit Code 4` is correctly interpreted as "Violations Found" (Success), not a system failure.
+
+### Layer 3: Safety Nets
+- **Time-Travel Safety**: Verified that the repository always reverts to `main` even if the analysis process crashes mid-operation.
+
+**Run the suite locally:**
+```bash
+pytest tests/ -v
+# Run only unit tests
+pytest tests/unit/
+```
+
+## 11. Future Roadmap
+
+- [x] **Phase 3: Scalability & Resilience** (Completed Dec 2025)
+  - [x] JSONL Streaming for inode optimization
+  - [x] "Lazarus" Crash Recovery
+  - [x] DevOps Pipeline (CI/CD)
+- [ ] **Phase 4: Heuristic Correlator** - Implement `overlap_score.py` to link Refactoring events to Smells.
+  - Development of `Heuristic B` (AST-Proximity).
+- [ ] **Phase 5: Oracle Project Execution** - Full-scale run on `apache/commons-lang`.
