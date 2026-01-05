@@ -150,7 +150,7 @@ class TestRefmAdapterIntegration:
     def test_smart_skipping_logic(self, mock_load, mock_get_commits):
         """
         Test 4: Resume Capability.
-        If output matches input list, execute() should return True immediately.
+        If output matches input list, execute() should return True immediately
         """
         # Setup
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))

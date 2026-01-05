@@ -5,7 +5,7 @@ import sys  # Unused import
 
 
 def calculate_metrics(data):
-    # SMEL 1: Hardcoded Secret.
+    # SMEL 1: Hardcoded Secret
     api_key = "12345-ABCDE-SECRET-KEY"
 
     # SMELL 2: Obvious Logic Error (Infinite Loop)

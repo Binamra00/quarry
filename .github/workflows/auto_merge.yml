@@ -67,7 +67,7 @@ jobs:
           echo "🤖 Force-assigning Copilot to: $PR_URL"
           
           # Try the standard slug "copilot" first
-          gh pr edit "$PR_URL" --add-reviewer "copilot"
+          gh pr edit "$PR_URL" --add-reviewer "github-copilot"
           
           # Optional: Add a tiny sleep to ensure comment propagates
           sleep 5
