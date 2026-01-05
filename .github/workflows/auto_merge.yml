@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # CRITICAL: Downloads full history for --fill
+          fetch-depth: 0
 
       - name: Create PR and Enable Auto-Merge
         env:
@@ -27,8 +27,7 @@ jobs:
           if [ "$PR_EXISTS" -eq 0 ]; then
             echo "🚀 No PR found. Creating one..."
             
-            # Create the PR with dynamic title/body from commits
-            # REMOVED '--reviewer copilot' (Handled by CODEOWNERS and ci_tests.yml)
+            # Create the PR
             PR_URL=$(gh pr create \
               --base main \
               --head dev \
@@ -36,7 +35,11 @@ jobs:
               
             echo "✅ PR Created: $PR_URL"
             
-            # 2. Enable Auto-Merge immediately
+            # --- THE FIX: WAIT FOR GITHUB TO STABILIZE ---
+            echo "⏳ Waiting 10s for PR state to stabilize..."
+            sleep 10
+            
+            # 2. Enable Auto-Merge (Now safe)
             gh pr merge "$PR_URL" --auto --merge
             echo "✅ Auto-Merge Enabled."
             
