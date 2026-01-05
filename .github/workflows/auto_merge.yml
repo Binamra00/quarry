@@ -25,7 +25,8 @@ jobs:
       - name: Create or Identify PR
         id: pr_logic
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CRITICAL CHANGE: Use the PAT so the PR appears as "User-created"
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
         run: |
           # Check for existing PR
           PR_EXISTS=$(gh pr list --base main --head dev --json number --jq 'length')
@@ -61,12 +62,13 @@ jobs:
     steps:
       - name: Assign Copilot Reviewer
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CRITICAL CHANGE: Use PAT to have permission to assign reviewers
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
         run: |
           PR_URL="${{ needs.infrastructure_pr.outputs.pr_url }}"
           echo "🤖 Force-assigning Copilot to: $PR_URL"
           
-          # Try the standard slug "copilot" first
+          # Force the reviewer assignment using the official handle
           gh pr edit "$PR_URL" --add-reviewer "github-copilot"
           
           # Optional: Add a tiny sleep to ensure comment propagates
