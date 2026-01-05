@@ -70,12 +70,12 @@ jobs:
           # Optional: Add a tiny sleep to ensure comment propagates
           sleep 5
 
-  # ====================================================
-  # JOB 3: DEPLOYMENT - ENABLE MERGE
+# ====================================================
+  # JOB 3: DEPLOYMENT - ENABLE MERGE  <-- DELETE THIS JOB
   # ====================================================
   enable_merge:
     name: 3. Set Auto-Merge
-    needs: [infrastructure_pr, trigger_review] # Waits for Job 1 & 2
+    needs: [infrastructure_pr, trigger_review]
     runs-on: ubuntu-latest
     steps:
       - name: Enable Auto-Merge
