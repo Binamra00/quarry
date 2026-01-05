@@ -19,6 +19,13 @@ class TestPMDAdapterIntegration:
         """
         Test 1: Verify that PMD execution is configured to accept Exit Code 4.
         """
+        # --- CRITICAL FIX: Configure State Manager Mock ---
+        # Ensure the loop runs by telling the state manager this commit isn't done yet
+        instance_mock = mock_state_manager.return_value
+        instance_mock.get_next_start_index.return_value = 0
+        instance_mock.is_commit_processed.return_value = False
+        # --------------------------------------------------
+
         # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
         # Mock internal helpers to isolate the execute loop
@@ -63,6 +70,12 @@ class TestPMDAdapterIntegration:
         Test 2: The Poison Pill Simulation.
         If PMD times out, the adapter should record "status": "timeout" in JSONL.
         """
+        # --- CRITICAL FIX: Configure State Manager Mock ---
+        instance_mock = mock_state_manager.return_value
+        instance_mock.get_next_start_index.return_value = 0
+        instance_mock.is_commit_processed.return_value = False
+        # --------------------------------------------------
+
         # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
         adapter._get_total_commit_count = MagicMock(return_value=1)
@@ -99,6 +112,12 @@ class TestPMDAdapterIntegration:
         Test 3: Time-Travel Safety.
         Verify that we ALWAYS checkout main after processing, even if code crashes.
         """
+        # --- CRITICAL FIX: Configure State Manager Mock ---
+        instance_mock = mock_state_manager.return_value
+        instance_mock.get_next_start_index.return_value = 0
+        instance_mock.is_commit_processed.return_value = False
+        # --------------------------------------------------
+
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
         adapter._get_total_commit_count = MagicMock(return_value=1)
         adapter._get_commit_batch = MagicMock(return_value=["sha1"])
