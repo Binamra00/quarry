@@ -4,10 +4,11 @@ import time
 import subprocess
 import tempfile
 import uuid
+import shutil
 from pathlib import Path
 from typing import List
 
-from pipeline import config  # <--- Now we use this for everything
+from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
 from pipeline.adapters.i_adapter import IAdapter
@@ -26,7 +27,6 @@ class RefactoringMinerAdapter(IAdapter):
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
 
-    # ... (get_output_path, _get_all_commits, _load_existing_results remain the same) ...
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
@@ -57,6 +57,10 @@ class RefactoringMinerAdapter(IAdapter):
         """
         Robustly resolves the 'lib' directory containing JAR dependencies.
         """
+        # 1. Pre-flight Check: Ensure Java is actually available
+        if not shutil.which("java"):
+            raise RuntimeError("'java' executable not found in system PATH.")
+
         rm_executable = Path(config.RM_PATH)
 
         # Candidate 1: Standard dist (root/bin/RefactoringMiner.bat -> lib is in root/lib)
@@ -81,14 +85,14 @@ class RefactoringMinerAdapter(IAdapter):
         try:
             lib_dir = self._get_lib_path()
             java_classpath = str(lib_dir / "*")
-        except FileNotFoundError as e:
-            print(f"❌ Configuration Error: {e}")
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"❌ Error: Configuration failed: {e}")
             return False
 
         all_commits = self._get_all_commits()
         total_commits = len(all_commits)
         if total_commits == 0:
-            print("❌ No commits found.")
+            print("❌ Error: No commits found.")
             return False
 
         existing_data = self._load_existing_results()
@@ -124,19 +128,20 @@ class RefactoringMinerAdapter(IAdapter):
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
                     try:
-                        # [INDUSTRY STANDARD]
-                        # Use centralized Config constants
+                        # [Windows Fix] Invoke Java directly with wildcard classpath
+                        # This bypasses the 8191-character command line limit on Windows
                         cmd = [
                             "java",
                             "-cp", java_classpath,
-                            config.RM_MAIN_CLASS,  # <--- Decoupled from logic
+                            config.RM_ENTRY_POINT_CLASS,
                             "-c", str(self.target_repo_path),
                             commit_hash,
                             "-json", str(temp_json_file)
                         ]
 
+                        # Log sample command (first only) to avoid log file bloat on large histories
                         if i == 0:
-                            log_file.write(f"\n[DEBUG] Java Command: {' '.join(cmd)}\n")
+                            log_file.write(f"\n[DEBUG] Java Command (Sample): {' '.join(cmd)}\n")
 
                         result = subprocess.run(
                             cmd,
@@ -147,8 +152,7 @@ class RefactoringMinerAdapter(IAdapter):
                             env=env
                         )
 
-                        # ... (JSON Parsing logic omitted for brevity, it is identical) ...
-                        # ... Use the exact same JSON parsing block from previous version ...
+                        # ... (JSON Parsing logic remains identical) ...
                         valid_data_found = False
                         if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
                             try:
@@ -159,11 +163,9 @@ class RefactoringMinerAdapter(IAdapter):
                                         current_data.extend(commit_data["commits"])
                                         valid_data_found = True
                                     elif "refactorings" in commit_data:
-                                        # Normalize single commit object to list
                                         if "sha1" in commit_data:
                                             current_data.append(commit_data)
                                         else:
-                                            # Fallback wrapper
                                             current_data.append({
                                                 "repository": str(self.target_repo_path),
                                                 "sha1": commit_hash,
@@ -183,7 +185,6 @@ class RefactoringMinerAdapter(IAdapter):
                             else:
                                 log_file.write(f"\n[INFO] No JSON file generated for {commit_hash}.\n")
 
-                            # Poison Pill Defense: Record empty to prevent infinite retries
                             current_data.append({
                                 "repository": str(self.target_repo_path),
                                 "sha1": commit_hash,
@@ -192,10 +193,9 @@ class RefactoringMinerAdapter(IAdapter):
                             new_commits_count += 1
 
                     finally:
-                        # [INDUSTRY STANDARD]
-                        # Use centralized IO Config for cleanup
+                        # [Config Usage] Use centralized retry settings for consistent behavior
                         if temp_json_file.exists():
-                            for attempt in range(config.IO_MAX_RETRIES):  # <--- Config usage
+                            for attempt in range(config.IO_MAX_RETRIES):
                                 try:
                                     temp_json_file.unlink()
                                     break
@@ -205,14 +205,13 @@ class RefactoringMinerAdapter(IAdapter):
                                             f"\n[WARN] Failed to delete temp file {temp_json_file.name}: {e}\n"
                                         )
                                     else:
-                                        delay = min(1.0,
-                                                    config.IO_RETRY_DELAY_BASE * (2 ** attempt))  # <--- Config usage
+                                        delay = min(1.0, config.IO_RETRY_DELAY_BASE * (2 ** attempt))
                                         time.sleep(delay)
 
-                    # ... (Checkpoint logic identical) ...
                     current_time = time.time()
                     time_diff = current_time - last_checkpoint_time
                     is_last = (i == len(remaining_commits) - 1)
+
                     if time_diff >= self.checkpoint_interval_seconds or is_last:
                         self._flush_to_disk(current_data, log_file)
                         last_checkpoint_time = current_time
