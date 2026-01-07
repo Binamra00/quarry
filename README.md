@@ -232,8 +232,10 @@ python -m venv venv
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
 # 3. Activate:
-# Linux/Mac: source venv/bin/activate
-# Windows:   venv\Scripts\activate
+# Linux/Mac: 
+source venv/bin/activate
+# Windows:   
+.\venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
