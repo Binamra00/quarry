@@ -61,6 +61,10 @@ for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
 PMD_VERSION = "pmd-bin-7.19.0"
 RM_VERSION = "RefactoringMiner-3.0.12"
 
+# [NEW] Tool Internals (Decoupled from logic)
+# Explicit naming to indicate this is the entry point for direct Java calls
+RM_ENTRY_POINT_CLASS = "org.refactoringminer.RefactoringMiner"
+
 # [FIX] Determine extension based on OS (Windows requires .bat)
 if os.name == 'nt':
     PMD_EXEC = "pmd.bat"
@@ -73,7 +77,6 @@ PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / PMD_EXEC
 RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / RM_EXEC
 
 # --- 5. TOOL DOWNLOAD URLS ---
-# REVERT: Using 3.0 URL which matches the 3.0 folder structure we know
 PMD_URL = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.19.0/pmd-dist-7.19.0-bin.zip"
 RM_URL = "https://github.com/tsantalis/RefactoringMiner/releases/download/3.0.12/RefactoringMiner-3.0.12.zip"
 
@@ -106,7 +109,6 @@ if HEURISTICS_PATH.exists():
         print(f"⚠️ Error loading heuristics: {e}")
 else:
     print("⚠️ Heuristics file not found. Using internal defaults.")
-    # Fallback defaults
     HEURISTICS = {
         "refactoring": {"churn_sensitivity": 20, "purity_target_percent": 80.0, "density_target_percent": 40.0},
         "repo_mining": {
@@ -117,3 +119,8 @@ else:
 
 # --- 10. CONSTANTS (NEW) ---
 VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history"]
+
+# --- 11. I/O RESILIENCE CONFIGURATION (NEW) ---
+# Tuning knobs for file system operations (Retry logic)
+IO_MAX_RETRIES = 5             # How many times to try deleting a locked file
+IO_RETRY_DELAY_BASE = 0.1      # Seconds to wait (exponential backoff base)
