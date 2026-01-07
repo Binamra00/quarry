@@ -58,10 +58,19 @@ for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
 
 # --- 4. DEFINE TOOL CONFIGURATION ---
 # REVERT: RefactoringMiner 3.0 (Known Good)
-PMD_VERSION = "pmd-bin-7.19.0" # Keeping PMD 7.19.0 as it worked
+PMD_VERSION = "pmd-bin-7.19.0"
 RM_VERSION = "RefactoringMiner-3.0.12"
-PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / "pmd"
-RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / "RefactoringMiner"
+
+# [FIX] Determine extension based on OS (Windows requires .bat)
+if os.name == 'nt':
+    PMD_EXEC = "pmd.bat"
+    RM_EXEC = "RefactoringMiner.bat"
+else:
+    PMD_EXEC = "pmd"
+    RM_EXEC = "RefactoringMiner"
+
+PMD_PATH = TOOLS_PATH / PMD_VERSION / "bin" / PMD_EXEC
+RM_PATH = TOOLS_PATH / RM_VERSION / "bin" / RM_EXEC
 
 # --- 5. TOOL DOWNLOAD URLS ---
 # REVERT: Using 3.0 URL which matches the 3.0 folder structure we know

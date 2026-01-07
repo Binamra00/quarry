@@ -2,3 +2,4 @@ pydriller
 python-dotenv
 ipython
 pytest
+pytest-mock
