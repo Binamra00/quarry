@@ -202,18 +202,15 @@ The pipeline executes the following stages sequentially or individually via flag
 
 ---
 
-## 6. 🚀 Local Installation & Usage
+## 6. 🚀 Local Installation & Usage (Windows / Linux / macOS)
 
-You can run **Smell-Ranker** on your local machine (Windows / Linux / macOS).  
-The system is fully self-contained.
-
----
+You can run **Smell-Ranker** natively on your local machine. The system is now **OS-Agnostic** and automatically detects Windows (`.bat`) vs Linux (`.sh`) tool binaries.
 
 ### Prerequisites
 
-- Python 3.10+
-- Java 21 (required for PMD 7.x)
-- Git installed and accessible in `PATH`
+- **Python 3.10+**
+- **Java 21** (Required for PMD 7.x). Verify with `java -version`.
+- **Git** installed and accessible in `PATH`.
 
 ---
 
@@ -225,68 +222,67 @@ cd smell-ranker
 ```
 ### 2. Setup Python Environment
 
-It is recommended to use a virtual environment.
+It is recommended to use a virtual environment to isolate dependencies.
 
 ```bash
-python3 -m venv venv
+# 1. Create the venv
+python -m venv venv
 
-# Activate:
+# 2. Allow script execution (if blocked)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+
+# 3. Activate:
 # Linux/Mac: source venv/bin/activate
 # Windows:   venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
-### 3. Prepare Your Target Repository
+### 3. Provision Analysis Tools
 
-The pipeline analyzes repositories located in `smell-ranker/workspace_data/repos/`. You must set this up manually before running the analysis.
-
-**Step A: Initialize the Workspace** Run the pipeline's help command. This triggers the configuration script, which automatically creates the required `workspace_data` folder structure inside the project.
+Unlike the Cloud/Colab environment, you must manually trigger the tool downloader once. This script fetches PMD and RefactoringMiner and configures executable permissions automatically.
 
 ```bash
 # Ensure you are in the 'smell-ranker' root directory
-python -m pipeline.main --help
+python -m pipeline.utils.allocate_tools
 ```
 You should now see a new folder named `workspace_data` in your project root.
 
-**Step B: Clone Your Target**
+### 4. Prepare Your Target Repository
 
-Navigate into the newly created `repos` folder and clone the project you want to analyze.
+The pipeline expects target repositories to exist in workspace_data/repos/.
+
+**Step A: Initialize Workspace**
+
+Running the pipeline help command triggers the config.py logic, which creates the `workspace_data` folder structure if it doesn't exist.
+
+```bash
+python -m pipeline.main --help
+```
+
+**Step B: Clone Target**
+
+Navigate into the repos folder and clone the project you want to analyze (e.g., the Toy Project).
 
 ```bash
 cd workspace_data/repos
-
-# Example: Clone Apache Commons Lang
-git clone https://github.com/apache/commons-lang.git
-```
-
-**Step C: Return to Root**
-
-Go back to the main `smell-ranker` directory to run the pipeline:
-
-```bash
+git clone [https://github.com/danilofes/refactoring-toy-example.git](https://github.com/danilofes/refactoring-toy-example.git) toy_project
 cd ../..
 ```
 
 ## 7. Run the Pipeline
 
-You can now analyze the repository you just cloned.
+You are now ready to execute the analysis. The system will automatically detect your OS and use the appropriate tool binaries (e.g., `RefactoringMiner.bat` on Windows).
 
+**Command Syntax:**
 ```bash
-# General Syntax
-# --repo must match the folder name inside workspace_data/repos/
-python3 -m pipeline.main --repo commons-lang --stage all --batch-size 50
+# General Syntax: python -m pipeline.main --repo <FOLDER_NAME> --stage <STAGE>
+python -m pipeline.main --repo toy_project --stage all --batch-size 50
 ```
-### Tools
-- PMD and RefactoringMiner are downloaded automatically to:  
-  `workspace_data/tools` (on first run)
-
-### Results
-- Output JSON files appear in:  
-  `workspace_data/outputs`
-
-### Logs
-- Execution logs are saved to:  
-  `workspace_data/outputs/pmd_history_execution_[repo].log`
+**Execution Details**
+- **Tools**: Located in `workspace_data/tools/`.
+- **Outputs**: JSON results are saved to `workspace_data/outputs/`.
+- **Logs**: Execution logs (for debugging) are saved to `workspace_data/outputs/pmd_history_execution_[repo].log`.
+- **Repos**: Targeted repositories are expected in `workspace_data/repos/`.
 
 ---
 
