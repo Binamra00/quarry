@@ -1,5 +1,5 @@
 #!/bin/bash
-# pipeline/bin/colab_accelerator.sh
+# pipeline/bin/colab_repo_ephemeral_cloning.sh
 
 # 1. CONSTANTS
 DRIVE_WORKSPACE="/content/drive/My Drive/Thesis Project/workspace_data"

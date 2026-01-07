@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Master Pipeline Orchestrator (Universal Edition) ---
-# ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute.
+# ROLE: Orchestrates the full experiment: Setup -> Sync -> Execute
 #
 # USAGE:
 #   1. Run Default (Toy Project):
