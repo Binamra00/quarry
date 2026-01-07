@@ -98,8 +98,16 @@ class RefactoringMinerAdapter(IAdapter):
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
                     try:
+                        # [FIX] Bypass .bat script to avoid Windows "Input line too long" error.
+                        # We use Java's wildcard classpath ('lib/*') to load all JARs without listing them.
+                        rm_executable = Path(config.RM_PATH)
+                        rm_root = rm_executable.parent.parent  # Go up from /bin/RefactoringMiner.bat to root
+                        lib_path = rm_root / "lib" / "*"  # Use wildcard for efficient classpath
+
                         cmd = [
-                            str(config.RM_PATH),
+                            "java",
+                            "-cp", str(lib_path),
+                            "org.refactoringminer.RefactoringMiner",
                             "-c", str(self.target_repo_path),
                             commit_hash,
                             "-json", str(temp_json_file)
