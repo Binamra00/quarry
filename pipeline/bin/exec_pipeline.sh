@@ -118,7 +118,7 @@ done
 IS_COLAB=0
 if [ -n "$COLAB_RELEASE_TAG" ]; then
     IS_COLAB=1
-    ACCELERATOR_SCRIPT="./pipeline/bin/colab_accelerator.sh"
+    ACCELERATOR_SCRIPT="./pipeline/bin/colab_repo_ephemeral_cloning.sh"
 
     if [ -f "$ACCELERATOR_SCRIPT" ]; then
         echo "--- 3.5. Engaging Cloud Accelerator ---"
