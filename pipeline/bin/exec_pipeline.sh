@@ -97,16 +97,60 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# --- 5. EXECUTE THE PIPELINE ---
+# --- 5. COLAB ACCELERATION (OPTIONAL LAYER) ---
+# Only runs in Colab. Prepares the ephemeral workspace.
+
+# 5a. Identify Target Repo (Needed for the Lift operation)
+REPO_NAME="toy_project" # Default fallback
+NEXT_IS_REPO=0
+for arg in "$@"; do
+    if [[ "$arg" == "--repo" ]]; then
+        NEXT_IS_REPO=1
+        continue
+    fi
+    if [[ "$NEXT_IS_REPO" == 1 ]]; then
+        REPO_NAME="$arg"
+        NEXT_IS_REPO=0
+    fi
+done
+
+# 5b. Engage Accelerator
+IS_COLAB=0
+if [ -n "$COLAB_RELEASE_TAG" ]; then
+    IS_COLAB=1
+    ACCELERATOR_SCRIPT="./pipeline/bin/colab_accelerator.sh"
+
+    if [ -f "$ACCELERATOR_SCRIPT" ]; then
+        echo "--- 3.5. Engaging Cloud Accelerator ---"
+        source "$ACCELERATOR_SCRIPT"
+
+        # EXECUTE THE LIFT
+        # This function returns the new fast path, which we export for config.py
+        export SMELL_RANKER_HOME=$(init_fast_workspace "$REPO_NAME")
+
+        echo "⚡ Environment Configured: SMELL_RANKER_HOME=$SMELL_RANKER_HOME"
+    else
+        echo "⚠️ Accelerator worker not found ($ACCELERATOR_SCRIPT). Using standard Drive I/O."
+    fi
+fi
+
+# --- 6. EXECUTE THE PIPELINE ---
 echo "--- 4. Starting Pipeline Execution ---"
 
 # [CRITICAL] "$@" passes all remaining arguments (like --repo) to main.py
 python3 -m pipeline.main "$@"
+EXIT_CODE=$?
 
-exit_code=$?
-if [ $exit_code -eq 0 ]; then
+# --- 7. SYNC RESULTS (COLAB ONLY) ---
+if [ "$IS_COLAB" -eq 1 ] && [ -n "$SMELL_RANKER_HOME" ]; then
+    # EXECUTE THE DROP
+    # Only runs if the accelerator was actually used
+    sync_results
+fi
+
+if [ $EXIT_CODE -eq 0 ]; then
     echo "✅ Execution Pipeline Complete."
 else
     echo "❌ Pipeline Failed."
-    exit $exit_code
+    exit $EXIT_CODE
 fi
