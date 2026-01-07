@@ -61,6 +61,9 @@ for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
 PMD_VERSION = "pmd-bin-7.19.0"
 RM_VERSION = "RefactoringMiner-3.0.12"
 
+# [NEW] Tool Internals (Decoupled from logic)
+RM_MAIN_CLASS = "org.refactoringminer.RefactoringMiner"
+
 # [FIX] Determine extension based on OS (Windows requires .bat)
 if os.name == 'nt':
     PMD_EXEC = "pmd.bat"
@@ -117,3 +120,8 @@ else:
 
 # --- 10. CONSTANTS (NEW) ---
 VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history"]
+
+# --- 11. I/O RESILIENCE CONFIGURATION ---
+# Tuning knobs for file system operations (Retry logic)
+IO_MAX_RETRIES = 5             # How many times to try deleting a locked file
+IO_RETRY_DELAY_BASE = 0.1      # Seconds to wait (exponential backoff base)
