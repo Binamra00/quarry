@@ -147,13 +147,18 @@ class TestRefmAdapterIntegration:
 
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._load_existing_results")
-    def test_smart_skipping_logic(self, mock_load, mock_get_commits):
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")  # <--- NEW MOCK
+    def test_smart_skipping_logic(self, mock_lib_path, mock_load, mock_get_commits):
         """
         Test 4: Resume Capability.
         If output matches input list, execute() should return True immediately.
         """
         # Setup
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+
+        # [FIX] Mock the library path so validation passes
+        mock_lib_path.return_value = Path("fake/lib/path")
+
         mock_get_commits.return_value = ["sha1", "sha2"]
         # Simulate all commits already processed
         mock_load.return_value = [{"sha1": "sha1"}, {"sha1": "sha2"}]
@@ -165,4 +170,5 @@ class TestRefmAdapterIntegration:
 
             # Assert
             assert result is True
+            # Verify we didn't actually run anything
             mock_subprocess.assert_not_called()
