@@ -42,7 +42,7 @@ def main():
     try:
         print("\n--- 🛠️ Verifying Toolchain ---")
         allocate_tools.provision()
-    # [FIX] Catch specific errors to allow cleaner exits, but broad Exception is safer for setup
+    # Catch specific errors for cleaner setup, fallback to crash on others
     except (RuntimeError, OSError) as e:
         print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
         sys.exit(1)
@@ -50,8 +50,12 @@ def main():
     # --- 2. REPOSITORY ACQUISITION (FACADE) ---
     try:
         target_repo = RepositoryLoader.ensure_local_copy(args.repo)
-    except (ValueError, RuntimeError, FileNotFoundError) as e:
-        print(f"\n❌ CRITICAL ERROR: {e}")
+    # [FIX] Distinguish between User Errors (NotFound) and System Errors (Security/Git)
+    except FileNotFoundError as e:
+        print(f"\n❌ REPOSITORY ERROR:\n   {e}")
+        sys.exit(1)
+    except (ValueError, RuntimeError) as e:
+        print(f"\n❌ CRITICAL ERROR:\n   {e}")
         sys.exit(1)
 
     print(f"🎯 Target Repository: {target_repo.name}")

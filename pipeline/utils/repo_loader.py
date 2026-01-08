@@ -1,5 +1,4 @@
 import re
-import os
 from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
@@ -13,9 +12,17 @@ class RepositoryLoader:
     Implements 'Lazy Loading' (Clones only if necessary) and Input Sanitization.
     """
 
-    # Regex for standard Git URLs to prevent flag injection
-    # Allows: https://, http://, git@, ssh://
-    GIT_URL_PATTERN = re.compile(r"^(https?://|git@|ssh://).+")
+    # Enforces a minimal structure:
+    #   - http(s)://host[/optional-path]
+    #   - ssh://host[/optional-path]
+    #   - git@host:path
+    GIT_URL_PATTERN = re.compile(
+        r"^(?:"
+        r"https?://[^/\s]+(?:/[^ \t\r\n]*)?"
+        r"|ssh://[^/\s]+(?:/[^ \t\r\n]*)?"
+        r"|git@[^:\s]+:[^ \t\r\n]+"
+        r")$"
+    )
 
     @staticmethod
     def ensure_local_copy(repo_argument: str) -> Path:
@@ -27,7 +34,16 @@ class RepositoryLoader:
 
         Returns:
             Path: The absolute path to the local repository.
+
+        Raises:
+            ValueError: If the argument is empty, unsafe (starts with '-'),
+                        or contains path traversal characters.
+            RuntimeError: If cloning a remote repository fails.
+            FileNotFoundError: If the requested local folder does not exist.
         """
+        if not repo_argument or not repo_argument.strip():
+            raise ValueError("❌ Repository argument cannot be empty.")
+
         # 1. Strategy: Is it a URL?
         if RepositoryLoader._is_git_url(repo_argument):
             return RepositoryLoader._handle_remote_clone(repo_argument)
@@ -39,7 +55,9 @@ class RepositoryLoader:
     def _is_git_url(s: str) -> bool:
         """
         Detects if the string looks like a Git URL.
-        Validates against a regex to prevent Argument Injection (e.g., strings starting with '-').
+
+        Raises:
+             ValueError: If input starts with '-' (Argument Injection protection).
         """
         # Security: Reject inputs starting with '-' to prevent flag injection
         if s.startswith("-"):
@@ -85,8 +103,6 @@ class RepositoryLoader:
         target_path = config.REPOS_PATH / repo_name
 
         # Idempotency Check: Don't clone if it exists
-        # Note: Potential race condition if multiple processes start simultaneously.
-        # For this single-user tool, we accept the risk.
         if target_path.exists():
             print(f"   🔍 Repo '{repo_name}' found locally. Skipping clone.")
             return target_path
@@ -113,14 +129,13 @@ class RepositoryLoader:
         target_path = config.REPOS_PATH / folder_name
 
         # Security: Sandbox Check (Path Traversal Protection)
-        # We resolve the absolute path and ensure it is strictly inside REPOS_PATH
         try:
             base_path = config.REPOS_PATH.resolve()
             resolved_target = target_path.resolve()
 
-            # This throws ValueError if resolved_target is not inside base_path
+            # Use strict relative_to check to ensure we stay inside the sandbox
             if not resolved_target.is_relative_to(base_path):
-                raise ValueError
+                raise ValueError("Traversing outside sandbox")
 
         except (ValueError, RuntimeError):
             raise ValueError(f"❌ Security Violation: Path traversal detected in '{folder_name}'.")
