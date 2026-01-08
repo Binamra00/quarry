@@ -1,4 +1,5 @@
 import re
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
@@ -49,11 +50,25 @@ class RepositoryLoader:
     @staticmethod
     def _extract_name_from_url(url: str) -> str:
         """
-        Extracts 'commons-lang' from 'https://github.com/apache/commons-lang.git'
+        Extracts the repository name from a Git URL.
+        Handles both HTTPS (https://github.com/user/repo.git) and SSH (git@github.com:user/repo.git).
+
+        Security:
+            - Sanitizes the output to contain only alphanumeric characters, underscores, and hyphens.
+            - Raises ValueError if a safe name cannot be derived.
         """
-        parsed = urlparse(url)
-        path = parsed.path.strip("/")
-        name = path.split("/")[-1]
+        path = ""
+
+        # Handle SSH-style URLs (git@host:path)
+        ssh_match = re.match(r"^[^@]+@[^:]+:(.+)$", url)
+        if ssh_match:
+            path = ssh_match.group(1).strip("/")
+        else:
+            # Handle Standard URLs
+            parsed = urlparse(url)
+            path = parsed.path.strip("/")
+
+        name = path.split("/")[-1] if path else ""
         if name.endswith(".git"):
             name = name[:-4]
 
@@ -70,6 +85,8 @@ class RepositoryLoader:
         target_path = config.REPOS_PATH / repo_name
 
         # Idempotency Check: Don't clone if it exists
+        # Note: Potential race condition if multiple processes start simultaneously.
+        # For this single-user tool, we accept the risk.
         if target_path.exists():
             print(f"   🔍 Repo '{repo_name}' found locally. Skipping clone.")
             return target_path
@@ -78,7 +95,6 @@ class RepositoryLoader:
         print(f"       Destination: {target_path.name}")
 
         # Security: Use '--' to separate flags from positional arguments
-        # This prevents 'git clone -oProxyCommand=...' attacks
         cmd = ["git", "clone", "--", url, str(target_path)]
 
         success, output = adapter_subprocess.run_command(cmd, verbose=True)
@@ -91,16 +107,28 @@ class RepositoryLoader:
 
     @staticmethod
     def _handle_local_lookup(folder_name: str) -> Path:
-        # Security: Prevent path traversal (e.g., "../../../etc/passwd")
-        if ".." in folder_name or "/" in folder_name or "\\" in folder_name:
-            raise ValueError("❌ Local repository name cannot contain slashes or path traversal characters.")
-
+        """
+        Resolves a local folder name to a Path, preventing path traversal.
+        """
         target_path = config.REPOS_PATH / folder_name
+
+        # Security: Sandbox Check (Path Traversal Protection)
+        # We resolve the absolute path and ensure it is strictly inside REPOS_PATH
+        try:
+            base_path = config.REPOS_PATH.resolve()
+            resolved_target = target_path.resolve()
+
+            # This throws ValueError if resolved_target is not inside base_path
+            if not resolved_target.is_relative_to(base_path):
+                raise ValueError
+
+        except (ValueError, RuntimeError):
+            raise ValueError(f"❌ Security Violation: Path traversal detected in '{folder_name}'.")
 
         if not target_path.exists():
             raise FileNotFoundError(
                 f"❌ Repository not found locally: {target_path}\n"
-                f"   Tip: If this is a remote repo, pass the full URL (https://...)."
+                f"   Tip: Double-check the folder name or pass a full Git URL (https://...)."
             )
 
         return target_path

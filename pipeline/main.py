@@ -5,7 +5,7 @@ from typing import List
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import allocate_tools
-from pipeline.utils.repo_loader import RepositoryLoader # [NEW] Import Loader
+from pipeline.utils.repo_loader import RepositoryLoader
 from pipeline.metrics.repo_mets import RepoMetrics
 from pipeline.metrics.refm_mets import RefmMetrics
 from pipeline.metrics.pmd_mets import PMDMetrics
@@ -19,7 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
 
     parser.add_argument("--repo",
-                        required=True, # [UX] Made required for clarity
+                        # [UX] Default ensures backward compatibility for existing scripts
+                        default="toy_project",
                         help="Target Repository. Can be a local folder name OR a GitHub URL.")
 
     parser.add_argument("--stage",
@@ -41,12 +42,12 @@ def main():
     try:
         print("\n--- 🛠️ Verifying Toolchain ---")
         allocate_tools.provision()
-    except Exception as e:
+    # [FIX] Catch specific errors to allow cleaner exits, but broad Exception is safer for setup
+    except (RuntimeError, OSError) as e:
         print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
         sys.exit(1)
 
     # --- 2. REPOSITORY ACQUISITION (FACADE) ---
-    # [FIX] Securely resolve URL or Local Path
     try:
         target_repo = RepositoryLoader.ensure_local_copy(args.repo)
     except (ValueError, RuntimeError, FileNotFoundError) as e:
