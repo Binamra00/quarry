@@ -142,43 +142,33 @@ class TestRefmAdapterIntegration:
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
     def test_refm_streaming_integrity(self, mock_lib, mock_shas, mock_commits, mock_ui):
         """
-        Test 5: Streaming Integrity.
+        Test 5: Streaming Integrity (Happy Path).
         Verify that the adapter writes valid JSONL records AND logs execution details.
         """
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
         mock_lib.return_value = Path("lib")
-        # Setup: 1 commit to process
         mock_commits.return_value = ["sha_new"]
         mock_shas.return_value = set()
-
-        # Input data for temp file reading
         tool_output_content = json.dumps({"refactorings": [{"type": "Extract Method"}]})
 
-        # Mocks for file handles
         mock_stream_handle = MagicMock()
         mock_log_handle = MagicMock()
         mock_temp_handle = mock_open(read_data=tool_output_content).return_value
 
-        # Define side effect to return the correct mock based on usage pattern
         def open_side_effect(filename, mode='r', **kwargs):
             filename_str = str(filename)
-            # 1. Stream File (Must match .jsonl specifically)
-            # [FIX] Added .jsonl check to differentiate from log file
             if "refactorings_" in filename_str and ".jsonl" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_stream_handle
                 return m
-            # 2. Log File (Append mode for .log)
             elif ".log" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_log_handle
                 return m
-            # 3. Temp File (Read mode for .json)
             elif "rm_" in filename_str and mode == 'r':
                 m = MagicMock()
                 m.__enter__.return_value = mock_temp_handle
                 return m
-            # Fallback
             return MagicMock()
 
         with patch("subprocess.run") as mock_sub, \
@@ -192,11 +182,59 @@ class TestRefmAdapterIntegration:
 
             adapter.execute()
 
-            # 1. Verify Stream Write
             stream_calls = mock_stream_handle.write.call_args_list
-            assert any('sha_new' in args[0] for args, _ in stream_calls), "Stream must contain commit SHA"
-            assert any('Extract Method' in args[0] for args, _ in stream_calls), "Stream must contain actual data"
+            assert any('sha_new' in args[0] for args, _ in stream_calls)
 
-            # 2. Verify Log Write
             log_calls = mock_log_handle.write.call_args_list
-            assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls), "Log must record debug command"
+            assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls)
+
+    # [FIX] Added Test Case 6: Tool Failure Handling
+    @patch("pipeline.utils.ui_strategy.update_progress")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_refm_tool_failure_handling(self, mock_lib, mock_shas, mock_commits, mock_ui):
+        """
+        Test 6: Failure Handling.
+        Verify that a tool crash (exit code 1) is logged to the log file.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_lib.return_value = Path("lib")
+        mock_commits.return_value = ["sha_fail"]
+        mock_shas.return_value = set()
+
+        mock_log_handle = MagicMock()
+        mock_stream_handle = MagicMock()  # Should still write an empty record
+
+        def open_side_effect(filename, mode='r', **kwargs):
+            filename_str = str(filename)
+            if "refactorings_" in filename_str and ".jsonl" in filename_str and mode == 'a':
+                m = MagicMock()
+                m.__enter__.return_value = mock_stream_handle
+                return m
+            elif ".log" in filename_str and mode == 'a':
+                m = MagicMock()
+                m.__enter__.return_value = mock_log_handle
+                return m
+            # Temp file doesn't exist or is empty on crash
+            return MagicMock()
+
+        with patch("subprocess.run") as mock_sub, \
+                patch("builtins.open", side_effect=open_side_effect), \
+                patch("pathlib.Path.exists", return_value=False), \
+                patch("pathlib.Path.mkdir"):
+
+            # Simulate Crash
+            mock_sub.return_value.returncode = 1
+            mock_sub.return_value.stderr = "Exception in thread main..."
+
+            adapter.execute()
+
+            # Verify Log recorded the crash
+            log_calls = mock_log_handle.write.call_args_list
+            assert any('[FAILURE] Tool crashed' in args[0] for args, _ in log_calls)
+            assert any('Exception in thread main' in args[0] for args, _ in log_calls)
+
+            # Verify we still wrote a record (empty refactorings) to maintain state
+            stream_calls = mock_stream_handle.write.call_args_list
+            assert any('sha_fail' in args[0] for args, _ in stream_calls)

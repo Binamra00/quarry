@@ -22,32 +22,46 @@ class RefmMetrics(BaseMetrics):
     def load_data(self):
         project_name = self.target_repo_path.name
         refm_jsonl_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
+        # [FIX] Added legacy path for fallback
+        refm_legacy_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
-        if not refm_jsonl_path.exists():
-            print(f"⚠️ Refactoring output not found: {refm_jsonl_path.name}")
-            return None
-
         commits_list = []
+
         try:
-            print(f"   Derived from: {refm_jsonl_path.name}")
-            with open(refm_jsonl_path, 'r', encoding='utf-8') as f:
-                for line_number, line in enumerate(f, start=1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        commits_list.append(record)
-                    except json.JSONDecodeError as e:
-                        print(f"   ⚠️ Skipping corrupt JSON line {line_number} in {refm_jsonl_path.name}: {e}")
-                        continue
+            # 1. Try Loading New Streaming Format (.jsonl)
+            if refm_jsonl_path.exists():
+                print(f"   Derived from (Stream): {refm_jsonl_path.name}")
+                with open(refm_jsonl_path, 'r', encoding='utf-8') as f:
+                    for line_number, line in enumerate(f, start=1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                            commits_list.append(record)
+                        except json.JSONDecodeError as e:
+                            print(f"   ⚠️ Skipping corrupt JSON line {line_number} in {refm_jsonl_path.name}: {e}")
+                            continue
+                refm_data = {"commits": commits_list}
 
-            refm_data = {"commits": commits_list}
+            # 2. Fallback: Try Loading Legacy Format (.json)
+            elif refm_legacy_path.exists():
+                print(f"   Derived from (Legacy): {refm_legacy_path.name}")
+                with open(refm_legacy_path, 'r', encoding='utf-8') as f:
+                    refm_data = json.load(f)  # Monolithic load
 
-        # [FIX] Catch only OSError (IOError is an alias in Python 3)
+            else:
+                print(
+                    f"⚠️ Refactoring output not found. Checked:\n  1. {refm_jsonl_path.name}\n  2. {refm_legacy_path.name}")
+                return None
+
         except OSError as e:
-            print(f"❌ Error reading RefactoringMiner stream: {e}")
+            print(f"❌ Error reading RefactoringMiner data: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"❌ Error decoding legacy JSON file: {e}")
             return None
 
         total_commits = 0

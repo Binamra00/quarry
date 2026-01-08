@@ -39,8 +39,22 @@ class RefactoringMinerAdapter(IAdapter):
 
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
-        # [DECISION] Keeping .jsonl to enforce streaming semantics.
-        return config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
+        output_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
+
+        # [FIX] Detect legacy .json files and warn the user.
+        legacy_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+
+        # Check if legacy exists BUT new format doesn't (migration scenario)
+        if legacy_path.exists() and not output_path.exists():
+            print(
+                f"\n⚠️  [MIGRATION NOTICE] Detected legacy JSON output at '{legacy_path.name}'.\n"
+                f"   This version writes to '{output_path.name}' (JSONL) for streaming support.\n"
+                "   The legacy file will NOT be used automatically. To preserve results:\n"
+                "   1. Rename/Backup the old file.\n"
+                "   2. Or let this run create a new JSONL file (starting from scratch)."
+            )
+
+        return output_path
 
     def _get_all_commits(self) -> List[str]:
         cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
@@ -50,7 +64,8 @@ class RefactoringMinerAdapter(IAdapter):
             verbose=False
         )
         if success and output:
-            return output.strip().split('\n')
+            # [FIX] Filter out empty strings to prevent processing "" as a SHA
+            return [sha for sha in output.strip().split('\n') if sha.strip()]
         return []
 
     def _get_processed_shas(self) -> Set[str]:
@@ -80,7 +95,7 @@ class RefactoringMinerAdapter(IAdapter):
                         print(f"   ⚠️ Warning: Skipping corrupt line {line_number} in existing log: {e}")
                         continue
 
-        # [FIX] Catch only OSError (IOError is an alias in Python 3)
+        # Catch only OSError (IOError is an alias in Python 3)
         # Fail-fast to prevent re-processing 50k commits due to a transient read error
         except OSError as e:
             print(f"   ❌ Error reading existing log: {e}")
@@ -139,7 +154,7 @@ class RefactoringMinerAdapter(IAdapter):
         new_commits_count = 0
         env = os.environ.copy()
 
-        # [FIX] Robust directory creation with error handling
+        # Robust directory creation with error handling
         output_dir = self.get_output_path().parent
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
