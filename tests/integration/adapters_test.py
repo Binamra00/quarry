@@ -19,24 +19,14 @@ class TestPMDAdapterIntegration:
         """
         Test 1: Verify that PMD execution is configured to accept Exit Code 4.
         """
-        # --- CRITICAL FIX: Configure State Manager Mock ---
-        # Ensure the loop runs by telling the state manager this commit isn't done yet
         instance_mock = mock_state_manager.return_value
         instance_mock.get_next_start_index.return_value = 0
         instance_mock.is_commit_processed.return_value = False
-        # --------------------------------------------------
 
-        # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
-        # Mock internal helpers to isolate the execute loop
         adapter._get_total_commit_count = MagicMock(return_value=1)
         adapter._get_commit_batch = MagicMock(return_value=["sha1"])
 
-        # Mock sequence of run_command calls:
-        # 1. git symbolic-ref (get branch) -> Success
-        # 2. git checkout (time travel) -> Success
-        # 3. PMD Execution -> Success (We only care about the ARGS passed here)
-        # 4. git checkout (restore) -> Success
         mock_run_command.side_effect = [
             (True, "main"),  # 1. Get Branch
             (True, ""),  # 2. Checkout Commit
@@ -44,19 +34,14 @@ class TestPMDAdapterIntegration:
             (True, "")  # 4. Restore Branch
         ]
 
-        # Action
-        # We need to mock open() because execute() writes logs
         with patch("builtins.open", mock_open()):
             adapter.execute()
 
-        # Assert: Find the PMD call and check its arguments
         pmd_call_found = False
         for call_args in mock_run_command.call_args_list:
             args, kwargs = call_args
             cmd_list = args[0]
-            # Identify the PMD command by looking for the binary path or 'check' arg
             if cmd_list and "check" in cmd_list:
-                # CRITICAL CHECK: Did we allow exit code 4?
                 if kwargs.get("allowed_exit_codes") == [0, 4]:
                     pmd_call_found = True
                     break
@@ -70,31 +55,24 @@ class TestPMDAdapterIntegration:
         Test 2: The Poison Pill Simulation.
         If PMD times out, the adapter should record "status": "timeout" in JSONL.
         """
-        # --- CRITICAL FIX: Configure State Manager Mock ---
         instance_mock = mock_state_manager.return_value
         instance_mock.get_next_start_index.return_value = 0
         instance_mock.is_commit_processed.return_value = False
-        # --------------------------------------------------
 
-        # Setup
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
         adapter._get_total_commit_count = MagicMock(return_value=1)
         adapter._get_commit_batch = MagicMock(return_value=["sha1"])
 
-        # Mock sequence: PMD FAILS with TIMEOUT string
         mock_run_command.side_effect = [
-            (True, "main"),  # Branch
-            (True, ""),  # Checkout
+            (True, "main"),
+            (True, ""),
             (False, "TIMEOUT"),  # PMD FAILS
-            (True, "")  # Restore
+            (True, "")
         ]
 
-        # Action & Assert
-        # We assume the adapter writes to the JSONL file. We capture that write.
         with patch("builtins.open", mock_open()) as mock_file:
             adapter.execute()
 
-            # Inspect writes to find the JSONL record
             handle = mock_file()
             found_timeout_record = False
             for name, args, kwargs in handle.write.mock_calls:
@@ -112,33 +90,27 @@ class TestPMDAdapterIntegration:
         Test 3: Time-Travel Safety.
         Verify that we ALWAYS checkout main after processing, even if code crashes.
         """
-        # --- CRITICAL FIX: Configure State Manager Mock ---
         instance_mock = mock_state_manager.return_value
         instance_mock.get_next_start_index.return_value = 0
         instance_mock.is_commit_processed.return_value = False
-        # --------------------------------------------------
 
         adapter = PMDHistoryAdapter(Path("dummy_repo"))
         adapter._get_total_commit_count = MagicMock(return_value=1)
         adapter._get_commit_batch = MagicMock(return_value=["sha1"])
 
-        # Mock sequence: Crash during PMD execution
         mock_run_command.side_effect = [
             (True, "main"),
             (True, ""),
-            RuntimeError("Simulated Crash"),  # CRASH!
-            (True, "")  # The Restore call (Should still happen)
+            RuntimeError("Simulated Crash"),
+            (True, "")
         ]
 
-        # Action
         with pytest.raises(RuntimeError):
             with patch("builtins.open", mock_open()):
                 adapter.execute()
 
-        # Assert: Verify the LAST call to run_command was restoring main
         last_call = mock_run_command.call_args
         cmd_arg = last_call[0][0]
-        # We expect: ['git', 'checkout', '-f', 'main']
         assert cmd_arg[0] == "git" and cmd_arg[1] == "checkout", "Must attempt git checkout in finally block"
         assert cmd_arg[3] == "main", "Must restore to the captured branch (main)"
 
@@ -146,29 +118,24 @@ class TestPMDAdapterIntegration:
 class TestRefmAdapterIntegration:
 
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
-    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._load_existing_results")
-    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")  # <--- NEW MOCK
-    def test_smart_skipping_logic(self, mock_lib_path, mock_load, mock_get_commits):
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")  # [FIX] Updated method name
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_smart_skipping_logic(self, mock_lib_path, mock_get_shas, mock_get_commits):
         """
         Test 4: Resume Capability.
-        If output matches input list, execute() should return True immediately.
+        If processed SHAs match input list, execute() should return True immediately.
         """
-        # Setup
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
-
-        # [FIX] Mock the library path so validation passes
         mock_lib_path.return_value = Path("fake/lib/path")
 
+        # Input: 2 Commits
         mock_get_commits.return_value = ["sha1", "sha2"]
-        # Simulate all commits already processed
-        mock_load.return_value = [{"sha1": "sha1"}, {"sha1": "sha2"}]
 
-        # Action
-        # Mock subprocess to ensure it is NOT called
+        # [FIX] State: Both commits are already in the set
+        mock_get_shas.return_value = {"sha1", "sha2"}
+
         with patch("subprocess.run") as mock_subprocess:
             result = adapter.execute()
 
-            # Assert
             assert result is True
-            # Verify we didn't actually run anything
             mock_subprocess.assert_not_called()

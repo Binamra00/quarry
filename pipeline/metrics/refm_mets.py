@@ -21,18 +21,34 @@ class RefmMetrics(BaseMetrics):
 
     def load_data(self):
         project_name = self.target_repo_path.name
-        refm_json_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+        # [FIX] Update extension to match the new Streaming Adapter (.jsonl)
+        refm_jsonl_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
-        if not refm_json_path.exists():
-            print(f"⚠️ Refactoring output not found: {refm_json_path.name}")
+        if not refm_jsonl_path.exists():
+            print(f"⚠️ Refactoring output not found: {refm_jsonl_path.name}")
             return None
 
+        # [FIX] Streaming Parser Logic
+        commits_list = []
         try:
-            with open(refm_json_path, 'r') as f:
-                refm_data = json.load(f)
-        except json.JSONDecodeError:
-            print("❌ Error decoding RefactoringMiner JSON")
+            print(f"   Derived from: {refm_jsonl_path.name}")
+            with open(refm_jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        commits_list.append(record)
+                    except json.JSONDecodeError:
+                        continue  # Skip corrupt lines
+
+            # Reconstruct the structure expected by calculate()
+            refm_data = {"commits": commits_list}
+
+        except Exception as e:
+            print(f"❌ Error reading RefactoringMiner stream: {e}")
             return None
 
         total_commits = 0
@@ -57,14 +73,12 @@ class RefmMetrics(BaseMetrics):
         commits_list = refm_data.get("commits", [])
         commits_with_refs = len(commits_list)
 
-        # [FIX] Dead Code: Removed unused 'total_ops' calculation
         commits_impure_count = 0
         ref_types = {}
 
         for commit in commits_list:
             refs = commit.get("refactorings", [])
             count = len(refs)
-            # total_ops removed
 
             sha1 = commit.get("sha1")
             churn = int(churn_map.get(sha1, 0))
@@ -110,7 +124,6 @@ class RefmMetrics(BaseMetrics):
         print(f"│   └── Refactoring Density: {s['density_percent']}% (Target: >{TARGET_DENSITY}%)")
         print(f"├── [Dataset Purity]")
         print(f"│   ├── Floss Commits: {p['floss_commits']}")
-        # [FIX] UI Glitch: Changed └── to ├── for middle item
         print(f"│   ├── Purity Score:  {p['purity_score']}% (Target: >{TARGET_PURITY}%)")
         print(f"│   └── Strategy:      {p.get('strategy', 'Unknown')}")
         print(f"├── [Top Types]")
