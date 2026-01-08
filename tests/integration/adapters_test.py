@@ -243,11 +243,11 @@ class TestRefmAdapterIntegration:
         """
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
 
-        # Scenario: .json exists, .jsonl does NOT exist
-        # [FIX] Added 'autospec=True' to ensure 'self' (the path instance) is passed to the side effect
-        def exists_side_effect(path):
-            if str(path).endswith(".json"): return True
-            if str(path).endswith(".jsonl"): return False
+        # [FIX] Match signature for autospec=True (first arg is self/path_instance)
+        def exists_side_effect(self):
+            path_str = str(self)
+            if path_str.endswith(".json"): return True
+            if path_str.endswith(".jsonl"): return False
             return False
 
         with patch("pathlib.Path.exists", autospec=True, side_effect=exists_side_effect), \
@@ -255,7 +255,6 @@ class TestRefmAdapterIntegration:
 
             adapter.get_output_path()
 
-            # Check if warning was printed
             print_calls = [args[0] for args, _ in mock_print.call_args_list]
             assert any("[MIGRATION NOTICE]" in msg for msg in print_calls)
 
@@ -270,7 +269,6 @@ class TestRefmAdapterIntegration:
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
         mock_lib.return_value = Path("lib")
 
-        # Simulate git output with empty newlines
         mock_run.return_value = (True, "sha1\n\nsha2\n")
 
         commits = adapter._get_all_commits()
