@@ -47,6 +47,45 @@ def test_verify_checksum_race_condition(dummy_file):
 @patch("pipeline.utils.allocate_tools.urllib.request.urlretrieve")
 @patch("pipeline.utils.allocate_tools.verify_checksum")
 @patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
+def test_download_and_extract_success(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
+    """Test the happy path where download, verification, and extraction succeed."""
+    [cite_start][cite: 320, 396]
+    # 1. Setup Environment
+    mock_config.TOOLS_PATH = tmp_path
+    mock_verify.return_value = True
+
+    # 2. Mock Zip Content
+    mock_zip_instance = MagicMock()
+    mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
+
+    # The zip contains a folder "extracted_root" which needs to be renamed to "target_tool"
+    zip_root_name = "extracted_root"
+    valid_member = zipfile.ZipInfo(filename=f"{zip_root_name}/file.txt")
+    mock_zip_instance.infolist.return_value = [valid_member]
+
+    # 3. Simulate Extraction Side Effect
+    # We must actually create the folder in tmp_path so the logic sees it exists
+    def simulate_extraction(*args, **kwargs):
+        (tmp_path / zip_root_name).mkdir()
+
+    mock_zip_instance.extractall.side_effect = simulate_extraction
+
+    # 4. Execute
+    target_name = "target_tool"
+    result = allocate_tools.download_and_extract("http://url", target_name, "hash")
+
+    # 5. Assertions
+    assert result is True
+    # Verify the rename logic worked ("extracted_root" -> "target_tool")
+    assert (tmp_path / target_name).exists()
+    assert not (tmp_path / zip_root_name).exists()
+    mock_zip_instance.extractall.assert_called_once()
+
+
+@patch("pipeline.utils.allocate_tools.config")
+@patch("pipeline.utils.allocate_tools.urllib.request.urlretrieve")
+@patch("pipeline.utils.allocate_tools.verify_checksum")
+@patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
 def test_download_zip_slip_prevention(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
     mock_config.TOOLS_PATH = tmp_path
     mock_verify.return_value = True
@@ -54,7 +93,6 @@ def test_download_zip_slip_prevention(mock_zip_cls, mock_verify, mock_retrieve, 
     mock_zip_instance = MagicMock()
     mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
 
-    # Malicious member attempts parent directory traversal
     malicious_member = zipfile.ZipInfo(filename="../etc/passwd")
     mock_zip_instance.infolist.return_value = [malicious_member]
 
@@ -69,14 +107,13 @@ def test_download_zip_slip_prevention(mock_zip_cls, mock_verify, mock_retrieve, 
 @patch("pipeline.utils.allocate_tools.verify_checksum")
 @patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
 def test_download_empty_zip_failure(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
-    """Test handling of a valid zip file containing no members."""
     mock_config.TOOLS_PATH = tmp_path
     mock_verify.return_value = True
 
     mock_zip_instance = MagicMock()
     mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
 
-    # [NEW] Simulate Empty Zip
+    # Simulate Empty Zip
     mock_zip_instance.infolist.return_value = []
 
     result = allocate_tools.download_and_extract("http://url", "target", "hash")
@@ -97,14 +134,10 @@ def test_download_missing_extracted_folder(mock_zip_cls, mock_verify, mock_retri
     mock_zip_instance = MagicMock()
     mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
 
-    # Valid member
     valid_member = zipfile.ZipInfo(filename="root/file.txt")
     mock_zip_instance.infolist.return_value = [valid_member]
 
-    # [NEW] Simulate extraction happening, but file system check failing
-    # The code checks `if extracted_path.exists():`. We need to ensure that path doesn't exist.
-    # Since we are using tmp_path, it really won't exist unless we create it.
-    # So we simply do NOT create the folder in this test.
+    # We do NOT create the directory, simulating a phantom extraction
 
     result = allocate_tools.download_and_extract("http://url", "target", "hash")
 
@@ -127,8 +160,9 @@ def test_download_security_cleanup(mock_unlink, mock_verify, mock_retrieve, mock
 
 # --- PROVISION TESTS ---
 
+@patch("pipeline.utils.allocate_tools.make_executable")  # [FIX] Isolation patch
 @patch("pipeline.utils.allocate_tools.download_and_extract")
-def test_provision_scenarios(mock_download):
+def test_provision_scenarios(mock_download, mock_make_exec):
     # Case 1: PMD Fails
     mock_download.side_effect = [False, True]
     with pytest.raises(RuntimeError):
@@ -150,3 +184,6 @@ def test_provision_scenarios(mock_download):
         allocate_tools.provision()
     except RuntimeError:
         pytest.fail("Provision raised RuntimeError on success path")
+
+    # [FIX] Assert make_executable was actually called
+    assert mock_make_exec.call_count == 2
