@@ -32,7 +32,6 @@ class RefmMetrics(BaseMetrics):
         try:
             print(f"   Derived from: {refm_jsonl_path.name}")
             with open(refm_jsonl_path, 'r', encoding='utf-8') as f:
-                # [FIX] Enumerate for better error reporting on corrupt lines
                 for line_number, line in enumerate(f, start=1):
                     line = line.strip()
                     if not line:
@@ -41,14 +40,13 @@ class RefmMetrics(BaseMetrics):
                         record = json.loads(line)
                         commits_list.append(record)
                     except json.JSONDecodeError as e:
-                        # [FIX] Log specific corruption warning
                         print(f"   ⚠️ Skipping corrupt JSON line {line_number} in {refm_jsonl_path.name}: {e}")
                         continue
 
             refm_data = {"commits": commits_list}
 
-        # [FIX] Catch specific I/O errors instead of broad Exception
-        except (OSError, IOError) as e:
+        # [FIX] Catch only OSError (IOError is an alias in Python 3)
+        except OSError as e:
             print(f"❌ Error reading RefactoringMiner stream: {e}")
             return None
 

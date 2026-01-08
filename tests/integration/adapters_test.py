@@ -1,6 +1,5 @@
 import pytest
 import json
-# [FIX] Removed unused 'ANY'
 from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
 from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
@@ -137,13 +136,15 @@ class TestRefmAdapterIntegration:
             assert result is True
             mock_subprocess.assert_not_called()
 
+    # [FIX] Added UI mocking and split file handling for stream/temp separation
+    @patch("pipeline.utils.ui_strategy.update_progress")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
-    def test_refm_streaming_integrity(self, mock_lib, mock_shas, mock_commits):
+    def test_refm_streaming_integrity(self, mock_lib, mock_shas, mock_commits, mock_ui):
         """
         Test 5: Streaming Integrity.
-        Verify that the adapter writes valid JSONL records for processed commits.
+        Verify that the adapter writes valid JSONL records AND logs execution details.
         """
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
         mock_lib.return_value = Path("lib")
@@ -151,28 +152,56 @@ class TestRefmAdapterIntegration:
         mock_commits.return_value = ["sha_new"]
         mock_shas.return_value = set()
 
-        # Mock tool output (temp file content)
-        tool_output = json.dumps({"refactorings": [{"type": "Extract Method"}]})
+        # Input data for temp file reading
+        tool_output_content = json.dumps({"refactorings": [{"type": "Extract Method"}]})
+
+        # Mocks for file handles
+        mock_stream_handle = MagicMock()
+        mock_log_handle = MagicMock()
+        mock_temp_handle = mock_open(read_data=tool_output_content).return_value
+
+        # Define side effect to return the correct mock based on usage pattern
+        def open_side_effect(filename, mode='r', **kwargs):
+            filename_str = str(filename)
+            # 1. Stream File (Append mode for .jsonl)
+            if "refactorings_" in filename_str and mode == 'a':
+                # Create a context manager for the stream file
+                m = MagicMock()
+                m.__enter__.return_value = mock_stream_handle
+                return m
+            # 2. Log File (Append mode for .log)
+            # The get_log_path uses .log extension
+            elif ".log" in filename_str and mode == 'a':
+                m = MagicMock()
+                m.__enter__.return_value = mock_log_handle
+                return m
+            # 3. Temp File (Read mode for .json)
+            elif "rm_" in filename_str and mode == 'r':
+                m = MagicMock()
+                m.__enter__.return_value = mock_temp_handle
+                return m
+            # Fallback
+            return MagicMock()
 
         with patch("subprocess.run") as mock_sub, \
-                patch("builtins.open", mock_open(read_data=tool_output)) as mock_file, \
+                patch("builtins.open", side_effect=open_side_effect) as mock_file, \
                 patch("pathlib.Path.exists", return_value=True), \
                 patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))), \
                 patch("pathlib.Path.mkdir"):  # Mock mkdir to prevent conflict
 
             mock_sub.return_value.returncode = 0
+            # Ensure stderr is None or empty string to match logic
+            mock_sub.return_value.stderr = ""
 
             adapter.execute()
 
-            # Verify that the JSONL record was written to the stream
-            # We look for the write call that contains the sha and the refactoring type
-            handle = mock_file()
-            stream_write_found = False
-            for name, args, kwargs in handle.write.mock_calls:
-                written_data = args[0]
-                # Check for key indicators of a valid record
-                if '"sha1": "sha_new"' in written_data and '"Extract Method"' in written_data:
-                    stream_write_found = True
-                    break
+            # 1. Verify Stream Write (Valid Data)
+            # We check if write was called on the STREAM handle
+            stream_calls = mock_stream_handle.write.call_args_list
+            assert any('sha_new' in args[0] for args, _ in stream_calls), "Stream must contain commit SHA"
+            assert any('Extract Method' in args[0] for args, _ in stream_calls), "Stream must contain actual data"
 
-            assert stream_write_found, "Execute must write valid JSONL record with refactoring data"
+            # 2. Verify Log Write (Debug Command)
+            # We check if write was called on the LOG handle
+            log_calls = mock_log_handle.write.call_args_list
+            assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls), "Log must record debug command"

@@ -17,9 +17,12 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner.
-    Uses 'JSONL Streaming' for memory-efficient streaming (O(1) memory per record
-    during writing) and instant persistence, with O(M) memory for SHA tracking
-    where M is the number of processed commits.
+    Uses 'JSONL Streaming' for memory-efficient streaming during writing
+    (O(1) memory per record, plus O(M) memory for SHA tracking where M is the
+    number of processed commits). Note that this O(1) memory benefit applies
+    only while producing/writing the JSONL output; downstream consumers of the
+    JSONL data (e.g., loading all records into a list) may use O(N) memory,
+    where N is the total number of records.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
@@ -64,7 +67,7 @@ class RefactoringMinerAdapter(IAdapter):
         print(f"   🔍 Scanning existing log: {output_path.name}...")
         try:
             with open(output_path, 'r', encoding='utf-8') as f:
-                for line in f:
+                for line_number, line in enumerate(f, start=1):
                     line = line.strip()
                     if not line:
                         continue
@@ -72,12 +75,15 @@ class RefactoringMinerAdapter(IAdapter):
                         record = json.loads(line)
                         if "sha1" in record:
                             processed.add(record["sha1"])
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        # Log corrupt line to help diagnosis
+                        print(f"   ⚠️ Warning: Skipping corrupt line {line_number} in existing log: {e}")
                         continue
-        # [FIX] Catch specific I/O errors instead of generic Exception
-        except (OSError, IOError) as e:
+
+        # [FIX] Catch only OSError (IOError is an alias in Python 3)
+        # Fail-fast to prevent re-processing 50k commits due to a transient read error
+        except OSError as e:
             print(f"   ❌ Error reading existing log: {e}")
-            # Fail-fast to prevent re-processing 50k commits due to a transient read error
             raise
 
         return processed
@@ -133,11 +139,16 @@ class RefactoringMinerAdapter(IAdapter):
         new_commits_count = 0
         env = os.environ.copy()
 
-        # [FIX] Ensure parent directory exists
-        self.get_output_path().parent.mkdir(parents=True, exist_ok=True)
+        # [FIX] Robust directory creation with error handling
+        output_dir = self.get_output_path().parent
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"❌ Error: Failed to create output directory '{output_dir}': {e}")
+            return False
 
-        # Open file in APPEND mode ("a") with line buffering (1)
-        with open(self.get_output_path(), "a", encoding="utf-8", buffering=1) as stream_file, \
+        # Open file in APPEND mode ("a")
+        with open(self.get_output_path(), "a", encoding="utf-8") as stream_file, \
                 open(log_path, "a", encoding="utf-8") as log_file:
 
             try:
@@ -197,11 +208,10 @@ class RefactoringMinerAdapter(IAdapter):
                             if result.returncode != 0:
                                 log_file.write(
                                     f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                                # [FIX] Check for non-empty string (text=True returns "" not None)
+                                # Check for non-empty string (text=True returns "" not None)
                                 if result.stderr:
                                     log_file.write(f"[STDERR] {result.stderr}\n")
 
-                        # [FIX] Removed redundant flush(); buffering=1 ensures line flush.
                         stream_file.write(json.dumps(record) + "\n")
 
                         new_commits_count += 1
