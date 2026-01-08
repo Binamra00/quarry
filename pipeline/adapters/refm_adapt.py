@@ -41,17 +41,18 @@ class RefactoringMinerAdapter(IAdapter):
         project_name = self.target_repo_path.name
         output_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
 
-        # [FIX] Detect legacy .json files and warn the user.
+        # Detect legacy .json files and warn the user.
         legacy_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
         # Check if legacy exists BUT new format doesn't (migration scenario)
         if legacy_path.exists() and not output_path.exists():
             print(
                 f"\n⚠️  [MIGRATION NOTICE] Detected legacy JSON output at '{legacy_path.name}'.\n"
-                f"   This version writes to '{output_path.name}' (JSONL) for streaming support.\n"
-                "   The legacy file will NOT be used automatically. To preserve results:\n"
-                "   1. Rename/Backup the old file.\n"
-                "   2. Or let this run create a new JSONL file (starting from scratch)."
+                f"   This adapter now writes to '{output_path.name}' (JSONL) for streaming support.\n"
+                "   Note: Other tools may still read legacy '.json' files as a fallback.\n"
+                "   To preserve or migrate results:\n"
+                "   1. Optionally back up or rename the old file.\n"
+                "   2. Allow this run to create a new JSONL file (it does not overwrite the legacy file)."
             )
 
         return output_path
@@ -64,7 +65,7 @@ class RefactoringMinerAdapter(IAdapter):
             verbose=False
         )
         if success and output:
-            # [FIX] Filter out empty strings to prevent processing "" as a SHA
+            # [DEFENSIVE] Filter out empty strings to avoid processing invalid SHAs
             return [sha for sha in output.strip().split('\n') if sha.strip()]
         return []
 

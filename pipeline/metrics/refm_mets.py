@@ -22,7 +22,7 @@ class RefmMetrics(BaseMetrics):
     def load_data(self):
         project_name = self.target_repo_path.name
         refm_jsonl_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
-        # [FIX] Added legacy path for fallback
+        # Legacy path for backward compatibility
         refm_legacy_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
 
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"

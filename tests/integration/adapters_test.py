@@ -183,12 +183,11 @@ class TestRefmAdapterIntegration:
             adapter.execute()
 
             stream_calls = mock_stream_handle.write.call_args_list
-            assert any('sha_new' in args[0] for args, _ in stream_calls)
+            assert any('sha_new' in args[0] for args, _ in stream_calls), "Stream must contain commit SHA"
 
             log_calls = mock_log_handle.write.call_args_list
-            assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls)
+            assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls), "Log must record debug command"
 
-    # [FIX] Added Test Case 6: Tool Failure Handling
     @patch("pipeline.utils.ui_strategy.update_progress")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
@@ -204,7 +203,7 @@ class TestRefmAdapterIntegration:
         mock_shas.return_value = set()
 
         mock_log_handle = MagicMock()
-        mock_stream_handle = MagicMock()  # Should still write an empty record
+        mock_stream_handle = MagicMock()
 
         def open_side_effect(filename, mode='r', **kwargs):
             filename_str = str(filename)
@@ -216,7 +215,6 @@ class TestRefmAdapterIntegration:
                 m = MagicMock()
                 m.__enter__.return_value = mock_log_handle
                 return m
-            # Temp file doesn't exist or is empty on crash
             return MagicMock()
 
         with patch("subprocess.run") as mock_sub, \
@@ -224,17 +222,58 @@ class TestRefmAdapterIntegration:
                 patch("pathlib.Path.exists", return_value=False), \
                 patch("pathlib.Path.mkdir"):
 
-            # Simulate Crash
             mock_sub.return_value.returncode = 1
             mock_sub.return_value.stderr = "Exception in thread main..."
 
             adapter.execute()
 
-            # Verify Log recorded the crash
             log_calls = mock_log_handle.write.call_args_list
             assert any('[FAILURE] Tool crashed' in args[0] for args, _ in log_calls)
             assert any('Exception in thread main' in args[0] for args, _ in log_calls)
 
-            # Verify we still wrote a record (empty refactorings) to maintain state
             stream_calls = mock_stream_handle.write.call_args_list
             assert any('sha_fail' in args[0] for args, _ in stream_calls)
+
+    # [NEW] Test Case 7: Migration Warning
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_migration_warning(self, mock_lib):
+        """
+        Test 7: Migration Warning.
+        Verify that the user is warned if a legacy .json file exists.
+        """
+        # We only need to check get_output_path, which calls print
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+
+        # Scenario: .json exists, .jsonl does NOT exist
+        def exists_side_effect(path):
+            if str(path).endswith(".json"): return True
+            if str(path).endswith(".jsonl"): return False
+            return False
+
+        with patch("pathlib.Path.exists", side_effect=exists_side_effect), \
+                patch("builtins.print") as mock_print:
+
+            adapter.get_output_path()
+
+            # Check if warning was printed
+            print_calls = [args[0] for args, _ in mock_print.call_args_list]
+            assert any("[MIGRATION NOTICE]" in msg for msg in print_calls)
+
+    # [NEW] Test Case 8: SHA Filtering
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_sha_filtering(self, mock_lib, mock_run):
+        """
+        Test 8: SHA Filtering.
+        Verify that empty lines in git output are filtered out.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_lib.return_value = Path("lib")
+
+        # Simulate git output with empty newlines
+        mock_run.return_value = (True, "sha1\n\nsha2\n")
+
+        commits = adapter._get_all_commits()
+
+        assert len(commits) == 2
+        assert "" not in commits
