@@ -17,21 +17,21 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner.
-    Uses 'JSONL Streaming' for O(1) memory usage and instant persistence.
+    Uses 'JSONL Streaming' for memory-efficient streaming (O(1) memory per record)
+    and instant persistence.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
-        # Checkpoint interval is less relevant with streaming,
-        # but we keep it if we want to log periodic status updates.
-        self.checkpoint_interval_seconds = 300
+        # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
 
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
-        # [CHANGE] Use .jsonl for streaming support
+        # [DECISION] Keeping .jsonl to enforce streaming semantics.
+        # Downstream metrics consumers must be updated to read JSONL.
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
 
     def _get_all_commits(self) -> List[str]:
@@ -48,8 +48,7 @@ class RefactoringMinerAdapter(IAdapter):
     def _get_processed_shas(self) -> Set[str]:
         """
         Scans the existing JSONL file line-by-line to find already processed commits.
-        Memory Usage: O(M) where M is the number of SHAs (very small strings),
-        NOT O(Data Size).
+        Memory Usage: O(M) where M is the number of commits (storing SHAs only).
         """
         output_path = self.get_output_path()
         processed = set()
@@ -65,12 +64,10 @@ class RefactoringMinerAdapter(IAdapter):
                     if not line:
                         continue
                     try:
-                        # Lightweight parse: just check if valid JSON and extract SHA
                         record = json.loads(line)
                         if "sha1" in record:
                             processed.add(record["sha1"])
                     except json.JSONDecodeError:
-                        # Skip corrupt lines (resilience)
                         continue
         except Exception as e:
             print(f"   ⚠️ Warning reading existing log: {e}")
@@ -86,9 +83,7 @@ class RefactoringMinerAdapter(IAdapter):
 
         rm_executable = Path(config.RM_PATH)
 
-        # Candidate 1: Standard dist
         candidate_standard = rm_executable.parent.parent / "lib"
-        # Candidate 2: Flat dist
         candidate_flat = rm_executable.parent / "lib"
 
         if candidate_standard.exists() and candidate_standard.is_dir():
@@ -116,7 +111,6 @@ class RefactoringMinerAdapter(IAdapter):
             print("❌ Error: No commits found.")
             return False
 
-        # [CHANGE] Streaming State Recovery
         processed_shas = self._get_processed_shas()
         remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
 
@@ -129,12 +123,9 @@ class RefactoringMinerAdapter(IAdapter):
 
         log_path = self.get_log_path()
         new_commits_count = 0
-
-        # Prepare Environment
         env = os.environ.copy()
 
-        # [CHANGE] Open file in APPEND mode ("a") and keep it open
-        # We use buffering=1 for line-buffered writing (flushes on newline)
+        # Open file in APPEND mode ("a") with line buffering (1)
         with open(self.get_output_path(), "a", encoding="utf-8", buffering=1) as stream_file, \
                 open(log_path, "a", encoding="utf-8") as log_file:
 
@@ -146,11 +137,10 @@ class RefactoringMinerAdapter(IAdapter):
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
-                    # Prepare the Record Object
                     record = {
                         "repository": str(self.target_repo_path),
                         "sha1": commit_hash,
-                        "refactorings": []  # Default empty
+                        "refactorings": []
                     }
 
                     try:
@@ -175,17 +165,14 @@ class RefactoringMinerAdapter(IAdapter):
                             env=env
                         )
 
-                        # Parse Output
                         valid_data_found = False
                         if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
                             try:
                                 with open(temp_json_file, 'r', encoding='utf-8') as f:
                                     tool_output = json.load(f)
 
-                                # RefactoringMiner output format handling
                                 if tool_output:
                                     if "commits" in tool_output and tool_output["commits"]:
-                                        # It returns a list, but we only asked for one commit
                                         record["refactorings"] = tool_output["commits"][0].get("refactorings", [])
                                         valid_data_found = True
                                     elif "refactorings" in tool_output:
@@ -199,23 +186,22 @@ class RefactoringMinerAdapter(IAdapter):
                             if result.returncode != 0:
                                 log_file.write(
                                     f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                            else:
-                                # Normal case for commits with no refactorings
-                                pass
+                                # [FIX] Log stderr as requested by reviewer
+                                if result.stderr:
+                                    log_file.write(f"[STDERR] {result.stderr}\n")
 
-                                # [CRITICAL CHANGE] Write to Stream Immediately
+                        # [FIX] Dedented to ensure write happens UNCONDITIONALLY
                         stream_file.write(json.dumps(record) + "\n")
-                        # stream_file.flush() # buffering=1 handles this, but explicit flush is safer if paranoid
+                        stream_file.flush()  # [FIX] Explicit flush for safety
 
                         new_commits_count += 1
 
                     finally:
-                        # Cleanup Temp File
                         if temp_json_file.exists():
                             try:
                                 temp_json_file.unlink()
                             except OSError:
-                                pass  # Best effort cleanup
+                                pass
 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupt detected! Output stream saved safely.")
