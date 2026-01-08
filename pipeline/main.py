@@ -4,6 +4,7 @@ from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
+from pipeline.utils import allocate_tools  # [NEW] Import allocation logic
 from pipeline.metrics.repo_mets import RepoMetrics
 from pipeline.metrics.refm_mets import RefmMetrics
 from pipeline.metrics.pmd_mets import PMDMetrics
@@ -41,6 +42,16 @@ def main():
     print(f"🎯 Target Stage: {args.stage.upper()}")
     print(f"🎯 Batch Size: {args.batch_size}")
 
+    # [FIX] Facade Pattern: Auto-provision tools if missing
+    # This delegates the complex setup to allocate_tools, ensuring the environment
+    # is "hydrated" before we attempt to run any analysis commands.
+    try:
+        print("\n--- 🛠️ Verifying Toolchain ---")
+        allocate_tools.provision()
+    except RuntimeError as e:
+        print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
+        sys.exit(1)
+
     if not target_repo.exists():
         print(f"\n❌ CRITICAL ERROR: Repository not found.")
         print(f"   Looked for: {target_repo}")
@@ -51,13 +62,11 @@ def main():
     print("\n--- Step 1: Repository Verification ---")
 
     # [ROBUST FIX] Dynamic Default Branch Detection
-    # Instead of assuming 'main', we ask the remote what the HEAD points to.
     default_branch = "main"  # Reasonable fallback
 
     print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
 
     # Method 1: Check remote HEAD (Standard for clones)
-    # Output is usually: refs/remotes/origin/master
     success, output = adapter_subprocess.run_command(
         ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
         cwd=str(target_repo)
@@ -65,17 +74,14 @@ def main():
 
     if success and output:
         try:
-            # Parse 'refs/remotes/origin/master' -> 'master'
-            # [REFACTOR] Renamed variable and specific exception handling
             detected_branch = output.strip().split('/')[-1]
             if detected_branch:
                 default_branch = detected_branch
                 print(f"   ✅ Detected Remote HEAD: {default_branch}")
         except (IndexError, AttributeError):
-            # Fallback will handle this silently
             pass
     else:
-        # Method 2: Fallback - Check if 'master' exists locally if remote check failed
+        # Method 2: Fallback - Check if 'master' exists locally
         s, _ = adapter_subprocess.run_command(
             ["git", "rev-parse", "--verify", "master"],
             cwd=str(target_repo)
