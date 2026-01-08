@@ -62,6 +62,10 @@ PMD_VERSION = "pmd-bin-7.19.0"
 RM_VERSION = "RefactoringMiner-3.0.12"
 
 # [NEW] SECURITY: SHA-256 Checksums (Supply Chain Protection)
+# These checksums are for the official release artifacts and can be verified independently.
+# Source (PMD 7.19.0): https://github.com/pmd/pmd/releases/tag/pmd_releases%2F7.19.0
+# Source (RefactoringMiner 3.0.12): https://github.com/tsantalis/RefactoringMiner/releases/tag/3.0.12
+# Locked on Jan 08, 2026
 PMD_SHA256 = "beccb2c9c2abfd2e974a29f843a3d54565ce01bbf80fda947072fe10b4a2d3f0"
 RM_SHA256 = "cc15a9cc9c2805583043f11434554d56471680671e13341ecf7d550fb253dfcb"
 

@@ -19,14 +19,12 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
 
     The ``expected_hash`` must be the full SHA-256 digest encoded as a
     lowercase hexadecimal string.
-
-    Returns
-    -------
-    bool
-        ``True`` if the calculated checksum exactly matches ``expected_hash``.
-        ``False`` if the file is missing or the checksum does not match.
     """
-    # [FIX] Input Validation: Ensure file exists before opening
+    # [FIX] Validate Hash Format
+    if len(expected_hash) != 64 or any(c not in "0123456789abcdef" for c in expected_hash):
+        report(f"❌ Invalid expected SHA-256 hash format: {expected_hash}")
+        return False
+
     if not file_path.is_file():
         report(f"❌ File not found for checksum verification: {file_path}")
         return False
@@ -38,9 +36,9 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
             # Read in 4K chunks to avoid memory issues
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         # [FIX] Handle race condition if file is deleted during read
-        report(f"❌ File disappeared during checksum verification: {file_path}")
+        report(f"❌ File disappeared or unreadable during checksum verification: {file_path}")
         return False
 
     calculated_hash = sha256_hash.hexdigest()
@@ -76,22 +74,28 @@ def download_and_extract(url, target_folder_name, expected_hash):
         report(f"❌ Download failed: {e}")
         return False
 
-    # [NEW] Security Checkpoint
+    # Security Checkpoint
     if not verify_checksum(zip_path, expected_hash):
-        # [FIX] Improved Error Message
         report(f"⛔ Aborting installation of '{target_folder_name}' due to security risk.")
-
-        # [FIX] Race Condition: Safe deletion
         zip_path.unlink(missing_ok=True)
         return False
 
     report(f"📦 Extracting...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_root = zip_ref.namelist()[0].split('/')[0]
+            # [FIX] Robust Zip Root Detection
+            namelist = zip_ref.namelist()
+            if not namelist:
+                raise ValueError("Downloaded zip archive is empty.")
+
+            first_entry = namelist[0]
+            parts = first_entry.split("/")
+            if not parts or not parts[0]:
+                raise ValueError(f"Could not determine top-level directory: {first_entry}")
+
+            zip_root = parts[0]
             zip_ref.extractall(dest_dir)
 
-        # Cleanup zip safely
         zip_path.unlink(missing_ok=True)
 
         extracted_path = dest_dir / zip_root
@@ -108,9 +112,9 @@ def download_and_extract(url, target_folder_name, expected_hash):
         report(f"✅ Installed: {final_path.name}")
         return True
 
-    except Exception as e:
+    # [FIX] Catch specific exceptions
+    except (zipfile.BadZipFile, OSError, ValueError) as e:
         report(f"❌ Extraction failed: {e}")
-        # Safe cleanup on failure
         zip_path.unlink(missing_ok=True)
         return False
 
@@ -141,7 +145,6 @@ def provision():
         make_executable(config.RM_PATH)
         print("--- Toolchain Ready ---\n")
     else:
-        # [FIX] Removed exit(1), raising exception for better testability
         raise RuntimeError("Toolchain provisioning failed due to download or security errors.")
 
 
