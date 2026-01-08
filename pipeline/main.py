@@ -4,7 +4,8 @@ from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
-from pipeline.utils import allocate_tools  # [NEW] Import allocation logic
+from pipeline.utils import allocate_tools
+from pipeline.utils.repo_loader import RepositoryLoader # [NEW] Import Loader
 from pipeline.metrics.repo_mets import RepoMetrics
 from pipeline.metrics.refm_mets import RefmMetrics
 from pipeline.metrics.pmd_mets import PMDMetrics
@@ -18,8 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
 
     parser.add_argument("--repo",
-                        default="toy_project",
-                        help="Name of the folder in Thesis Project/repos/ to analyze.")
+                        required=True, # [UX] Made required for clarity
+                        help="Target Repository. Can be a local folder name OR a GitHub URL.")
 
     parser.add_argument("--stage",
                         choices=config.VALID_STAGES,
@@ -33,40 +34,35 @@ def main():
 
     args = parser.parse_args()
 
-    # --- 1. DYNAMIC TARGET RESOLUTION ---
-    target_repo = config.REPOS_PATH / args.repo
-
     print("🚀 Starting Smell-Ranker Pipeline")
     print(f"📂 Configuration Loaded. Workspace: {config.WORKSPACE_ROOT.name}")
+
+    # --- 1. TOOLCHAIN VERIFICATION ---
+    try:
+        print("\n--- 🛠️ Verifying Toolchain ---")
+        allocate_tools.provision()
+    except Exception as e:
+        print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
+        sys.exit(1)
+
+    # --- 2. REPOSITORY ACQUISITION (FACADE) ---
+    # [FIX] Securely resolve URL or Local Path
+    try:
+        target_repo = RepositoryLoader.ensure_local_copy(args.repo)
+    except (ValueError, RuntimeError, FileNotFoundError) as e:
+        print(f"\n❌ CRITICAL ERROR: {e}")
+        sys.exit(1)
+
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
     print(f"🎯 Batch Size: {args.batch_size}")
 
-    # [FIX] Facade Pattern: Auto-provision tools if missing
-    # This delegates the complex setup to allocate_tools, ensuring the environment
-    # is "hydrated" before we attempt to run any analysis commands.
-    try:
-        print("\n--- 🛠️ Verifying Toolchain ---")
-        allocate_tools.provision()
-    except RuntimeError as e:
-        print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
-        sys.exit(1)
-
-    if not target_repo.exists():
-        print(f"\n❌ CRITICAL ERROR: Repository not found.")
-        print(f"   Looked for: {target_repo}")
-        print(f"   Please clone the project into {config.REPOS_PATH} first.")
-        sys.exit(1)
-
-    # --- 2. Initial Setup (Phase 0) ---
+    # --- 3. Initial Setup (Phase 0) ---
     print("\n--- Step 1: Repository Verification ---")
 
-    # [ROBUST FIX] Dynamic Default Branch Detection
-    default_branch = "main"  # Reasonable fallback
+    default_branch = "main"
 
     print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
-
-    # Method 1: Check remote HEAD (Standard for clones)
     success, output = adapter_subprocess.run_command(
         ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
         cwd=str(target_repo)
@@ -81,7 +77,6 @@ def main():
         except (IndexError, AttributeError):
             pass
     else:
-        # Method 2: Fallback - Check if 'master' exists locally
         s, _ = adapter_subprocess.run_command(
             ["git", "rev-parse", "--verify", "master"],
             cwd=str(target_repo)
@@ -90,7 +85,6 @@ def main():
             default_branch = "master"
             print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
 
-    # Perform the Force Checkout
     print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
     success, _ = adapter_subprocess.run_command(
         ["git", "checkout", "-f", default_branch],
@@ -104,7 +98,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Verification Warning: {e}")
 
-    # --- 3. Command Configuration ---
+    # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
 
     active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
@@ -116,7 +110,7 @@ def main():
         print(f"⚠️ No tools matched the stage '{args.stage}'. Exiting.")
         sys.exit(0)
 
-    # --- 4. Execution Loop ---
+    # --- 5. Execution Loop ---
     execution_results = {}
     for command in commands:
         tool_name = command._adapter.get_tool_name()
@@ -127,7 +121,7 @@ def main():
             print(f"\n❌ Critical Failure in {tool_name}. Aborting.")
             sys.exit(1)
 
-    # --- 5. Metrics Calculation (Post-Processing) ---
+    # --- 6. Metrics Calculation ---
     print("\n--- 🏁 Pipeline Completion Report ---")
 
     if args.stage in ["all", "refm", "history"]:
@@ -142,7 +136,6 @@ def main():
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
-    # --- 6. Final Exit Code ---
     if all(execution_results.values()):
         print("\n🎉 PIPELINE SUCCESS.")
         sys.exit(0)
