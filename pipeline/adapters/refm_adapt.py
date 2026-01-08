@@ -6,7 +6,7 @@ import tempfile
 import uuid
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
@@ -17,19 +17,30 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner.
-    Uses 'Stateful Batching' and Centralized Configuration.
+    Uses 'JSONL Streaming' for memory-efficient streaming during writing
+    (O(1) memory per record, plus O(M) memory for SHA tracking where M is the
+    number of processed commits). Note that this O(1) memory benefit applies
+    only while producing/writing the JSONL output; downstream consumers of the
+    JSONL data (e.g., loading all records into a list) may use O(N) memory,
+    where N is the total number of records.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
-        self.checkpoint_interval_seconds = 300
+        # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
+        if batch_size is not None:
+            print(
+                "⚠️  RefactoringMinerAdapter: 'batch_size' is ignored in streaming mode; "
+                "the adapter processes commits one by one."
+            )
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
 
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
-        return config.OUTPUTS_PATH / f"refactorings_{project_name}.json"
+        # [DECISION] Keeping .jsonl to enforce streaming semantics.
+        return config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
 
     def _get_all_commits(self) -> List[str]:
         cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
@@ -42,31 +53,51 @@ class RefactoringMinerAdapter(IAdapter):
             return output.strip().split('\n')
         return []
 
-    def _load_existing_results(self) -> List[dict]:
+    def _get_processed_shas(self) -> Set[str]:
+        """
+        Scans the existing JSONL file line-by-line to find already processed commits.
+        Memory Usage: O(M) where M is the number of commits (storing SHAs only).
+        """
         output_path = self.get_output_path()
-        if output_path.exists():
-            try:
-                with open(output_path, 'r') as f:
-                    data = json.load(f)
-                    return data.get("commits", [])
-            except json.JSONDecodeError:
-                print("   ⚠️ Existing output corrupt. Starting fresh.")
-        return []
+        processed = set()
+
+        if not output_path.exists():
+            return processed
+
+        print(f"   🔍 Scanning existing log: {output_path.name}...")
+        try:
+            with open(output_path, 'r', encoding='utf-8') as f:
+                for line_number, line in enumerate(f, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        if "sha1" in record:
+                            processed.add(record["sha1"])
+                    except json.JSONDecodeError as e:
+                        # Log corrupt line to help diagnosis
+                        print(f"   ⚠️ Warning: Skipping corrupt line {line_number} in existing log: {e}")
+                        continue
+
+        # [FIX] Catch only OSError (IOError is an alias in Python 3)
+        # Fail-fast to prevent re-processing 50k commits due to a transient read error
+        except OSError as e:
+            print(f"   ❌ Error reading existing log: {e}")
+            raise
+
+        return processed
 
     def _get_lib_path(self) -> Path:
         """
         Robustly resolves the 'lib' directory containing JAR dependencies.
         """
-        # 1. Pre-flight Check: Ensure Java is actually available
         if not shutil.which("java"):
             raise RuntimeError("'java' executable not found in system PATH.")
 
         rm_executable = Path(config.RM_PATH)
 
-        # Candidate 1: Standard dist (root/bin/RefactoringMiner.bat -> lib is in root/lib)
         candidate_standard = rm_executable.parent.parent / "lib"
-
-        # Candidate 2: Flat dist (bin and lib in same folder)
         candidate_flat = rm_executable.parent / "lib"
 
         if candidate_standard.exists() and candidate_standard.is_dir():
@@ -80,7 +111,7 @@ class RefactoringMinerAdapter(IAdapter):
         )
 
     def execute(self) -> bool:
-        print(f"--- ⚡ Starting {self.get_tool_name()} ---")
+        print(f"--- ⚡ Starting {self.get_tool_name()} [Streaming Mode] ---")
 
         try:
             lib_dir = self._get_lib_path()
@@ -90,35 +121,36 @@ class RefactoringMinerAdapter(IAdapter):
             return False
 
         all_commits = self._get_all_commits()
-        total_commits = len(all_commits)
-        if total_commits == 0:
+        if not all_commits:
             print("❌ Error: No commits found.")
             return False
 
-        existing_data = self._load_existing_results()
-
-        processed_shas = {
-            c.get('sha1')
-            for c in existing_data
-            if isinstance(c, dict) and c.get('sha1') is not None
-        }
-
+        processed_shas = self._get_processed_shas()
         remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
 
         if not remaining_commits:
-            print(f"✅ Analysis already complete ({len(existing_data)} commits).")
+            print(f"✅ Analysis already complete ({len(processed_shas)} commits).")
             return True
 
-        print(f"   🔄 Resuming: Found {len(existing_data)} existing. Processing {len(remaining_commits)} new commits...")
+        print(
+            f"   🔄 Resuming: Found {len(processed_shas)} existing. Processing {len(remaining_commits)} new commits...")
 
-        current_data = existing_data
-        new_commits_count = 0
         log_path = self.get_log_path()
-        last_checkpoint_time = time.time()
-
+        new_commits_count = 0
         env = os.environ.copy()
 
-        with open(log_path, "a") as log_file:
+        # [FIX] Robust directory creation with error handling
+        output_dir = self.get_output_path().parent
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"❌ Error: Failed to create output directory '{output_dir}': {e}")
+            return False
+
+        # Open file in APPEND mode ("a")
+        with open(self.get_output_path(), "a", encoding="utf-8") as stream_file, \
+                open(log_path, "a", encoding="utf-8") as log_file:
+
             try:
                 for i, commit_hash in enumerate(remaining_commits):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
@@ -127,9 +159,13 @@ class RefactoringMinerAdapter(IAdapter):
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
+                    record = {
+                        "repository": str(self.target_repo_path),
+                        "sha1": commit_hash,
+                        "refactorings": []
+                    }
+
                     try:
-                        # [Windows Fix] Invoke Java directly with wildcard classpath
-                        # This bypasses the 8191-character command line limit on Windows
                         cmd = [
                             "java",
                             "-cp", java_classpath,
@@ -139,7 +175,6 @@ class RefactoringMinerAdapter(IAdapter):
                             "-json", str(temp_json_file)
                         ]
 
-                        # Log sample command (first only) to avoid log file bloat on large histories
                         if i == 0:
                             log_file.write(f"\n[DEBUG] Java Command (Sample): {' '.join(cmd)}\n")
 
@@ -152,90 +187,46 @@ class RefactoringMinerAdapter(IAdapter):
                             env=env
                         )
 
-                        # ... (JSON Parsing logic remains identical) ...
                         valid_data_found = False
                         if temp_json_file.exists() and temp_json_file.stat().st_size > 0:
                             try:
-                                with open(temp_json_file, 'r') as f:
-                                    commit_data = json.load(f)
-                                if commit_data:
-                                    if "commits" in commit_data:
-                                        current_data.extend(commit_data["commits"])
+                                with open(temp_json_file, 'r', encoding='utf-8') as f:
+                                    tool_output = json.load(f)
+
+                                if tool_output:
+                                    if "commits" in tool_output and tool_output["commits"]:
+                                        record["refactorings"] = tool_output["commits"][0].get("refactorings", [])
                                         valid_data_found = True
-                                    elif "refactorings" in commit_data:
-                                        if "sha1" in commit_data:
-                                            current_data.append(commit_data)
-                                        else:
-                                            current_data.append({
-                                                "repository": str(self.target_repo_path),
-                                                "sha1": commit_hash,
-                                                "refactorings": commit_data.get("refactorings", [])
-                                            })
+                                    elif "refactorings" in tool_output:
+                                        record["refactorings"] = tool_output["refactorings"]
                                         valid_data_found = True
+
                             except json.JSONDecodeError:
                                 log_file.write(f"\n[ERROR] Corrupt JSON in temp file for {commit_hash}\n")
 
-                        if valid_data_found:
-                            new_commits_count += 1
-                        else:
+                        if not valid_data_found:
                             if result.returncode != 0:
                                 log_file.write(
                                     f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                                log_file.write(f"STDERR: {result.stderr.strip()}\n")
-                            else:
-                                log_file.write(f"\n[INFO] No JSON file generated for {commit_hash}.\n")
+                                # Check for non-empty string (text=True returns "" not None)
+                                if result.stderr:
+                                    log_file.write(f"[STDERR] {result.stderr}\n")
 
-                            current_data.append({
-                                "repository": str(self.target_repo_path),
-                                "sha1": commit_hash,
-                                "refactorings": []
-                            })
-                            new_commits_count += 1
+                        stream_file.write(json.dumps(record) + "\n")
+
+                        new_commits_count += 1
 
                     finally:
-                        # [Config Usage] Use centralized retry settings for consistent behavior
                         if temp_json_file.exists():
-                            for attempt in range(config.IO_MAX_RETRIES):
-                                try:
-                                    temp_json_file.unlink()
-                                    break
-                                except (OSError, PermissionError) as e:
-                                    if attempt == config.IO_MAX_RETRIES - 1:
-                                        log_file.write(
-                                            f"\n[WARN] Failed to delete temp file {temp_json_file.name}: {e}\n"
-                                        )
-                                    else:
-                                        delay = min(1.0, config.IO_RETRY_DELAY_BASE * (2 ** attempt))
-                                        time.sleep(delay)
-
-                    current_time = time.time()
-                    time_diff = current_time - last_checkpoint_time
-                    is_last = (i == len(remaining_commits) - 1)
-
-                    if time_diff >= self.checkpoint_interval_seconds or is_last:
-                        self._flush_to_disk(current_data, log_file)
-                        last_checkpoint_time = current_time
+                            try:
+                                temp_json_file.unlink()
+                            except OSError:
+                                # Best-effort cleanup: ignore errors if temp file cannot be removed
+                                pass
 
             except KeyboardInterrupt:
-                print("\n⚠️  Interrupt detected! Saving progress...")
-                self._flush_to_disk(current_data, log_file)
+                print("\n⚠️  Interrupt detected! Output stream saved safely.")
                 return False
 
-        print(f"✅ Success. Added {new_commits_count} new commits. Total: {len(current_data)}")
+        print(f"✅ Success. Streamed {new_commits_count} commits to {self.get_output_path().name}")
         return True
-
-    def _flush_to_disk(self, data: List[dict], log_file=None):
-        if not data: return
-        output_path = self.get_output_path()
-        temp_path = output_path.with_suffix(".tmp")
-        try:
-            with open(temp_path, 'w') as f:
-                json.dump({"commits": data}, f, indent=2)
-            os.replace(temp_path, output_path)
-            if log_file:
-                log_file.write(f"\n[CHECKPOINT] Saved {len(data)} commits.\n")
-        except Exception as e:
-            msg = f"   ❌ Save failed: {e}"
-            print(msg)
-            if log_file:
-                log_file.write(f"\n[ERROR] {msg}\n")
