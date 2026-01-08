@@ -136,7 +136,6 @@ class TestRefmAdapterIntegration:
             assert result is True
             mock_subprocess.assert_not_called()
 
-    # [FIX] Added UI mocking and split file handling for stream/temp separation
     @patch("pipeline.utils.ui_strategy.update_progress")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
@@ -163,14 +162,13 @@ class TestRefmAdapterIntegration:
         # Define side effect to return the correct mock based on usage pattern
         def open_side_effect(filename, mode='r', **kwargs):
             filename_str = str(filename)
-            # 1. Stream File (Append mode for .jsonl)
-            if "refactorings_" in filename_str and mode == 'a':
-                # Create a context manager for the stream file
+            # 1. Stream File (Must match .jsonl specifically)
+            # [FIX] Added .jsonl check to differentiate from log file
+            if "refactorings_" in filename_str and ".jsonl" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_stream_handle
                 return m
             # 2. Log File (Append mode for .log)
-            # The get_log_path uses .log extension
             elif ".log" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_log_handle
@@ -187,21 +185,18 @@ class TestRefmAdapterIntegration:
                 patch("builtins.open", side_effect=open_side_effect) as mock_file, \
                 patch("pathlib.Path.exists", return_value=True), \
                 patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))), \
-                patch("pathlib.Path.mkdir"):  # Mock mkdir to prevent conflict
+                patch("pathlib.Path.mkdir"):
 
             mock_sub.return_value.returncode = 0
-            # Ensure stderr is None or empty string to match logic
             mock_sub.return_value.stderr = ""
 
             adapter.execute()
 
-            # 1. Verify Stream Write (Valid Data)
-            # We check if write was called on the STREAM handle
+            # 1. Verify Stream Write
             stream_calls = mock_stream_handle.write.call_args_list
             assert any('sha_new' in args[0] for args, _ in stream_calls), "Stream must contain commit SHA"
             assert any('Extract Method' in args[0] for args, _ in stream_calls), "Stream must contain actual data"
 
-            # 2. Verify Log Write (Debug Command)
-            # We check if write was called on the LOG handle
+            # 2. Verify Log Write
             log_calls = mock_log_handle.write.call_args_list
             assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls), "Log must record debug command"
