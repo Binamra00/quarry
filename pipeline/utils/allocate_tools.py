@@ -12,28 +12,42 @@ def report(msg):
     print(f"   [Toolchain] {msg}")
 
 
-def verify_checksum(file_path, expected_hash):
+def verify_checksum(file_path: Path, expected_hash: str) -> bool:
     """
-    Calculates SHA-256 of the file and compares with expected_hash.
-    Returns True if match or if expected_hash is a placeholder.
+    Calculate the SHA-256 checksum of ``file_path`` and compare it to
+    ``expected_hash``.
+
+    The ``expected_hash`` must be the full SHA-256 digest encoded as a
+    lowercase hexadecimal string.
+
+    Returns
+    -------
+    bool
+        ``True`` if the calculated checksum exactly matches ``expected_hash``.
+        ``False`` if the file is missing or the checksum does not match.
     """
+    # [FIX] Input Validation: Ensure file exists before opening
+    if not file_path.is_file():
+        report(f"❌ File not found for checksum verification: {file_path}")
+        return False
+
     sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        # Read in 4K chunks to avoid memory issues
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
+
+    try:
+        with open(file_path, "rb") as f:
+            # Read in 4K chunks to avoid memory issues
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+    except FileNotFoundError:
+        # [FIX] Handle race condition if file is deleted during read
+        report(f"❌ File disappeared during checksum verification: {file_path}")
+        return False
 
     calculated_hash = sha256_hash.hexdigest()
 
-    # TOFU (Trust On First Use) helper for the developer
-    if "REPLACE_WITH" in expected_hash:
-        report(f"⚠️  SECURITY NOTICE: Hash validation pending.")
-        report(f"   Calculated Hash for {file_path.name}: {calculated_hash}")
-        report(f"   ACTION: Copy this hash into config.py to lock the supply chain.")
-        return True  # Allow pass for setup, but warn
-
     if calculated_hash != expected_hash:
         report(f"❌ SECURITY CRITICAL: Checksum Mismatch!")
+        report(f"   File:       {file_path.name}")
         report(f"   Expected:   {expected_hash}")
         report(f"   Calculated: {calculated_hash}")
         return False
@@ -51,9 +65,7 @@ def download_and_extract(url, target_folder_name, expected_hash):
     zip_path = dest_dir / "temp_tool.zip"
     final_path = dest_dir / target_folder_name
 
-    # If the specific version folder exists, we are done.
     if final_path.exists():
-        # Echo the version being used
         report(f"✅ Found version: {target_folder_name}. Skipping download.")
         return True
 
@@ -66,22 +78,22 @@ def download_and_extract(url, target_folder_name, expected_hash):
 
     # [NEW] Security Checkpoint
     if not verify_checksum(zip_path, expected_hash):
-        report("⛔ Aborting installation due to security risk.")
-        if zip_path.exists():
-            zip_path.unlink()  # Delete the compromised file
+        # [FIX] Improved Error Message
+        report(f"⛔ Aborting installation of '{target_folder_name}' due to security risk.")
+
+        # [FIX] Race Condition: Safe deletion
+        zip_path.unlink(missing_ok=True)
         return False
 
     report(f"📦 Extracting...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # We need to know the top-level folder inside the zip to rename it
             zip_root = zip_ref.namelist()[0].split('/')[0]
             zip_ref.extractall(dest_dir)
 
-        # Cleanup zip
-        zip_path.unlink()
+        # Cleanup zip safely
+        zip_path.unlink(missing_ok=True)
 
-        # Rename the extracted folder to our target version name
         extracted_path = dest_dir / zip_root
 
         if extracted_path != final_path:
@@ -98,8 +110,8 @@ def download_and_extract(url, target_folder_name, expected_hash):
 
     except Exception as e:
         report(f"❌ Extraction failed: {e}")
-        if zip_path.exists():
-            zip_path.unlink()
+        # Safe cleanup on failure
+        zip_path.unlink(missing_ok=True)
         return False
 
 
@@ -123,15 +135,19 @@ def provision():
     # 2. Check & Install RefactoringMiner
     success_rm = download_and_extract(config.RM_URL, config.RM_VERSION, config.RM_SHA256)
 
-    # 3. Fix Permissions (Only if downloads/checks succeeded)
+    # 3. Fix Permissions
     if success_pmd and success_rm:
         make_executable(config.PMD_PATH)
         make_executable(config.RM_PATH)
         print("--- Toolchain Ready ---\n")
     else:
-        print("❌ Toolchain provisioning failed.")
-        exit(1)
+        # [FIX] Removed exit(1), raising exception for better testability
+        raise RuntimeError("Toolchain provisioning failed due to download or security errors.")
 
 
 if __name__ == "__main__":
-    provision()
+    try:
+        provision()
+    except RuntimeError as e:
+        print(f"❌ {e}")
+        exit(1)
