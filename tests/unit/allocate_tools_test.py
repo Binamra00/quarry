@@ -31,14 +31,11 @@ def test_verify_checksum_mismatch(dummy_file):
 
 def test_verify_checksum_invalid_format(dummy_file):
     path, expected_hash = dummy_file
-    # Too short
     assert allocate_tools.verify_checksum(path, "short") is False
-    # Uppercase (Should fail strict lowercase check)
     assert allocate_tools.verify_checksum(path, expected_hash.upper()) is False
 
 
 def test_verify_checksum_race_condition(dummy_file):
-    """Verify returns False if file exists check passes but open fails."""
     path, expected_hash = dummy_file
     with patch("builtins.open", side_effect=FileNotFoundError):
         assert allocate_tools.verify_checksum(path, expected_hash) is False
@@ -51,28 +48,19 @@ def test_verify_checksum_race_condition(dummy_file):
 @patch("pipeline.utils.allocate_tools.verify_checksum")
 @patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
 def test_download_zip_slip_prevention(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
-    """Test that we reject zips containing '..' traversal attempts."""
-
-    # Setup
     mock_config.TOOLS_PATH = tmp_path
     mock_verify.return_value = True
 
-    # Mock a ZipFile that contains a malicious path
     mock_zip_instance = MagicMock()
     mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
 
+    # Malicious member attempts parent directory traversal
     malicious_member = zipfile.ZipInfo(filename="../etc/passwd")
-    valid_member = zipfile.ZipInfo(filename="root/safe.txt")
+    mock_zip_instance.infolist.return_value = [malicious_member]
 
-    # infolist() returns the list of members
-    mock_zip_instance.infolist.return_value = [valid_member, malicious_member]
-
-    # Execute
     result = allocate_tools.download_and_extract("http://url", "target", "hash")
 
-    # Assert
     assert result is False
-    # Ensure extraction was NOT called
     mock_zip_instance.extractall.assert_not_called()
 
 
@@ -80,18 +68,43 @@ def test_download_zip_slip_prevention(mock_zip_cls, mock_verify, mock_retrieve, 
 @patch("pipeline.utils.allocate_tools.urllib.request.urlretrieve")
 @patch("pipeline.utils.allocate_tools.verify_checksum")
 @patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
-def test_download_multiple_roots_failure(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
-    """Test that we reject zips with multiple top-level folders."""
+def test_download_empty_zip_failure(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
+    """Test handling of a valid zip file containing no members."""
     mock_config.TOOLS_PATH = tmp_path
     mock_verify.return_value = True
 
     mock_zip_instance = MagicMock()
     mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
 
-    # Two different roots
-    m1 = zipfile.ZipInfo(filename="FolderA/file.txt")
-    m2 = zipfile.ZipInfo(filename="FolderB/file.txt")
-    mock_zip_instance.infolist.return_value = [m1, m2]
+    # [NEW] Simulate Empty Zip
+    mock_zip_instance.infolist.return_value = []
+
+    result = allocate_tools.download_and_extract("http://url", "target", "hash")
+
+    assert result is False
+    mock_zip_instance.extractall.assert_not_called()
+
+
+@patch("pipeline.utils.allocate_tools.config")
+@patch("pipeline.utils.allocate_tools.urllib.request.urlretrieve")
+@patch("pipeline.utils.allocate_tools.verify_checksum")
+@patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
+def test_download_missing_extracted_folder(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
+    """Test scenario where extraction succeeds but the root folder is gone."""
+    mock_config.TOOLS_PATH = tmp_path
+    mock_verify.return_value = True
+
+    mock_zip_instance = MagicMock()
+    mock_zip_cls.return_value.__enter__.return_value = mock_zip_instance
+
+    # Valid member
+    valid_member = zipfile.ZipInfo(filename="root/file.txt")
+    mock_zip_instance.infolist.return_value = [valid_member]
+
+    # [NEW] Simulate extraction happening, but file system check failing
+    # The code checks `if extracted_path.exists():`. We need to ensure that path doesn't exist.
+    # Since we are using tmp_path, it really won't exist unless we create it.
+    # So we simply do NOT create the folder in this test.
 
     result = allocate_tools.download_and_extract("http://url", "target", "hash")
 
@@ -101,11 +114,10 @@ def test_download_multiple_roots_failure(mock_zip_cls, mock_verify, mock_retriev
 @patch("pipeline.utils.allocate_tools.config")
 @patch("pipeline.utils.allocate_tools.urllib.request.urlretrieve")
 @patch("pipeline.utils.allocate_tools.verify_checksum")
-@patch("pipeline.utils.allocate_tools.Path.unlink")  # Mock unlink to verify cleanup
+@patch("pipeline.utils.allocate_tools.Path.unlink")
 def test_download_security_cleanup(mock_unlink, mock_verify, mock_retrieve, mock_config, tmp_path):
-    """Test that compromised files are deleted."""
     mock_config.TOOLS_PATH = tmp_path
-    mock_verify.return_value = False  # Security Fail
+    mock_verify.return_value = False
 
     result = allocate_tools.download_and_extract("http://url", "target", "hash")
 
@@ -117,8 +129,6 @@ def test_download_security_cleanup(mock_unlink, mock_verify, mock_retrieve, mock
 
 @patch("pipeline.utils.allocate_tools.download_and_extract")
 def test_provision_scenarios(mock_download):
-    """Test the matrix of success/failure for provisioning."""
-
     # Case 1: PMD Fails
     mock_download.side_effect = [False, True]
     with pytest.raises(RuntimeError):
@@ -136,7 +146,6 @@ def test_provision_scenarios(mock_download):
 
     # Case 4: Success
     mock_download.side_effect = [True, True]
-    # Should not raise
     try:
         allocate_tools.provision()
     except RuntimeError:

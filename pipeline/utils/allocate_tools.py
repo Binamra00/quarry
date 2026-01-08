@@ -23,7 +23,6 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
     :param expected_hash: The expected SHA-256 digest (64-char lowercase hex).
     :return: True if the file exists and checksum matches, False otherwise.
     """
-    # [FIX] Input Validation: strict hex format check
     if len(expected_hash) != 64 or any(c not in "0123456789abcdef" for c in expected_hash):
         report(f"❌ Invalid configuration: expected_hash must be 64-char lowercase hex.")
         report(f"   Provided: {expected_hash}")
@@ -37,7 +36,6 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
 
     try:
         with open(file_path, "rb") as f:
-            # Read in 4K chunks to avoid memory issues
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
     except (FileNotFoundError, OSError):
@@ -83,7 +81,6 @@ def download_and_extract(url: str, target_folder_name: str, expected_hash: str) 
         report(f"❌ Download failed: {e}")
         return False
 
-    # Security Checkpoint
     if not verify_checksum(zip_path, expected_hash):
         report(f"⛔ Aborting installation of '{target_folder_name}' due to security risk.")
         zip_path.unlink(missing_ok=True)
@@ -92,7 +89,6 @@ def download_and_extract(url: str, target_folder_name: str, expected_hash: str) 
     report(f"📦 Extracting...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # [FIX] Zip Slip Protection & Robust Root Detection
             safe_members = []
             top_levels: Set[str] = set()
             dest_dir_resolved = dest_dir.resolve()
@@ -105,18 +101,24 @@ def download_and_extract(url: str, target_folder_name: str, expected_hash: str) 
                 member_path = Path(member.filename)
                 target_path = (dest_dir_resolved / member_path).resolve()
 
-                if not str(target_path).startswith(str(dest_dir_resolved)):
+                # [FIX] Robust Path Traversal Check using commonpath
+                try:
+                    common_path = os.path.commonpath([str(dest_dir_resolved), str(target_path)])
+                except ValueError:
+                    # Handles cases on Windows where drives differ (C: vs D:)
+                    raise ValueError(f"Security: Zip entry '{member.filename}' extracts to different drive.")
+
+                if str(common_path) != str(dest_dir_resolved):
                     raise ValueError(f"Security: Zip entry '{member.filename}' attempts path traversal.")
 
                 safe_members.append(member)
 
-                # Track top-level folders
                 parts = member.filename.strip("/").split("/")
                 if parts and parts[0]:
                     top_levels.add(parts[0])
 
-            # Validation Logic
             if not safe_members:
+                # [FIX] Added context to error message
                 raise ValueError(f"Downloaded zip from {url} is empty.")
 
             if len(top_levels) != 1:
@@ -126,8 +128,6 @@ def download_and_extract(url: str, target_folder_name: str, expected_hash: str) 
                 )
 
             zip_root = next(iter(top_levels))
-
-            # Safe Extraction
             zip_ref.extractall(dest_dir, members=safe_members)
 
         zip_path.unlink(missing_ok=True)
@@ -166,13 +166,9 @@ def provision():
     print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
     print(f"Target Directory: {config.TOOLS_PATH}")
 
-    # 1. Check & Install PMD
     success_pmd = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
-
-    # 2. Check & Install RefactoringMiner
     success_rm = download_and_extract(config.RM_URL, config.RM_VERSION, config.RM_SHA256)
 
-    # 3. Fix Permissions
     if success_pmd and success_rm:
         make_executable(config.PMD_PATH)
         make_executable(config.RM_PATH)
@@ -186,4 +182,4 @@ if __name__ == "__main__":
         provision()
     except RuntimeError as e:
         print(f"❌ {e}")
-        sys.exit(1)  # [FIX] Explicit system exit
+        sys.exit(1)
