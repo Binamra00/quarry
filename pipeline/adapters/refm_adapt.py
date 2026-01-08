@@ -17,13 +17,19 @@ from pipeline.adapters.i_adapter import IAdapter
 class RefactoringMinerAdapter(IAdapter):
     """
     Adapter for RefactoringMiner.
-    Uses 'JSONL Streaming' for memory-efficient streaming (O(1) memory per record)
-    and instant persistence.
+    Uses 'JSONL Streaming' for memory-efficient streaming (O(1) memory per record
+    during writing) and instant persistence, with O(M) memory for SHA tracking
+    where M is the number of processed commits.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
         # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
+        if batch_size is not None:
+            print(
+                "⚠️  RefactoringMinerAdapter: 'batch_size' is ignored in streaming mode; "
+                "the adapter processes commits one by one."
+            )
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
@@ -31,7 +37,6 @@ class RefactoringMinerAdapter(IAdapter):
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
         # [DECISION] Keeping .jsonl to enforce streaming semantics.
-        # Downstream metrics consumers must be updated to read JSONL.
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
 
     def _get_all_commits(self) -> List[str]:
@@ -69,8 +74,11 @@ class RefactoringMinerAdapter(IAdapter):
                             processed.add(record["sha1"])
                     except json.JSONDecodeError:
                         continue
-        except Exception as e:
-            print(f"   ⚠️ Warning reading existing log: {e}")
+        # [FIX] Catch specific I/O errors instead of generic Exception
+        except (OSError, IOError) as e:
+            print(f"   ❌ Error reading existing log: {e}")
+            # We don't return empty set here if possible, but for now we log error.
+            # In a stricter system, we might raise to prevent re-processing.
 
         return processed
 
@@ -124,6 +132,9 @@ class RefactoringMinerAdapter(IAdapter):
         log_path = self.get_log_path()
         new_commits_count = 0
         env = os.environ.copy()
+
+        # [FIX] Ensure parent directory exists
+        self.get_output_path().parent.mkdir(parents=True, exist_ok=True)
 
         # Open file in APPEND mode ("a") with line buffering (1)
         with open(self.get_output_path(), "a", encoding="utf-8", buffering=1) as stream_file, \
@@ -186,13 +197,12 @@ class RefactoringMinerAdapter(IAdapter):
                             if result.returncode != 0:
                                 log_file.write(
                                     f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                                # [FIX] Log stderr as requested by reviewer
-                                if result.stderr:
+                                # [FIX] Explicit check for None or empty string
+                                if result.stderr is not None:
                                     log_file.write(f"[STDERR] {result.stderr}\n")
 
-                        # [FIX] Dedented to ensure write happens UNCONDITIONALLY
+                        # [FIX] Removed redundant flush(); buffering=1 ensures line flush.
                         stream_file.write(json.dumps(record) + "\n")
-                        stream_file.flush()  # [FIX] Explicit flush for safety
 
                         new_commits_count += 1
 
