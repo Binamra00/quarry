@@ -1,14 +1,16 @@
 import os
+import sys
 import shutil
 import stat
 import urllib.request
 import zipfile
 import hashlib
 from pathlib import Path
+from typing import Set
 from pipeline import config
 
 
-def report(msg):
+def report(msg: str):
     print(f"   [Toolchain] {msg}")
 
 
@@ -17,12 +19,14 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
     Calculate the SHA-256 checksum of ``file_path`` and compare it to
     ``expected_hash``.
 
-    The ``expected_hash`` must be the full SHA-256 digest encoded as a
-    lowercase hexadecimal string.
+    :param file_path: Path to the file to verify.
+    :param expected_hash: The expected SHA-256 digest (64-char lowercase hex).
+    :return: True if the file exists and checksum matches, False otherwise.
     """
-    # [FIX] Validate Hash Format
+    # [FIX] Input Validation: strict hex format check
     if len(expected_hash) != 64 or any(c not in "0123456789abcdef" for c in expected_hash):
-        report(f"❌ Invalid expected SHA-256 hash format: {expected_hash}")
+        report(f"❌ Invalid configuration: expected_hash must be 64-char lowercase hex.")
+        report(f"   Provided: {expected_hash}")
         return False
 
     if not file_path.is_file():
@@ -37,7 +41,6 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
     except (FileNotFoundError, OSError):
-        # [FIX] Handle race condition if file is deleted during read
         report(f"❌ File disappeared or unreadable during checksum verification: {file_path}")
         return False
 
@@ -54,10 +57,16 @@ def verify_checksum(file_path: Path, expected_hash: str) -> bool:
     return True
 
 
-def download_and_extract(url, target_folder_name, expected_hash):
+def download_and_extract(url: str, target_folder_name: str, expected_hash: str) -> bool:
     """
-    Downloads a zip, VERIFIES HASH, and extracts it.
-    Renames the extracted folder to 'target_folder_name'.
+    Download a ZIP archive, verify its integrity, and extract it safely.
+
+    This function implements "Zip Slip" protection to prevent path traversal attacks.
+
+    :param url: The URL to download the tool from.
+    :param target_folder_name: The expected folder name in the workspace.
+    :param expected_hash: The SHA-256 hash to verify the download (Supply Chain Security).
+    :return: True if successful, False if any step fails.
     """
     dest_dir = config.TOOLS_PATH
     zip_path = dest_dir / "temp_tool.zip"
@@ -83,21 +92,45 @@ def download_and_extract(url, target_folder_name, expected_hash):
     report(f"📦 Extracting...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # [FIX] Robust Zip Root Detection
-            namelist = zip_ref.namelist()
-            if not namelist:
-                raise ValueError("Downloaded zip archive is empty.")
+            # [FIX] Zip Slip Protection & Robust Root Detection
+            safe_members = []
+            top_levels: Set[str] = set()
+            dest_dir_resolved = dest_dir.resolve()
 
-            first_entry = namelist[0]
-            parts = first_entry.split("/")
-            if not parts or not parts[0]:
-                raise ValueError(f"Could not determine top-level directory: {first_entry}")
+            for member in zip_ref.infolist():
+                if not member.filename:
+                    continue
 
-            zip_root = parts[0]
-            zip_ref.extractall(dest_dir)
+                # Check for Zip Slip (Path Traversal)
+                member_path = Path(member.filename)
+                target_path = (dest_dir_resolved / member_path).resolve()
+
+                if not str(target_path).startswith(str(dest_dir_resolved)):
+                    raise ValueError(f"Security: Zip entry '{member.filename}' attempts path traversal.")
+
+                safe_members.append(member)
+
+                # Track top-level folders
+                parts = member.filename.strip("/").split("/")
+                if parts and parts[0]:
+                    top_levels.add(parts[0])
+
+            # Validation Logic
+            if not safe_members:
+                raise ValueError(f"Downloaded zip from {url} is empty.")
+
+            if len(top_levels) != 1:
+                raise ValueError(
+                    f"Archive for '{target_folder_name}' is malformed. "
+                    f"Expected 1 top-level directory, found: {sorted(top_levels)}"
+                )
+
+            zip_root = next(iter(top_levels))
+
+            # Safe Extraction
+            zip_ref.extractall(dest_dir, members=safe_members)
 
         zip_path.unlink(missing_ok=True)
-
         extracted_path = dest_dir / zip_root
 
         if extracted_path != final_path:
@@ -107,19 +140,19 @@ def download_and_extract(url, target_folder_name, expected_hash):
             if extracted_path.exists():
                 extracted_path.rename(final_path)
             else:
-                report(f"⚠️ Warning: Expected extracted folder {zip_root} not found.")
+                report(f"⚠️ Warning: Extracted folder '{zip_root}' missing after extraction.")
+                return False
 
         report(f"✅ Installed: {final_path.name}")
         return True
 
-    # [FIX] Catch specific exceptions
     except (zipfile.BadZipFile, OSError, ValueError) as e:
         report(f"❌ Extraction failed: {e}")
         zip_path.unlink(missing_ok=True)
         return False
 
 
-def make_executable(tool_path):
+def make_executable(tool_path: Path):
     """Equivalent to chmod +x"""
     if tool_path.exists():
         st = os.stat(tool_path)
@@ -153,4 +186,4 @@ if __name__ == "__main__":
         provision()
     except RuntimeError as e:
         print(f"❌ {e}")
-        exit(1)
+        sys.exit(1)  # [FIX] Explicit system exit
