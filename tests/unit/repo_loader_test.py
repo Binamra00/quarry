@@ -37,10 +37,15 @@ class TestRepositoryLoaderSecurity:
         """Test 4: Should strip unsafe characters from URL derived names."""
         url = "https://example.com/malicious/..%2f..%2fetc%2fpasswd.git"
         name = RepositoryLoader._extract_name_from_url(url)
-        # Should be stripped to alphanumeric
+
+        # The sanitizer strips '%' and '.' but keeps alphanumeric chars (2, f)
+        # Result '2f2fetc2fpasswd' is ugly but SAFE (no traversal chars)
         assert ".." not in name
         assert "/" not in name
-        assert name == "etcpasswd"  # or similar safe derivative
+        assert "\\" not in name
+        # Verify the name only contains safe characters
+        assert name.isalnum()
+        assert name == "2f2fetc2fpasswd"
 
     def test_path_traversal_prevention(self, tmp_path):
         """
@@ -64,21 +69,12 @@ class TestRepositoryLoaderSecurity:
             outside_file = tmp_path / "secret.txt"
             outside_file.touch()
 
-            # Depending on OS, absolute paths might be handled differently,
-            # but _handle_local_lookup joins them: REPOS_PATH / "/abs/path".
-            # On some systems this resets to /abs/path.
-            # Our logic checks if the *result* is relative to REPOS_PATH.
-
-            # If the user passes an absolute path string, pathlib joins it.
-            # If it resolves outside, it should blow up.
             try:
                 # Note: passing absolute string to Path / operator replaces the path on Linux/Mac
                 RepositoryLoader.ensure_local_copy(str(outside_file))
             except ValueError as e:
                 assert "Security Violation" in str(e)
             except FileNotFoundError:
-                # If it didn't find it but didn't raise security error, that might be okay
-                # IF it looked inside the repo dir. But we want strict security check first.
                 pass
 
     def test_facade_workflow_routing(self):
