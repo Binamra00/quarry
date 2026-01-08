@@ -1,4 +1,6 @@
 import pytest
+import json
+from unittest.mock import patch, mock_open, MagicMock
 from pathlib import Path
 from pipeline.metrics.formulas import StandardRefactoringLogic, StandardStaticLogic
 from pipeline.metrics.pmd_mets import PMDMetrics
@@ -124,3 +126,67 @@ class TestRefmMetricsParser:
         # Should calculate using default churn=0 -> Pure
         assert result["purity"]["floss_commits"] == 0
         assert result["purity"]["purity_score"] == 100.0
+
+
+class TestRefmMetricsLoading:
+    """
+    Validates data loading strategies in refm_mets.py.
+    Covers JSONL streaming priority and Legacy JSON fallback.
+    """
+
+    def test_load_jsonl_priority(self):
+        """Test 8: Should prioritize .jsonl if it exists."""
+        metrics = RefmMetrics(Path("dummy_repo"))
+
+        # Mock .jsonl content (Line-delimited JSON)
+        jsonl_content = '{"sha1": "abc", "refactorings": []}\n{"sha1": "def", "refactorings": []}'
+
+        # Mock existence: .jsonl exists
+        def exists_side_effect(self):
+            return str(self).endswith(".jsonl")
+
+        with patch("pathlib.Path.exists", autospec=True, side_effect=exists_side_effect), \
+                patch("builtins.open", mock_open(read_data=jsonl_content)) as mock_file:
+            result = metrics.load_data()
+
+            assert result is not None
+            refm_data, _, _ = result
+            assert len(refm_data["commits"]) == 2
+            assert refm_data["commits"][0]["sha1"] == "abc"
+            # Verify we opened the .jsonl file
+            args, _ = mock_file.call_args
+            assert ".jsonl" in str(args[0])
+
+    def test_load_legacy_fallback(self):
+        """Test 9: Should fallback to .json if .jsonl is missing."""
+        metrics = RefmMetrics(Path("dummy_repo"))
+
+        # Mock .json content (Monolithic)
+        json_content = json.dumps({"commits": [{"sha1": "legacy", "refactorings": []}]})
+
+        # Mock existence: .jsonl MISSING, .json EXISTS
+        # Ensure repo_metrics returns False to avoid parsing collision in this unit test
+        def exists_side_effect(self):
+            path_str = str(self)
+            if "repo_metrics" in path_str: return False
+            return path_str.endswith(".json")
+
+        with patch("pathlib.Path.exists", autospec=True, side_effect=exists_side_effect), \
+                patch("builtins.open", mock_open(read_data=json_content)) as mock_file:
+            result = metrics.load_data()
+
+            assert result is not None
+            refm_data, _, _ = result
+            assert len(refm_data["commits"]) == 1
+            assert refm_data["commits"][0]["sha1"] == "legacy"
+            # Verify we opened the .json file
+            args, _ = mock_file.call_args
+            assert ".json" in str(args[0]) and ".jsonl" not in str(args[0])
+
+    def test_load_missing_files(self):
+        """Test 10: Should return None if neither file exists."""
+        metrics = RefmMetrics(Path("dummy_repo"))
+
+        with patch("pathlib.Path.exists", autospec=True, return_value=False):
+            result = metrics.load_data()
+            assert result is None
