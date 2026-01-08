@@ -48,7 +48,7 @@ def main():
     try:
         print("\n--- 🛠️ Verifying Toolchain ---")
         allocate_tools.provision()
-    except Exception as e:
+    except RuntimeError as e:
         print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
         sys.exit(1)
 
