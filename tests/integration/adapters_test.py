@@ -241,16 +241,16 @@ class TestRefmAdapterIntegration:
         Test 7: Migration Warning.
         Verify that the user is warned if a legacy .json file exists.
         """
-        # We only need to check get_output_path, which calls print
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
 
         # Scenario: .json exists, .jsonl does NOT exist
+        # [FIX] Added 'autospec=True' to ensure 'self' (the path instance) is passed to the side effect
         def exists_side_effect(path):
             if str(path).endswith(".json"): return True
             if str(path).endswith(".jsonl"): return False
             return False
 
-        with patch("pathlib.Path.exists", side_effect=exists_side_effect), \
+        with patch("pathlib.Path.exists", autospec=True, side_effect=exists_side_effect), \
                 patch("builtins.print") as mock_print:
 
             adapter.get_output_path()
