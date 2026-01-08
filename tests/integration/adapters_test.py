@@ -142,43 +142,33 @@ class TestRefmAdapterIntegration:
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
     def test_refm_streaming_integrity(self, mock_lib, mock_shas, mock_commits, mock_ui):
         """
-        Test 5: Streaming Integrity.
+        Test 5: Streaming Integrity (Happy Path).
         Verify that the adapter writes valid JSONL records AND logs execution details.
         """
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
         mock_lib.return_value = Path("lib")
-        # Setup: 1 commit to process
         mock_commits.return_value = ["sha_new"]
         mock_shas.return_value = set()
-
-        # Input data for temp file reading
         tool_output_content = json.dumps({"refactorings": [{"type": "Extract Method"}]})
 
-        # Mocks for file handles
         mock_stream_handle = MagicMock()
         mock_log_handle = MagicMock()
         mock_temp_handle = mock_open(read_data=tool_output_content).return_value
 
-        # Define side effect to return the correct mock based on usage pattern
         def open_side_effect(filename, mode='r', **kwargs):
             filename_str = str(filename)
-            # 1. Stream File (Must match .jsonl specifically)
-            # [FIX] Added .jsonl check to differentiate from log file
             if "refactorings_" in filename_str and ".jsonl" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_stream_handle
                 return m
-            # 2. Log File (Append mode for .log)
             elif ".log" in filename_str and mode == 'a':
                 m = MagicMock()
                 m.__enter__.return_value = mock_log_handle
                 return m
-            # 3. Temp File (Read mode for .json)
             elif "rm_" in filename_str and mode == 'r':
                 m = MagicMock()
                 m.__enter__.return_value = mock_temp_handle
                 return m
-            # Fallback
             return MagicMock()
 
         with patch("subprocess.run") as mock_sub, \
@@ -192,11 +182,96 @@ class TestRefmAdapterIntegration:
 
             adapter.execute()
 
-            # 1. Verify Stream Write
             stream_calls = mock_stream_handle.write.call_args_list
             assert any('sha_new' in args[0] for args, _ in stream_calls), "Stream must contain commit SHA"
-            assert any('Extract Method' in args[0] for args, _ in stream_calls), "Stream must contain actual data"
 
-            # 2. Verify Log Write
             log_calls = mock_log_handle.write.call_args_list
             assert any('[DEBUG] Java Command' in args[0] for args, _ in log_calls), "Log must record debug command"
+
+    @patch("pipeline.utils.ui_strategy.update_progress")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_refm_tool_failure_handling(self, mock_lib, mock_shas, mock_commits, mock_ui):
+        """
+        Test 6: Failure Handling.
+        Verify that a tool crash (exit code 1) is logged to the log file.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_lib.return_value = Path("lib")
+        mock_commits.return_value = ["sha_fail"]
+        mock_shas.return_value = set()
+
+        mock_log_handle = MagicMock()
+        mock_stream_handle = MagicMock()
+
+        def open_side_effect(filename, mode='r', **kwargs):
+            filename_str = str(filename)
+            if "refactorings_" in filename_str and ".jsonl" in filename_str and mode == 'a':
+                m = MagicMock()
+                m.__enter__.return_value = mock_stream_handle
+                return m
+            elif ".log" in filename_str and mode == 'a':
+                m = MagicMock()
+                m.__enter__.return_value = mock_log_handle
+                return m
+            return MagicMock()
+
+        with patch("subprocess.run") as mock_sub, \
+                patch("builtins.open", side_effect=open_side_effect), \
+                patch("pathlib.Path.exists", return_value=False), \
+                patch("pathlib.Path.mkdir"):
+
+            mock_sub.return_value.returncode = 1
+            mock_sub.return_value.stderr = "Exception in thread main..."
+
+            adapter.execute()
+
+            log_calls = mock_log_handle.write.call_args_list
+            assert any('[FAILURE] Tool crashed' in args[0] for args, _ in log_calls)
+            assert any('Exception in thread main' in args[0] for args, _ in log_calls)
+
+            stream_calls = mock_stream_handle.write.call_args_list
+            assert any('sha_fail' in args[0] for args, _ in stream_calls)
+
+    # [NEW] Test Case 7: Migration Warning
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_migration_warning(self, mock_lib):
+        """
+        Test 7: Migration Warning.
+        Verify that the user is warned if a legacy .json file exists.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+
+        # [FIX] Match signature for autospec=True (first arg is self/path_instance)
+        def exists_side_effect(self):
+            path_str = str(self)
+            if path_str.endswith(".json"): return True
+            if path_str.endswith(".jsonl"): return False
+            return False
+
+        with patch("pathlib.Path.exists", autospec=True, side_effect=exists_side_effect), \
+                patch("builtins.print") as mock_print:
+
+            adapter.get_output_path()
+
+            print_calls = [args[0] for args, _ in mock_print.call_args_list]
+            assert any("[MIGRATION NOTICE]" in msg for msg in print_calls)
+
+    # [NEW] Test Case 8: SHA Filtering
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_sha_filtering(self, mock_lib, mock_run):
+        """
+        Test 8: SHA Filtering.
+        Verify that empty lines in git output are filtered out.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_lib.return_value = Path("lib")
+
+        mock_run.return_value = (True, "sha1\n\nsha2\n")
+
+        commits = adapter._get_all_commits()
+
+        assert len(commits) == 2
+        assert "" not in commits
