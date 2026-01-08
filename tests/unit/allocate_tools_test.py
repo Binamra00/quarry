@@ -49,7 +49,7 @@ def test_verify_checksum_race_condition(dummy_file):
 @patch("pipeline.utils.allocate_tools.zipfile.ZipFile")
 def test_download_and_extract_success(mock_zip_cls, mock_verify, mock_retrieve, mock_config, tmp_path):
     """Test the happy path where download, verification, and extraction succeed."""
-    [cite_start][cite: 320, 396]
+
     # 1. Setup Environment
     mock_config.TOOLS_PATH = tmp_path
     mock_verify.return_value = True
@@ -160,7 +160,7 @@ def test_download_security_cleanup(mock_unlink, mock_verify, mock_retrieve, mock
 
 # --- PROVISION TESTS ---
 
-@patch("pipeline.utils.allocate_tools.make_executable")  # [FIX] Isolation patch
+@patch("pipeline.utils.allocate_tools.make_executable")
 @patch("pipeline.utils.allocate_tools.download_and_extract")
 def test_provision_scenarios(mock_download, mock_make_exec):
     # Case 1: PMD Fails
@@ -185,5 +185,4 @@ def test_provision_scenarios(mock_download, mock_make_exec):
     except RuntimeError:
         pytest.fail("Provision raised RuntimeError on success path")
 
-    # [FIX] Assert make_executable was actually called
     assert mock_make_exec.call_count == 2
