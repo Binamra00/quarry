@@ -136,7 +136,6 @@ class TestRefmAdapterIntegration:
             assert result is True
             mock_subprocess.assert_not_called()
 
-    # [FIX] Added new test case for Streaming Integrity
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
@@ -157,7 +156,8 @@ class TestRefmAdapterIntegration:
         with patch("subprocess.run") as mock_sub, \
                 patch("builtins.open", mock_open(read_data=tool_output)) as mock_file, \
                 patch("pathlib.Path.exists", return_value=True), \
-                patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))):
+                patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))), \
+                patch("pathlib.Path.mkdir"):  # [FIX] Mock mkdir to prevent conflict with stat mock
 
             mock_sub.return_value.returncode = 0
 
