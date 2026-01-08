@@ -21,7 +21,6 @@ class RefmMetrics(BaseMetrics):
 
     def load_data(self):
         project_name = self.target_repo_path.name
-        # [FIX] Update extension to match the new Streaming Adapter (.jsonl)
         refm_jsonl_path = config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
         repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
@@ -29,25 +28,27 @@ class RefmMetrics(BaseMetrics):
             print(f"⚠️ Refactoring output not found: {refm_jsonl_path.name}")
             return None
 
-        # [FIX] Streaming Parser Logic
         commits_list = []
         try:
             print(f"   Derived from: {refm_jsonl_path.name}")
             with open(refm_jsonl_path, 'r', encoding='utf-8') as f:
-                for line in f:
+                # [FIX] Enumerate for better error reporting on corrupt lines
+                for line_number, line in enumerate(f, start=1):
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         record = json.loads(line)
                         commits_list.append(record)
-                    except json.JSONDecodeError:
-                        continue  # Skip corrupt lines
+                    except json.JSONDecodeError as e:
+                        # [FIX] Log specific corruption warning
+                        print(f"   ⚠️ Skipping corrupt JSON line {line_number} in {refm_jsonl_path.name}: {e}")
+                        continue
 
-            # Reconstruct the structure expected by calculate()
             refm_data = {"commits": commits_list}
 
-        except Exception as e:
+        # [FIX] Catch specific I/O errors instead of broad Exception
+        except (OSError, IOError) as e:
             print(f"❌ Error reading RefactoringMiner stream: {e}")
             return None
 

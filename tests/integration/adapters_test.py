@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+import json
+from unittest.mock import MagicMock, patch, mock_open, ANY
 from pathlib import Path
 from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
@@ -118,7 +119,7 @@ class TestPMDAdapterIntegration:
 class TestRefmAdapterIntegration:
 
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
-    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")  # [FIX] Updated method name
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
     @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
     def test_smart_skipping_logic(self, mock_lib_path, mock_get_shas, mock_get_commits):
         """
@@ -127,15 +128,50 @@ class TestRefmAdapterIntegration:
         """
         adapter = RefactoringMinerAdapter(Path("dummy_repo"))
         mock_lib_path.return_value = Path("fake/lib/path")
-
-        # Input: 2 Commits
         mock_get_commits.return_value = ["sha1", "sha2"]
-
-        # [FIX] State: Both commits are already in the set
         mock_get_shas.return_value = {"sha1", "sha2"}
 
         with patch("subprocess.run") as mock_subprocess:
             result = adapter.execute()
-
             assert result is True
             mock_subprocess.assert_not_called()
+
+    # [FIX] Added new test case for Streaming Integrity
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_all_commits")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_processed_shas")
+    @patch("pipeline.adapters.refm_adapt.RefactoringMinerAdapter._get_lib_path")
+    def test_refm_streaming_integrity(self, mock_lib, mock_shas, mock_commits):
+        """
+        Test 5: Streaming Integrity.
+        Verify that the adapter writes valid JSONL records for processed commits.
+        """
+        adapter = RefactoringMinerAdapter(Path("dummy_repo"))
+        mock_lib.return_value = Path("lib")
+        # Setup: 1 commit to process
+        mock_commits.return_value = ["sha_new"]
+        mock_shas.return_value = set()
+
+        # Mock tool output (temp file content)
+        tool_output = json.dumps({"refactorings": [{"type": "Extract Method"}]})
+
+        with patch("subprocess.run") as mock_sub, \
+                patch("builtins.open", mock_open(read_data=tool_output)) as mock_file, \
+                patch("pathlib.Path.exists", return_value=True), \
+                patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))):
+
+            mock_sub.return_value.returncode = 0
+
+            adapter.execute()
+
+            # Verify that the JSONL record was written to the stream
+            # We look for the write call that contains the sha and the refactoring type
+            handle = mock_file()
+            stream_write_found = False
+            for name, args, kwargs in handle.write.mock_calls:
+                written_data = args[0]
+                # Check for key indicators of a valid record
+                if '"sha1": "sha_new"' in written_data and '"Extract Method"' in written_data:
+                    stream_write_found = True
+                    break
+
+            assert stream_write_found, "Execute must write valid JSONL record with refactoring data"
