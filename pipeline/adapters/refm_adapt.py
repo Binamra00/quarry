@@ -24,6 +24,7 @@ class RefactoringMinerAdapter(IAdapter):
 
     def __init__(self, target_repo_path: Path, batch_size: int = None):
         super().__init__(target_repo_path)
+        # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
         if batch_size is not None:
             print(
                 "⚠️  RefactoringMinerAdapter: 'batch_size' is ignored in streaming mode; "
@@ -35,6 +36,7 @@ class RefactoringMinerAdapter(IAdapter):
 
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
+        # [DECISION] Keeping .jsonl to enforce streaming semantics.
         return config.OUTPUTS_PATH / f"refactorings_{project_name}.jsonl"
 
     def _get_all_commits(self) -> List[str]:
@@ -62,7 +64,7 @@ class RefactoringMinerAdapter(IAdapter):
         print(f"   🔍 Scanning existing log: {output_path.name}...")
         try:
             with open(output_path, 'r', encoding='utf-8') as f:
-                for line_number, line in enumerate(f, start=1):
+                for line in f:
                     line = line.strip()
                     if not line:
                         continue
@@ -70,23 +72,25 @@ class RefactoringMinerAdapter(IAdapter):
                         record = json.loads(line)
                         if "sha1" in record:
                             processed.add(record["sha1"])
-                    except json.JSONDecodeError as e:
-                        # [FIX] Log corrupt line to help diagnosis
-                        print(f"   ⚠️ Warning: Skipping corrupt line {line_number} in existing log: {e}")
+                    except json.JSONDecodeError:
                         continue
-
-        # [FIX] Fail-fast to prevent re-processing 50k commits due to a transient read error
+        # [FIX] Catch specific I/O errors instead of generic Exception
         except (OSError, IOError) as e:
             print(f"   ❌ Error reading existing log: {e}")
+            # Fail-fast to prevent re-processing 50k commits due to a transient read error
             raise
 
         return processed
 
     def _get_lib_path(self) -> Path:
+        """
+        Robustly resolves the 'lib' directory containing JAR dependencies.
+        """
         if not shutil.which("java"):
             raise RuntimeError("'java' executable not found in system PATH.")
 
         rm_executable = Path(config.RM_PATH)
+
         candidate_standard = rm_executable.parent.parent / "lib"
         candidate_flat = rm_executable.parent / "lib"
 
@@ -95,7 +99,10 @@ class RefactoringMinerAdapter(IAdapter):
         elif candidate_flat.exists() and candidate_flat.is_dir():
             return candidate_flat
 
-        raise FileNotFoundError(f"Critical: Could not locate 'lib' directory for RefactoringMiner.")
+        raise FileNotFoundError(
+            f"Critical: Could not locate 'lib' directory for RefactoringMiner.\n"
+            f"Checked:\n1. {candidate_standard}\n2. {candidate_flat}"
+        )
 
     def execute(self) -> bool:
         print(f"--- ⚡ Starting {self.get_tool_name()} [Streaming Mode] ---")
@@ -126,10 +133,11 @@ class RefactoringMinerAdapter(IAdapter):
         new_commits_count = 0
         env = os.environ.copy()
 
+        # [FIX] Ensure parent directory exists
         self.get_output_path().parent.mkdir(parents=True, exist_ok=True)
 
-        # [FIX] Removed buffering=1 as suggested by reviewer (it's default for text mode)
-        with open(self.get_output_path(), "a", encoding="utf-8") as stream_file, \
+        # Open file in APPEND mode ("a") with line buffering (1)
+        with open(self.get_output_path(), "a", encoding="utf-8", buffering=1) as stream_file, \
                 open(log_path, "a", encoding="utf-8") as log_file:
 
             try:
@@ -148,16 +156,24 @@ class RefactoringMinerAdapter(IAdapter):
 
                     try:
                         cmd = [
-                            "java", "-cp", java_classpath, config.RM_ENTRY_POINT_CLASS,
-                            "-c", str(self.target_repo_path), commit_hash, "-json", str(temp_json_file)
+                            "java",
+                            "-cp", java_classpath,
+                            config.RM_ENTRY_POINT_CLASS,
+                            "-c", str(self.target_repo_path),
+                            commit_hash,
+                            "-json", str(temp_json_file)
                         ]
 
                         if i == 0:
                             log_file.write(f"\n[DEBUG] Java Command (Sample): {' '.join(cmd)}\n")
 
                         result = subprocess.run(
-                            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, check=False, env=env
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                            env=env
                         )
 
                         valid_data_found = False
@@ -181,17 +197,19 @@ class RefactoringMinerAdapter(IAdapter):
                             if result.returncode != 0:
                                 log_file.write(
                                     f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                                if result.stderr is not None:
+                                # [FIX] Check for non-empty string (text=True returns "" not None)
+                                if result.stderr:
                                     log_file.write(f"[STDERR] {result.stderr}\n")
 
+                        # [FIX] Removed redundant flush(); buffering=1 ensures line flush.
                         stream_file.write(json.dumps(record) + "\n")
+
                         new_commits_count += 1
 
                     finally:
                         if temp_json_file.exists():
                             try:
                                 temp_json_file.unlink()
-                            # [FIX] Added explanation for pass
                             except OSError:
                                 # Best-effort cleanup: ignore errors if temp file cannot be removed
                                 pass

@@ -1,6 +1,7 @@
 import pytest
 import json
-from unittest.mock import MagicMock, patch, mock_open, ANY
+# [FIX] Removed unused 'ANY'
+from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
 from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
@@ -157,7 +158,7 @@ class TestRefmAdapterIntegration:
                 patch("builtins.open", mock_open(read_data=tool_output)) as mock_file, \
                 patch("pathlib.Path.exists", return_value=True), \
                 patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))), \
-                patch("pathlib.Path.mkdir"):  # [FIX] Mock mkdir to prevent conflict with stat mock
+                patch("pathlib.Path.mkdir"):  # Mock mkdir to prevent conflict
 
             mock_sub.return_value.returncode = 0
 
