@@ -1,3 +1,8 @@
+"""
+This file needs to be looked at again. I am not sure if I will continue using Google Colab.
+If I stop using it, I can remove all the Colab-specific code from config.py and this file.
+"""
+
 import re
 from pathlib import Path
 from urllib.parse import urlparse

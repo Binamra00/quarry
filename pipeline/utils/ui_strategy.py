@@ -3,8 +3,7 @@ import sys
 
 def update_progress(current: int, total: int, prefix: str = "Processing"):
     """
-    Updates the console with a progress message.
-    Automatically detects if running in Jupyter/Colab or a standard terminal.
+    Updates the console with a standard CLI progress message using carriage returns.
 
     Args:
         current (int): Current item number.
@@ -13,31 +12,17 @@ def update_progress(current: int, total: int, prefix: str = "Processing"):
     """
     message = f"{prefix} {current}/{total}..."
 
-    # Check if we are in a Jupyter/Colab environment
-    is_notebook = 'ipykernel' in sys.modules
-
-    if is_notebook:
-        # SAFE IMPORT: Only import IPython if we are actually in a notebook
-        try:
-            from IPython.display import clear_output
-            clear_output(wait=True)
-            print(message)
-        except ImportError:
-            # Fallback if detection failed but module is missing
-            print(message)
-    else:
-        # Standard Terminal: Use carriage return (\r) to overwrite line
-        sys.stdout.write(f"\r{message}")
-        sys.stdout.flush()
+    # Standard Terminal: Use carriage return (\r) to overwrite the current line
+    # end='' prevents a newline, allowing the next update to overwrite this one
+    sys.stdout.write(f"\r{message}")
+    sys.stdout.flush()
 
 
 def clear_line():
-    """Clears the current line (useful for cleanup after loops)."""
-    is_notebook = 'ipykernel' in sys.modules
-
-    if is_notebook:
-        from IPython.display import clear_output
-        clear_output(wait=True)
-    else:
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
+    """
+    Clears the current console line.
+    Useful for removing the final progress bar state before printing a new log.
+    """
+    # Overwrite the line with spaces, then return carriage to start
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()

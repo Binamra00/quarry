@@ -21,23 +21,13 @@ REPO_ROOT = root_candidate
 
 # --- 2. DYNAMIC WORKSPACE CONFIGURATION ---
 custom_home = os.getenv("SMELL_RANKER_HOME")
-is_colab = "COLAB_RELEASE_TAG" in os.environ or "COLAB_GPU" in os.environ
 
 print(f"📂 Codebase Root: {REPO_ROOT}")
 
+# Streamlined logic: Either use the custom env var OR default to local workspace_data
 if custom_home:
     print(f"⚙️  Custom Config Detected: SMELL_RANKER_HOME={custom_home}")
     WORKSPACE_ROOT = Path(custom_home)
-elif is_colab:
-    print("☁️  Detected Google Colab Environment.")
-    try:
-        from google.colab import drive
-        if not os.path.exists("/content/drive"):
-            print("   ⏳ Mounting Google Drive...")
-            drive.mount('/content/drive')
-        WORKSPACE_ROOT = REPO_ROOT.parent
-    except ImportError:
-        WORKSPACE_ROOT = Path("/content/workspace_data")
 else:
     print("💻 Detected Local Environment (Default).")
     WORKSPACE_ROOT = REPO_ROOT / "workspace_data"
@@ -56,24 +46,18 @@ OUTPUTS_PATH = WORKSPACE_ROOT / "outputs"
 for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
     path.mkdir(exist_ok=True)
 
-# --- 4. DEFINE TOOL CONFIGURATION ---
-# REVERT: RefactoringMiner 3.0 (Known Good)
+# --- 4. TOOL CONFIGURATION ---
 PMD_VERSION = "pmd-bin-7.19.0"
 RM_VERSION = "RefactoringMiner-3.0.12"
 
-# [NEW] SECURITY: SHA-256 Checksums (Supply Chain Protection)
-# These checksums are for the official release artifacts and can be verified independently.
-# Source (PMD 7.19.0): https://github.com/pmd/pmd/releases/tag/pmd_releases%2F7.19.0
-# Source (RefactoringMiner 3.0.12): https://github.com/tsantalis/RefactoringMiner/releases/tag/3.0.12
-# Locked on Jan 08, 2026
+# SECURITY: SHA-256 Checksums
 PMD_SHA256 = "beccb2c9c2abfd2e974a29f843a3d54565ce01bbf80fda947072fe10b4a2d3f0"
 RM_SHA256 = "cc15a9cc9c2805583043f11434554d56471680671e13341ecf7d550fb253dfcb"
 
-# [NEW] Tool Internals (Decoupled from logic)
-# Explicit naming to indicate this is the entry point for direct Java calls
+# Tool Internals
 RM_ENTRY_POINT_CLASS = "org.refactoringminer.RefactoringMiner"
 
-# [FIX] Determine extension based on OS (Windows requires .bat)
+# Determine extension based on OS (Windows requires .bat)
 if os.name == 'nt':
     PMD_EXEC = "pmd.bat"
     RM_EXEC = "RefactoringMiner.bat"
@@ -104,7 +88,7 @@ RM_PATH_ESCAPED = escape_path(RM_PATH)
 TOY_PROJECT_PATH_ESCAPED = escape_path(TOY_PROJECT_PATH)
 WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 
-# --- 9. HEURISTICS (NEW) ---
+# --- 9. HEURISTICS ---
 HEURISTICS_PATH = REPO_ROOT / "pipeline" / "heuristic_seeds.json"
 HEURISTICS = {}
 
@@ -125,10 +109,9 @@ else:
         }
     }
 
-# --- 10. CONSTANTS (NEW) ---
+# --- 10. CONSTANTS ---
 VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history"]
 
-# --- 11. I/O RESILIENCE CONFIGURATION (NEW) ---
-# Tuning knobs for file system operations (Retry logic)
-IO_MAX_RETRIES = 5             # How many times to try deleting a locked file
-IO_RETRY_DELAY_BASE = 0.1      # Seconds to wait (exponential backoff base)
+# --- 11. I/O RESILIENCE CONFIGURATION ---
+IO_MAX_RETRIES = 5
+IO_RETRY_DELAY_BASE = 0.1
