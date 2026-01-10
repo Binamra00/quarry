@@ -3,3 +3,4 @@
 venv/
 workspace_data/
 __pycache__/
+heuristics/

@@ -1,5 +1,5 @@
-from pipeline.commands.i_command import IPipelineCommand
-from pipeline.adapters.i_adapter import IAdapter
+from pipeline.commands.i_commands import IPipelineCommand
+from pipeline.adapters.i_adapters import IAdapter
 
 
 class RunToolCommand(IPipelineCommand):

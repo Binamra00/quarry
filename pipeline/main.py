@@ -1,8 +1,3 @@
-"""
-This file needs to be looked at again. I am not sure if I will continue using Google Colab.
-If I stop using it, I can remove all the Colab-specific code from main.py.
-"""
-
 import sys
 import argparse
 from typing import List
@@ -16,7 +11,7 @@ from pipeline.metrics.refm_mets import RefmMetrics
 from pipeline.metrics.pmd_mets import PMDMetrics
 
 from pipeline.factories.adapter_fact import ToolFactory
-from pipeline.commands.i_command import IPipelineCommand
+from pipeline.commands.i_commands import IPipelineCommand
 from pipeline.commands.adapter_cmd import RunToolCommand
 
 

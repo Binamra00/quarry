@@ -44,6 +44,17 @@ smell-ranker/
 │       └── adapters_test.py
 │    
 ├── pipeline/ # The main Python Application Package
+│ ├── heuristics/                  # NEW PACKAGE: The Correlator Service
+│ │ ├── __init__.py              # Exposes HeuristicEngine to main.py
+│ │ ├── interface.py             # THE CONTRACT: Defines 'IHeuristicStrategy'
+│ │ ├── engine.py                # THE ORCHESTRATOR: Polars pipeline manager
+│ │ ├── loader.py                # THE DAL: Schema definitions & Lazy Loading
+│ │ ├── factory.py               # THE CREATOR: Instantiates strategies dynamically
+│ │ └── strategies/              # THE LOGIC: Where specific heuristics live
+│ │     ├── __init__.py
+│ │     ├── ast_proximity.py     # Heuristic B (Implementation)
+│ │     ├── complexity.py        # Heuristic A (Placeholder for future)
+│ │     └── criticality.py       # Heuristic C (Placeholder for future) 
 │ ├── adapters/ # Tool Adapters Package (Adapter Pattern)
 │ │ ├── init.py # Exposes adapters to the main pipeline
 │ │ ├── i_adapter.py # Interface for all adapters  

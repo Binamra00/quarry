@@ -9,7 +9,7 @@ from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
 from pipeline.utils.batch_state import BatchStateManager
-from pipeline.adapters.i_adapter import IAdapter
+from pipeline.adapters.i_adapters import IAdapter
 
 
 class PMDHistoryAdapter(IAdapter):

@@ -11,7 +11,7 @@ from typing import List, Set
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-from pipeline.adapters.i_adapter import IAdapter
+from pipeline.adapters.i_adapters import IAdapter
 
 
 class RefactoringMinerAdapter(IAdapter):

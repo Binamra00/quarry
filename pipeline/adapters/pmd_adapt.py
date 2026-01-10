@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from pipeline import config
 from pipeline.utils import adapter_subprocess
-from pipeline.adapters.i_adapter import IAdapter
+from pipeline.adapters.i_adapters import IAdapter
 
 
 class PMDAdapter(IAdapter):
