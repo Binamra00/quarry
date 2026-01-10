@@ -1,3 +1,8 @@
+"""
+This file needs to be looked at again. I am not sure if I will continue using Google Colab.
+If I stop using it, I can remove all the Colab-specific code from main.py.
+"""
+
 import sys
 import argparse
 from typing import List
@@ -14,6 +19,10 @@ from pipeline.factories.adapter_fact import ToolFactory
 from pipeline.commands.i_commands import IPipelineCommand
 from pipeline.commands.adapter_cmd import RunToolCommand
 
+# [NEW] Phase 4 Imports
+from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
+from pipeline.heuristics.strategies_factory import HeuristicFactory
+
 
 def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
@@ -26,12 +35,18 @@ def main():
     parser.add_argument("--stage",
                         choices=config.VALID_STAGES,
                         default="all",
-                        help="Pipeline stage. 'all' runs RefactoringMiner + PMD Stateful Batch.")
+                        help="Pipeline stage. 'all' runs RefactoringMiner + PMD + Heuristics.")
 
     parser.add_argument("--batch-size",
                         type=int,
                         default=50,
                         help="Number of commits to process in the PMD history batch.")
+
+    # [NEW] Granular control over heuristics
+    parser.add_argument("--heuristic",
+                        choices=["all", "A", "B", "C"],
+                        default="all",
+                        help="Which heuristic strategy to apply. Default is 'all' (Aggregated Score).")
 
     args = parser.parse_args()
 
@@ -63,53 +78,99 @@ def main():
     print(f"🎯 Batch Size: {args.batch_size}")
 
     # --- 3. Initial Setup (Phase 0) ---
-    print("\n--- Step 1: Repository Verification ---")
+    if args.stage not in ["heuristics"]:
+        print("\n--- Step 1: Repository Verification ---")
 
-    default_branch = "main"
+        default_branch = "main"
 
-    print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
-    success, output = adapter_subprocess.run_command(
-        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-        cwd=str(target_repo)
-    )
-
-    if success and output:
-        try:
-            detected_branch = output.strip().split('/')[-1]
-            if detected_branch:
-                default_branch = detected_branch
-                print(f"   ✅ Detected Remote HEAD: {default_branch}")
-        except (IndexError, AttributeError):
-            pass
-    else:
-        s, _ = adapter_subprocess.run_command(
-            ["git", "rev-parse", "--verify", "master"],
+        print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
+        success, output = adapter_subprocess.run_command(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
             cwd=str(target_repo)
         )
-        if s:
-            default_branch = "master"
-            print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
 
-    print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
-    success, _ = adapter_subprocess.run_command(
-        ["git", "checkout", "-f", default_branch],
-        cwd=str(target_repo)
-    )
-    if not success:
-        print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Metrics might reflect Detached HEAD state.")
+        if success and output:
+            try:
+                detected_branch = output.strip().split('/')[-1]
+                if detected_branch:
+                    default_branch = detected_branch
+                    print(f"   ✅ Detected Remote HEAD: {default_branch}")
+            except (IndexError, AttributeError):
+                pass
+        else:
+            s, _ = adapter_subprocess.run_command(
+                ["git", "rev-parse", "--verify", "master"],
+                cwd=str(target_repo)
+            )
+            if s:
+                default_branch = "master"
+                print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
 
-    try:
-        RepoMetrics(target_repo).run_report()
-    except Exception as e:
-        print(f"⚠️ Verification Warning: {e}")
+        print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
+        success, _ = adapter_subprocess.run_command(
+            ["git", "checkout", "-f", default_branch],
+            cwd=str(target_repo)
+        )
+        if not success:
+            print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Metrics might reflect Detached HEAD state.")
+
+        try:
+            RepoMetrics(target_repo).run_report()
+        except Exception as e:
+            print(f"⚠️ Verification Warning: {e}")
 
     # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
 
-    active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+    # A. Standard Mining Adapters (RefMiner, PMD)
+    # logic: Run these if we are NOT in isolated heuristic mode
+    if args.stage not in ["heuristics"]:
+        active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+        for adapter in active_adapters:
+            commands.append(RunToolCommand(adapter))
 
-    for adapter in active_adapters:
-        commands.append(RunToolCommand(adapter))
+    # B. Heuristic Analysis (Phase 4)
+    # logic: Run if stage is explicitly 'heuristics' OR if stage is 'all'
+    if args.stage in ["heuristics", "all"]:
+
+        # Mapping User Flags to Factory Names
+        strategy_map = {
+            "A": ["Complexity"],  # Heuristic A
+            "B": ["AST_Proximity"],  # Heuristic B
+            "C": ["Criticality"],  # Heuristic C
+            "all": ["Complexity", "AST_Proximity", "Criticality"]
+        }
+
+        selected_strategies = strategy_map.get(args.heuristic, [])
+
+        # [SAFETY] Only run strategies that are actually implemented in the Factory
+        # This allows us to run "all" safely even if A and C are not built yet.
+        available_strategies = [s for s in selected_strategies if s in HeuristicFactory._REGISTRY]
+
+        if available_strategies:
+            print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {available_strategies}) ---")
+
+            # Pass the specific list of strategies to the command
+            # The command will then instantiate them via the Factory
+            # Note: We need to modify RunHeuristicsCommand to accept this list,
+            # or simply pass the list of names to the Engine.
+            # For simplicity in this architecture, the Command usually sets up the Engine.
+
+            # Since RunHeuristicsCommand (from previous steps) encapsulated the factory call,
+            # we can pass the names to it constructor if we updated it, or let it default.
+            # Assuming the simpler implementation where Command handles it:
+
+            # We need to make sure RunHeuristicsCommand accepts 'strategies' list in init
+            # Check your heuristic_cmd.py implementation.
+            # If it doesn't support arg injection yet, we can default to "all available".
+
+            # Implementation assuming Command accepts the list:
+            cmd = RunHeuristicsCommand(target_repo.name, strategies=available_strategies)
+            commands.append(cmd)
+
+        else:
+            if args.stage == "heuristics":
+                print(f"⚠️ Warning: Heuristic '{args.heuristic}' requested but no implementation found in Registry.")
 
     if not commands:
         print(f"⚠️ No tools matched the stage '{args.stage}'. Exiting.")
@@ -118,7 +179,7 @@ def main():
     # --- 5. Execution Loop ---
     execution_results = {}
     for command in commands:
-        tool_name = command._adapter.get_tool_name()
+        tool_name = command.get_tool_name()
         success = command.execute()
         execution_results[tool_name] = success
 
@@ -127,7 +188,7 @@ def main():
             sys.exit(1)
 
     # --- 6. Metrics Calculation ---
-    print("\n--- 🏁 Pipeline Completion Report ---")
+    print("\n--- 🏁 Pipeline Completion Report ---\n")
 
     if args.stage in ["all", "refm", "history"]:
         try:
@@ -142,10 +203,10 @@ def main():
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
     if all(execution_results.values()):
-        print("\n🎉 PIPELINE SUCCESS.")
+        print("🎉 PIPELINE SUCCESS.")
         sys.exit(0)
     else:
-        print("\n⚠️ PIPELINE COMPLETED WITH ERRORS.")
+        print("⚠️ PIPELINE COMPLETED WITH ERRORS.")
         sys.exit(1)
 
 

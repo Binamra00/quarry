@@ -24,3 +24,6 @@ class RunToolCommand(IPipelineCommand):
         else:
             print(f"❌ COMMAND: {self._adapter.get_tool_name()} failed.")
             return False
+
+    def get_tool_name(self) -> str:
+        return "MiningTools"

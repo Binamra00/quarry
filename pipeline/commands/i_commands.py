@@ -13,3 +13,10 @@ class IPipelineCommand(ABC):
         Returns True if successful, False otherwise.
         """
         pass
+
+    @abstractmethod
+    def get_tool_name(self) -> str:
+        """
+        Returns the name of the tool/command for logging.
+        """
+        pass
