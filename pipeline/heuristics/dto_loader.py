@@ -1,7 +1,6 @@
 import polars as pl
 from pathlib import Path
 
-
 class HeuristicSchemas:
     """
     Defines the strict schema (DTO) for input data.
@@ -50,74 +49,63 @@ class HeuristicSchemas:
         )
     }
 
+    # 3. Lineage (Metadata) Structure
+    LINEAGE_SCHEMA = {
+        "commit_sha": pl.Utf8,
+        "parent_sha": pl.Utf8
+    }
 
 class DTOLoader:
     """
-    The Data Access Layer (DAL).
-    Responsible for creating flattened 'LazyFrames' ready for joining.
+    Centralized Data Loader.
+    Responsible for reading raw JSONL files and returning strongly-typed LazyFrames.
     """
 
     @staticmethod
-    def load_refactorings(file_path: Path) -> pl.LazyFrame:
+    def load_refactorings(file_path: str) -> pl.LazyFrame:
         """
-        Loads and flattens Refactorings.
+        Loads RefactoringMiner output with strict schema.
         """
-        # [FIX] Enforce schema to handle empty lists in the first few rows
         return (
-            pl.scan_ndjson(str(file_path), schema=HeuristicSchemas.REFM_SCHEMA)
+            pl.scan_ndjson(file_path, schema=HeuristicSchemas.REFM_SCHEMA)
+            .rename({"sha1": "commit_sha"})
             .explode("refactorings")
             .unnest("refactorings")
-            .rename({"sha1": "commit_sha"})
-            # Extract the first source location for overlap calculation
-            .with_columns(
-                pl.col("leftSideLocations").list.first().alias("source_loc")
-            )
-            .unnest("source_loc")
-            .select([
-                pl.col("commit_sha"),
+            # Flatten LeftSide (Source) locations
+            .with_columns([
+                pl.col("leftSideLocations").list.first().struct.field("filePath").alias("file_path"),
                 pl.col("type").alias("refactoring_type"),
-                pl.col("filePath").alias("file_path"),
-                pl.col("startLine").alias("start_line"),
-                pl.col("endLine").alias("end_line"),
                 pl.col("description")
             ])
-            # Filter out nulls (commits with no refactorings)
-            .filter(pl.col("refactoring_type").is_not_null())
+            .drop(["leftSideLocations", "rightSideLocations"])
         )
 
     @staticmethod
-    def load_smells(file_path: Path) -> pl.LazyFrame:
+    def load_pmd(file_path: str) -> pl.LazyFrame:
         """
-        Loads and flattens PMD Smells.
+        Loads PMD output with strict schema.
+        Handles empty violation lists gracefully.
         """
-        # [FIX] Enforce schema so 'unnest' knows 'rule' exists even if violations=[]
         return (
-            pl.scan_ndjson(str(file_path), schema=HeuristicSchemas.PMD_SCHEMA)
-            .filter(pl.col("status") == "success")  # Ignore failed runs
+            pl.scan_ndjson(file_path, schema=HeuristicSchemas.PMD_SCHEMA)
+            .rename({"sha": "commit_sha"})
             .explode("violations")
             .unnest("violations")
-            .rename({
-                "sha": "commit_sha",
-                "rule": "rule_name",
-                "beginline": "start_line",
-                "endline": "end_line",
-                "description": "message"
-            })
+            # [FIX]: Removed invalid .rename({"violations": "smells"}) because
+            # 'unnest' consumes the 'violations' column. It is gone now.
             .with_columns(
-                # CLEANUP: Extract relative path from absolute path
-                # Regex logic: Keep everything after the last 'src' or similar structure
                 pl.col("filename")
-                .str.replace(r".*src", "src", literal=False)
-                .str.replace_all(r"\\", "/")  # Normalize Windows slashes
+                .str.replace_all(r"\\", "/")
+                .str.replace(r"^.*/repos/[^/]+/", "")
                 .alias("file_path")
             )
-            .select([
-                "commit_sha",
-                "file_path",
-                "rule_name",
-                "priority",
-                "start_line",
-                "end_line",
-                "message"
-            ])
+            .rename({"rule": "rule_name"})
+            .select(["commit_sha", "file_path", "rule_name"])
         )
+
+    @staticmethod
+    def load_lineage(file_path: str) -> pl.LazyFrame:
+        """
+        Loads Commit Lineage with strict schema.
+        """
+        return pl.scan_ndjson(file_path, schema=HeuristicSchemas.LINEAGE_SCHEMA)
