@@ -1,7 +1,7 @@
 import sys  # Used for sys.maxsize to represent an unlimited batch size
 from typing import List
 from pathlib import Path
-from pipeline.adapters.i_adapter import IAdapter
+from pipeline.adapters.i_adapters import IAdapter
 from pipeline.adapters.pmd_adapt import PMDAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
 from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
