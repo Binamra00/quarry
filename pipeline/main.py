@@ -1,8 +1,3 @@
-"""
-This file needs to be looked at again. I am not sure if I will continue using Google Colab.
-If I stop using it, I can remove all the Colab-specific code from main.py.
-"""
-
 import sys
 import argparse
 from typing import List
@@ -22,6 +17,8 @@ from pipeline.commands.adapter_cmd import RunToolCommand
 # [NEW] Phase 4 Imports
 from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
 from pipeline.heuristics.strategies_factory import HeuristicFactory
+# [NEW] Import the Metadata Adapter
+from pipeline.adapters.metadata_adapt import MetadataAdapter
 
 
 def main():
@@ -121,6 +118,14 @@ def main():
 
     # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
+
+    # 👇 INSERT THIS BLOCK HERE 👇
+    # [NEW] Phase 0: Metadata Mining (Git Lineage)
+    # Must run first to generate the history graph for heuristics
+    if args.stage in ["all", "mining", "history"]:
+        adapter = MetadataAdapter(target_repo)
+        commands.append(RunToolCommand(adapter))
+    # 👆 END OF INSERT 👆
 
     # A. Standard Mining Adapters (RefMiner, PMD)
     # logic: Run these if we are NOT in isolated heuristic mode

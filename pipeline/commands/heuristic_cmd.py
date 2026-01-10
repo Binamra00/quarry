@@ -16,15 +16,17 @@ class RunHeuristicsCommand(IPipelineCommand):
         """
         Args:
             repo_name (str): The target repository.
-            strategies (List[str]): List of strategy names to run (e.g., ["AST_Proximity"]).
-                                    If None, defaults to all available.
+            strategies (List[str]): List of strategy names to run.
         """
         self.repo_name = repo_name
         self.strategy_names = strategies or ["AST_Proximity"]
 
-        # Define Input/Output Paths based on convention
+        # Define Input/Output Paths
         self.refm_path = config.OUTPUTS_PATH / f"refactorings_{repo_name}.jsonl"
         self.pmd_path = config.OUTPUTS_PATH / f"pmd_history_{repo_name}.jsonl"
+        # [NEW] Path to the Lineage file created by MetadataAdapter
+        self.lineage_path = config.OUTPUTS_PATH / f"commit_lineage_{repo_name}.jsonl"
+
         self.output_path = config.OUTPUTS_PATH / f"ground_truth_{repo_name}.parquet"
 
     def execute(self) -> bool:
@@ -38,10 +40,13 @@ class RunHeuristicsCommand(IPipelineCommand):
         if not self.pmd_path.exists():
             print(f"❌ Missing Input: {self.pmd_path.name} (Run --stage pmd first)")
             return False
+        # [NEW] Validation
+        if not self.lineage_path.exists():
+            print(f"❌ Missing Input: {self.lineage_path.name} (Run --stage mining/history first)")
+            return False
 
         try:
-            # 2. Strategy Provisioning (Dependency Injection)
-            # This converts string names ["AST_Proximity"] into actual Logic Objects
+            # 2. Strategy Provisioning
             active_strategies = HeuristicFactory.create_strategies(self.strategy_names)
 
             if not active_strategies:
@@ -53,6 +58,7 @@ class RunHeuristicsCommand(IPipelineCommand):
             result = engine.run(
                 refactoring_path=self.refm_path,
                 pmd_path=self.pmd_path,
+                lineage_path=self.lineage_path,  # [NEW] Pass the lineage path
                 output_path=self.output_path
             )
 

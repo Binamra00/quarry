@@ -1,20 +1,13 @@
 import polars as pl
 from pathlib import Path
 from typing import List, Dict
-
-from pipeline.heuristics.i_heuristics import IHeuristicStrategy
-from pipeline.heuristics.dto_loader import DTOLoader
+from pipeline.heuristics.strategies.i_strategy import IHeuristicStrategy
 
 
 class HeuristicEngine:
     """
-    The High-Performance Correlator.
-
-    Responsibilities:
-    1. Loads the massive datasets lazily (using DTOLoader).
-    2. Joins Refactorings and Smells on 'commit_sha'.
-    3. Executes the registered Heuristic Strategies.
-    4. Streams the result to a Parquet file (Ground Truth).
+    The Orchestrator for Phase 4.
+    Executes a dynamic pipeline of strategies (Chain of Responsibility).
     """
 
     def __init__(self, strategies: List[IHeuristicStrategy]):
@@ -23,51 +16,43 @@ class HeuristicEngine:
     def run(self,
             refactoring_path: Path,
             pmd_path: Path,
+            lineage_path: Path,  # [NEW] Argument
             output_path: Path) -> Dict[str, int]:
+
+        if not self.strategies:
+            raise ValueError("No strategies registered in HeuristicEngine.")
 
         print(f"🚀 [Engine] Initializing Lazy Stream...")
 
-        # 1. Lazy Load (No memory cost yet)
-        refm_lazy = DTOLoader.load_refactorings(refactoring_path)
-        pmd_lazy = DTOLoader.load_smells(pmd_path)
+        # 1. Build the Context
+        # We pass strings to ensure compatibility with Polars scan functions
+        context = {
+            "refactorings_path": str(refactoring_path),
+            "pmd_path": str(pmd_path),
+            "lineage_path": str(lineage_path)  # [NEW] Add to context
+        }
 
-        # 2. The Great Join (Inner Join on Commit SHA)
-        # We only care about commits where BOTH a refactoring AND a smell exist.
-        joined_lazy = (
-            pmd_lazy.join(
-                refm_lazy,
-                on="commit_sha",
-                how="inner",
-                suffix="_ref"  # Handle name collisions (e.g., file_path -> file_path_ref)
-            )
-        )
+        # 2. Pipeline Loop (Chain of Responsibility)
+        current_data = None
 
-        # 3. Apply Heuristics (Transformation Pipeline)
-        # Each strategy adds its own score column to the lazy plan.
-        processed_lazy = joined_lazy
         for strategy in self.strategies:
-            print(f"   🧩 Registering Strategy: {strategy.name}")
-            processed_lazy = strategy.calculate(processed_lazy)
+            print(f"   🧩 Executing Strategy: {strategy.name}")
 
-        # 4. Materialization (The Heavy Lifting)
-        # This is where Polars actually reads the files, joins them, and writes output.
+            # Pass the baton: context + previous data -> new data
+            current_data = strategy.execute(context, current_data)
+
+        # 3. Save Results
+        if current_data is None:
+            raise RuntimeError("Pipeline finished but no data was generated.")
+
         print(f"   💾 Streaming results to {output_path.name}...")
 
-        # Ensure output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # SINK: We collect to memory here to get the count for logging.
+        # For massive datasets, you might prefer sink_parquet directly.
+        df_collected = current_data.collect()
+        df_collected.write_parquet(output_path)
 
-        # SINK: Stream directly to Parquet (efficient compression)
-        # usage of sink_parquet is preferred over collect() for memory safety
-        try:
-            processed_lazy.sink_parquet(output_path)
-        except Exception as e:
-            print(f"⚠️ Streaming failed (Parquet sink error): {e}")
-            print("   Fallback: collecting to memory first...")
-            processed_lazy.collect().write_parquet(output_path)
-
-        # 5. Verification
-        # We perform a cheap metadata read to count rows
-        final_count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
-
-        print(f"✅ Ground Truth Generated: {final_count} correlated candidates.")
-        return {"total_candidates": final_count}
+        return {
+            "total_candidates": len(df_collected),
+            "output_file": str(output_path)
+        }
