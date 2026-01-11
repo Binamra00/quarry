@@ -116,70 +116,45 @@ def main():
         except Exception as e:
             print(f"⚠️ Verification Warning: {e}")
 
-    # --- 4. Command Configuration ---
-    commands: List[IPipelineCommand] = []
+        # --- 4. Command Configuration ---
+        commands: List[IPipelineCommand] = []
 
-    # 👇 INSERT THIS BLOCK HERE 👇
-    # [NEW] Phase 0: Metadata Mining (Git Lineage)
-    # Must run first to generate the history graph for heuristics
-    if args.stage in ["all", "mining", "history"]:
-        adapter = MetadataAdapter(target_repo)
-        commands.append(RunToolCommand(adapter))
-    # 👆 END OF INSERT 👆
+        # Phase 0: Metadata Mining (Git Lineage)
+        # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
+        if args.stage in ["all", "history", "heuristics"]:
+            commands.append(RunToolCommand(MetadataAdapter(target_repo)))
 
-    # A. Standard Mining Adapters (RefMiner, PMD)
-    # logic: Run these if we are NOT in isolated heuristic mode
-    if args.stage not in ["heuristics"]:
-        active_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
-        for adapter in active_adapters:
-            commands.append(RunToolCommand(adapter))
+        # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
+        # Run these unless we are in isolated heuristic mode
+        if args.stage != "heuristics":
+            mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+            for adapter in mining_adapters:
+                commands.append(RunToolCommand(adapter))
 
-    # B. Heuristic Analysis (Phase 4)
-    # logic: Run if stage is explicitly 'heuristics' OR if stage is 'all'
-    if args.stage in ["heuristics", "all"]:
+        # Phase 4: Heuristic Analysis
+        if args.stage in ["heuristics", "all"]:
+            # Use Public API for encapsulation
+            available_strategies = set(HeuristicFactory.get_available_strategies())
 
-        # Mapping User Flags to Factory Names
-        strategy_map = {
-            "A": ["Complexity"],  # Heuristic A
-            "B": ["AST_Proximity"],  # Heuristic B
-            "C": ["Criticality"],  # Heuristic C
-            "all": ["Complexity", "AST_Proximity", "Criticality"]
-        }
+            # Map User Input -> Factory Names
+            strategy_map = {
+                "A": ["Complexity"],
+                "B": ["AST_Proximity"],
+                "C": ["Criticality"],
+                "all": ["Complexity", "AST_Proximity", "Criticality"]
+            }
 
-        selected_strategies = strategy_map.get(args.heuristic, [])
+            requested = strategy_map.get(args.heuristic, [])
+            valid_strategies = [s for s in requested if s in available_strategies]
 
-        # [SAFETY] Only run strategies that are actually implemented in the Factory
-        # This allows us to run "all" safely even if A and C are not built yet.
-        available_strategies = [s for s in selected_strategies if s in HeuristicFactory._REGISTRY]
+            if valid_strategies:
+                print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
+                commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
 
-        if available_strategies:
-            print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {available_strategies}) ---")
-
-            # Pass the specific list of strategies to the command
-            # The command will then instantiate them via the Factory
-            # Note: We need to modify RunHeuristicsCommand to accept this list,
-            # or simply pass the list of names to the Engine.
-            # For simplicity in this architecture, the Command usually sets up the Engine.
-
-            # Since RunHeuristicsCommand (from previous steps) encapsulated the factory call,
-            # we can pass the names to it constructor if we updated it, or let it default.
-            # Assuming the simpler implementation where Command handles it:
-
-            # We need to make sure RunHeuristicsCommand accepts 'strategies' list in init
-            # Check your heuristic_cmd.py implementation.
-            # If it doesn't support arg injection yet, we can default to "all available".
-
-            # Implementation assuming Command accepts the list:
-            cmd = RunHeuristicsCommand(target_repo.name, strategies=available_strategies)
-            commands.append(cmd)
-
-        else:
-            if args.stage == "heuristics":
-                print(f"⚠️ Warning: Heuristic '{args.heuristic}' requested but no implementation found in Registry.")
-
-    if not commands:
-        print(f"⚠️ No tools matched the stage '{args.stage}'. Exiting.")
-        sys.exit(0)
+            elif args.stage == "heuristics":
+                # Fail Fast if user explicitly asked for heuristics but none exist
+                print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
+                sys.exit(1)
 
     # --- 5. Execution Loop ---
     execution_results = {}

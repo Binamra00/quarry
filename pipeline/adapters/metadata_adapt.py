@@ -4,7 +4,6 @@ from pathlib import Path
 from pipeline import config
 from pipeline.adapters.i_adapters import IAdapter
 
-
 class MetadataAdapter(IAdapter):
     """
     Adapter for Git Lineage Mining.
@@ -43,7 +42,9 @@ class MetadataAdapter(IAdapter):
             with open(output_path, "w", encoding="utf-8") as f:
                 for line in lines:
                     parts = line.split()
-                    if not parts: continue
+                    # [FIX] PEP 8: Statement moved to a new line for better readability
+                    if not parts:
+                        continue
 
                     commit_sha = parts[0]
                     # Take the first parent (simplifying merge commits)

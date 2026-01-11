@@ -2,9 +2,10 @@ import polars as pl
 from pathlib import Path
 from typing import List, Dict
 from polars.exceptions import PolarsError
-from pipeline.heuristics.i_heuristics import IHeuristicStrategy  # [FIX] Updated Import
-from pipeline.heuristics.dto_loader import DTOLoader
+from pipeline.heuristics.i_heuristics import IHeuristicStrategy
 
+
+# [FIX] Removed 'from pipeline.heuristics.dto_loader import DTOLoader' as it was unused
 
 class HeuristicEngine:
     """
@@ -33,12 +34,10 @@ class HeuristicEngine:
             "lineage_path": str(lineage_path)
         }
 
-        # 2. Pipeline Loop (Chain of Responsibility)
+        # 2. Pipeline Loop
         current_data = None
-
         for strategy in self.strategies:
             print(f"    Executing Strategy: {strategy.name}")
-            # Pass the baton: context + previous data -> new data
             current_data = strategy.execute(context, current_data)
 
         # 3. Save Results
@@ -49,16 +48,16 @@ class HeuristicEngine:
 
         try:
             # SINK: Attempt efficient streaming first
-            processed_lazy = current_data  # Current data is the lazy frame
-            processed_lazy.sink_parquet(output_path)
+            current_data.sink_parquet(output_path)
 
-        except PolarsError as e:  # [FIX] Catch specific Polars errors
+        except PolarsError as e:
+            # Fallback to in-memory collection if streaming fails (e.g., complex joins)
             print(f" Streaming failed (Polars Error): {e}")
             print("    Fallback: collecting to memory first...")
-            # Fallback to in-memory collection if streaming fails (e.g., complex joins)
-            processed_lazy.collect().write_parquet(output_path)
+            current_data.collect().write_parquet(output_path)
 
-            # Verification Step (Count rows from the file we just wrote)
+        # [FIX] Moved out of the 'except' block so it runs regardless of the save method
+        # Verification Step: Count rows from the file we just wrote
         final_count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
 
         return {

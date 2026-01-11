@@ -36,3 +36,7 @@ class HeuristicFactory:
             instances.append(strategy_class())
 
         return instances
+
+    @classmethod
+    def get_available_strategies(cls) -> List[str]:
+        return list(cls._REGISTRY.keys())
