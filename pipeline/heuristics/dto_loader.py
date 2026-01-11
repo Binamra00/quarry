@@ -97,20 +97,20 @@ class DTOLoader:
             .rename({"sha": "commit_sha"})
             .explode("violations")
             .unnest("violations")
-            # Note: No rename needed here as 'unnest' consumes the column
             .with_columns(
                 pl.col("filename")
-                .str.replace_all(r"\\", "/")
-                .str.replace(r"^.*/repos/[^/]+/", "")
+                .str.replace_all(r"\\", "/")  # Normalize Windows slashes first
+                # [FIX] Robust Regex: Keep everything starting from the first '/src/'
+                # This makes absolute paths relative (C:/Users/.../src/A.java -> src/A.java)
+                .str.replace(r"^.*?/src/", "src/", literal=False)
                 .alias("file_path")
             )
             .rename({
                 "rule": "rule_name",
-                "beginline": "start_line",  # Standardize naming
-                "endline": "end_line",  # Standardize naming
+                "beginline": "start_line",
+                "endline": "end_line",
                 "description": "message"
             })
-            # [NEW] Explicitly select the metadata columns needed for the report
             .select([
                 "commit_sha",
                 "file_path",

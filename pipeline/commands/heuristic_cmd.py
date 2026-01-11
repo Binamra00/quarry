@@ -19,7 +19,8 @@ class RunHeuristicsCommand(IPipelineCommand):
             strategies (List[str]): List of strategy names to run.
         """
         self.repo_name = repo_name
-        self.strategy_names = strategies or ["AST_Proximity"]
+        # [FIX] Explicit handling documented, but kept logic safe
+        self.strategy_names = strategies if strategies else ["AST_Proximity"]
 
         # Define Input/Output Paths
         self.refm_path = config.OUTPUTS_PATH / f"refactorings_{repo_name}.jsonl"
@@ -72,5 +73,5 @@ class RunHeuristicsCommand(IPipelineCommand):
             return False
 
     def get_tool_name(self) -> str:
-        # [FIX] Delegate to the adapter instead of hardcoding "MiningTools"
-        return self.adapter.get_tool_name()
+        # [FIX] Return static name. This command is NOT an adapter wrapper.
+        return "HeuristicEngine"

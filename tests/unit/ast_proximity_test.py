@@ -130,3 +130,65 @@ def test_causality_none(mock_paths):
     assert len(df) == 1
     assert df["causality_type"][0] == "None"
     assert df["score_AST_Proximity"][0] == 0.0
+
+
+def test_path_normalization_windows_absolute(mock_paths):
+    """
+    Scenario: PMD reports absolute Windows paths (messy),
+              RefactoringMiner reports relative paths (clean).
+    Goal: Verify Phase 2 Regex successfully normalizes and matches them.
+    """
+    # 1. Lineage
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "child_sha", "parent_sha": "parent_sha"}) + "\n")
+
+    # 2. Refactoring (Clean Relative Path)
+    ref_record = {
+        "repository": "repo",
+        "sha1": "child_sha",
+        "refactorings": [{
+            "type": "Rename Class",
+            "description": "rename",
+            "leftSideLocations": [{
+                "filePath": "src/com/legacy/MessyPath.java",  # <--- CLEAN
+                "startLine": 10, "endLine": 20
+            }],
+            "rightSideLocations": []
+        }]
+    }
+    with open(mock_paths["ref"], "w") as f:
+        f.write(json.dumps(ref_record) + "\n")
+
+    # 3. PMD (Messy Absolute Windows Path)
+    # This simulates the environment Copilot warned about
+    pmd_record = {
+        "sha": "child_sha",
+        "status": "success",
+        "violations": [{
+            # <--- MESSY: Phase 2 Regex must fix this to "src/com/legacy/MessyPath.java"
+            "filename": r"E:\Jenkins\Workspace\jobs\pipeline\repos\toy_project\src\com\legacy\MessyPath.java",
+            "rule": "ComplexClass",
+            "priority": 1,
+            "beginline": 10, "endline": 20,
+            "description": "Too complex"
+        }]
+    }
+    with open(mock_paths["pmd"], "w") as f:
+        f.write(json.dumps(pmd_record) + "\n")
+
+    # Execute
+    ctx = {
+        "refactorings_path": str(mock_paths["ref"]),
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+
+    # Run Strategy
+    df = ASTProximityStrategy().execute(ctx, None).collect()
+
+    # Assertions
+    assert len(df) == 1
+    # If Regex fails, this will be 0.0 because paths won't match
+    assert df["score_AST_Proximity"][0] == 1.0
+    # Verify the path was normalized in the output
+    assert df["file_path"][0] == "src/com/legacy/MessyPath.java"
