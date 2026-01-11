@@ -26,4 +26,5 @@ class RunToolCommand(IPipelineCommand):
             return False
 
     def get_tool_name(self) -> str:
-        return "MiningTools"
+        # [FIX] Delegate to the adapter instead of hardcoding "MiningTools"
+        return self.adapter.get_tool_name()

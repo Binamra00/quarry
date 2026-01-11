@@ -1,6 +1,7 @@
 import polars as pl
 from pathlib import Path
 
+
 class HeuristicSchemas:
     """
     Defines the strict schema (DTO) for input data.
@@ -55,6 +56,7 @@ class HeuristicSchemas:
         "parent_sha": pl.Utf8
     }
 
+
 class DTOLoader:
     """
     Centralized Data Loader.
@@ -74,6 +76,10 @@ class DTOLoader:
             # Flatten LeftSide (Source) locations
             .with_columns([
                 pl.col("leftSideLocations").list.first().struct.field("filePath").alias("file_path"),
+                # [NEW] Capture Refactoring Start/End Lines
+                pl.col("leftSideLocations").list.first().struct.field("startLine").alias("start_line_ref"),
+                pl.col("leftSideLocations").list.first().struct.field("endLine").alias("end_line_ref"),
+
                 pl.col("type").alias("refactoring_type"),
                 pl.col("description")
             ])
@@ -91,16 +97,29 @@ class DTOLoader:
             .rename({"sha": "commit_sha"})
             .explode("violations")
             .unnest("violations")
-            # [FIX]: Removed invalid .rename({"violations": "smells"}) because
-            # 'unnest' consumes the 'violations' column. It is gone now.
+            # Note: No rename needed here as 'unnest' consumes the column
             .with_columns(
                 pl.col("filename")
                 .str.replace_all(r"\\", "/")
                 .str.replace(r"^.*/repos/[^/]+/", "")
                 .alias("file_path")
             )
-            .rename({"rule": "rule_name"})
-            .select(["commit_sha", "file_path", "rule_name"])
+            .rename({
+                "rule": "rule_name",
+                "beginline": "start_line",  # Standardize naming
+                "endline": "end_line",  # Standardize naming
+                "description": "message"
+            })
+            # [NEW] Explicitly select the metadata columns needed for the report
+            .select([
+                "commit_sha",
+                "file_path",
+                "rule_name",
+                "priority",
+                "start_line",
+                "end_line",
+                "message"
+            ])
         )
 
     @staticmethod

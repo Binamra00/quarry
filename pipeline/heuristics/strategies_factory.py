@@ -1,11 +1,6 @@
-from typing import List, Dict, Type
-from pipeline.heuristics.i_heuristics import IHeuristicStrategy
-
-# Import your concrete strategies here
+from typing import Dict, Type, List, Optional
+from pipeline.heuristics.i_heuristics import IHeuristicStrategy  # [FIX] Updated Import
 from pipeline.heuristics.strategies.ast_proximity import ASTProximityStrategy
-
-
-# from pipeline.heuristics.strategies.complexity import ComplexityStrategy (Future)
 
 class HeuristicFactory:
     """
@@ -14,10 +9,10 @@ class HeuristicFactory:
     """
 
     # REGISTRY: Map string names to Class Types
-    _REGISTRY: Dict[str, Type[IHeuristicStrategy]] = {
+    _REGISTRY: Dict[str, Optional[Type[IHeuristicStrategy]]] = {
         "AST_Proximity": ASTProximityStrategy,
-        "Complexity": None,  # Placeholder for Heuristic A
-        "Criticality": None  # Placeholder for Heuristic C
+        "Complexity": None,  # Placeholder for Phase 4.2
+        "Criticality": None  # Placeholder for Phase 4.3
     }
 
     @staticmethod
@@ -28,14 +23,13 @@ class HeuristicFactory:
         instances = []
         for name in strategy_names:
             if name not in HeuristicFactory._REGISTRY:
-                print(f"⚠️ Warning: Unknown Heuristic Strategy '{name}' skipped.")
+                print(f" Warning: Unknown Heuristic Strategy '{name}' skipped.")
                 continue
 
             strategy_class = HeuristicFactory._REGISTRY[name]
 
             if strategy_class is None:
-                # Graceful handling for not-yet-implemented heuristics
-                print(f"⚠️ Warning: Heuristic '{name}' is defined but not yet implemented.")
+                print(f" Warning: Heuristic '{name}' is defined but not yet implemented.")
                 continue
 
             # Instantiate and add to list

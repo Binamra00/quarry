@@ -1,6 +1,5 @@
-from typing import Protocol, List
+from typing import Protocol, Dict, Any, Optional
 import polars as pl
-
 
 class IHeuristicStrategy(Protocol):
     """
@@ -25,15 +24,16 @@ class IHeuristicStrategy(Protocol):
         """
         ...
 
-    def calculate(self, joined_frame: pl.LazyFrame) -> pl.LazyFrame:
+    def execute(self, context: Dict[str, Any], data: Optional[pl.LazyFrame]) -> pl.LazyFrame:
         """
-        The core logic. Receives the raw joined data (Refactorings + Smells).
+        The core logic. Receives the context (file paths) and the current data stream.
 
         Args:
-            joined_frame (pl.LazyFrame): A Polars LazyFrame containing the
-                                         aligned commit_sha and file_path data.
+            context (Dict[str, Any]): Configuration map containing file paths (refactorings_path, pmd_path, lineage_path).
+            data (Optional[pl.LazyFrame]): The data passed down from the previous strategy in the chain.
+                                           If None, this is the first strategy in the chain.
 
         Returns:
-            pl.LazyFrame: The original frame with a new 'score_<name>' column added.
+            pl.LazyFrame: The transformed dataframe with new score columns added.
         """
         ...
