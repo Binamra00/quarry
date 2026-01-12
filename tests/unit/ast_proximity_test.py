@@ -1,7 +1,5 @@
 import pytest
-import polars as pl
 import json
-from pathlib import Path
 from pipeline.heuristics.strategies.ast_proximity import ASTProximityStrategy
 
 

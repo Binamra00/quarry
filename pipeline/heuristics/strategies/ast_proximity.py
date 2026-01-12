@@ -17,6 +17,13 @@ class ASTProximityStrategy(IHeuristicStrategy):
     def name(self) -> str:
         return "AST_Proximity"
 
+    @property
+    def description(self) -> str:
+        return (
+            "Measures spatial proximity between refactoring locations and static analysis "
+            "findings in the AST across current and parent commits."
+        )
+
     def execute(self, context: Dict[str, Any], data: Optional[pl.LazyFrame]) -> pl.LazyFrame:
         ref_path = context.get("refactorings_path")
         pmd_path = context.get("pmd_path")

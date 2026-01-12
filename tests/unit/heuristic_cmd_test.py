@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
+from unittest.mock import patch
 from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
 
 

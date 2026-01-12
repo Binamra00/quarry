@@ -1,6 +1,5 @@
-import pytest
 import json
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open
 from pathlib import Path
 from pipeline.metrics.formulas import StandardRefactoringLogic, StandardStaticLogic
 from pipeline.metrics.pmd_mets import PMDMetrics

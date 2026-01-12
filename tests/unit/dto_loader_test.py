@@ -1,7 +1,5 @@
 import pytest
-import polars as pl
 import json
-from pathlib import Path
 from pipeline.heuristics.dto_loader import DTOLoader
 
 

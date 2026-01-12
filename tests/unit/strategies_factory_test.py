@@ -1,8 +1,5 @@
-import pytest
-# [FIX] Corrected import path to match your project structure
 from pipeline.heuristics.strategies_factory import HeuristicFactory
 from pipeline.heuristics.strategies.ast_proximity import ASTProximityStrategy
-from pipeline.heuristics.i_heuristics import IHeuristicStrategy
 
 
 def test_registry_contains_core_strategies():

@@ -1,6 +1,6 @@
 import pytest
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from pathlib import Path
 from pipeline.adapters.metadata_adapt import MetadataAdapter
 from pipeline.config import OUTPUTS_PATH

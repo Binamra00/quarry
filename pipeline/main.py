@@ -93,6 +93,8 @@ def main():
                     default_branch = detected_branch
                     print(f"   ✅ Detected Remote HEAD: {default_branch}")
             except (IndexError, AttributeError):
+                # [FIX] If the symbolic-ref output is malformed or unexpected, ignore it and
+                # fall back to the default branch detection logic below.
                 pass
         else:
             s, _ = adapter_subprocess.run_command(

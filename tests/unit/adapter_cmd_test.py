@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 from pipeline.commands.adapter_cmd import RunToolCommand
 
