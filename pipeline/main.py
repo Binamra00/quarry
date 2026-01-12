@@ -118,45 +118,45 @@ def main():
         except Exception as e:
             print(f"⚠️ Verification Warning: {e}")
 
-        # --- 4. Command Configuration ---
-        commands: List[IPipelineCommand] = []
+    # --- 4. Command Configuration ---
+    commands: List[IPipelineCommand] = []
 
-        # Phase 0: Metadata Mining (Git Lineage)
-        # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
-        if args.stage in ["all", "history", "heuristics"]:
-            commands.append(RunToolCommand(MetadataAdapter(target_repo)))
+    # Phase 0: Metadata Mining (Git Lineage)
+    # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
+    if args.stage in ["all", "history"]:
+        commands.append(RunToolCommand(MetadataAdapter(target_repo)))
 
-        # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
-        # Run these unless we are in isolated heuristic mode
-        if args.stage != "heuristics":
-            mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
-            for adapter in mining_adapters:
-                commands.append(RunToolCommand(adapter))
+    # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
+    # Run these unless we are in isolated heuristic mode
+    if args.stage != "heuristics":
+        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+        for adapter in mining_adapters:
+            commands.append(RunToolCommand(adapter))
 
-        # Phase 4: Heuristic Analysis
-        if args.stage in ["heuristics", "all"]:
-            # Use Public API for encapsulation
-            available_strategies = set(HeuristicFactory.get_available_strategies())
+    # Phase 4: Heuristic Analysis
+    if args.stage in ["heuristics", "all"]:
+        # Use Public API for encapsulation
+        available_strategies = set(HeuristicFactory.get_available_strategies())
 
-            # Map User Input -> Factory Names
-            strategy_map = {
-                "A": ["Complexity"],
-                "B": ["AST_Proximity"],
-                "C": ["Criticality"],
-                "all": ["Complexity", "AST_Proximity", "Criticality"]
-            }
+        # Map User Input -> Factory Names
+        strategy_map = {
+            "A": ["Complexity"],
+            "B": ["AST_Proximity"],
+            "C": ["Criticality"],
+            "all": ["Complexity", "AST_Proximity", "Criticality"]
+        }
 
-            requested = strategy_map.get(args.heuristic, [])
-            valid_strategies = [s for s in requested if s in available_strategies]
+        requested = strategy_map.get(args.heuristic, [])
+        valid_strategies = [s for s in requested if s in available_strategies]
 
-            if valid_strategies:
-                print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
-                commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
+        if valid_strategies:
+            print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
+            commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
 
-            elif args.stage == "heuristics":
-                # Fail Fast if user explicitly asked for heuristics but none exist
-                print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
-                sys.exit(1)
+        elif args.stage == "heuristics":
+            # Fail Fast if user explicitly asked for heuristics but none exist
+            print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
+            sys.exit(1)
 
     # --- 5. Execution Loop ---
     execution_results = {}

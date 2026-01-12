@@ -6,3 +6,4 @@ __pycache__/
 temp_view_results.py
 thesis_evidence_candidates.csv
 debug_heuristic.py
+.pytest_cache/
