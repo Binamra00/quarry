@@ -110,7 +110,8 @@ else:
     }
 
 # --- 10. CONSTANTS ---
-VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history"]
+# Added 'heuristics' to the list
+VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history", "heuristics"]
 
 # --- 11. I/O RESILIENCE CONFIGURATION ---
 IO_MAX_RETRIES = 5

@@ -1,7 +1,8 @@
-# Smell-Ranker: Infrastructure & Architecture Documentation
+# Smell-Ranker: Automated Code Smell Prioritization and Ranking
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 0.8 (Phase 3.4 – DevOps & Automation)
+**Version:** 1.0.0 (Operational Pipeline)  
+**Status:** Phase 4.2 Complexity Analysis (Next Up)
 
 ---
 
@@ -9,15 +10,21 @@
 
 **Smell-Ranker** is an automated pipeline designed to generate a **“Fortified Ground Truth”** for code smell prioritization. It achieves this by mining software repositories to extract objective developer actions (refactoring, bug-fixing) and using them to score code smells detected by static analysis.
 
-The system operates on a **Universal Hybrid Workflow** that leverages three distinct environments to ensure persistence, scalability, and reproducibility.
+The system features a novel **Causality-Aware Heuristic Engine** that uses "Time Travel" (Commit Lineage Mining) to distinguish between refactorings that *fixed* a smell versus those that merely co-occurred with it.
 
-### The Hybrid Workflow
+### Key Features
 
-The architecture splits responsibilities across three layers:
+#### 🧠 Causality-Aware Analysis
+Unlike traditional tools that only look at the *current* state, Smell-Ranker reconstructs the commit history graph to perform **Pre-Condition Checks**.
+- **Fixed Smells:** Detected when a smell existed in the *Parent Commit* but vanished in the *Current Commit* (Strong Causality).
+- **Persistent Smells:** Detected when a smell survived the refactoring (Weak Causality).
 
-- **Persistent Storage (Google Drive / Local Disk):** Holds the “state” of the project (tools, input data, results).
-- **Development Environment (Local/GitHub):** Where the logic is written and versioned.
-- **Runtime Environment (Google Colab / Docker / Local):** A compute engine that executes the logic. The pipeline automatically detects its environment and adapts filesystem paths accordingly.
+#### ⚡ "Out-of-Core" Performance
+Built on the **Polars** DataFrame library, the Heuristic Engine processes GB-scale datasets in milliseconds using a streaming, lazy-evaluation architecture.
+
+#### 🛡️ Resilience & Self-Healing
+- **Lazarus Protocol:** Automatically detects crashed batch jobs and resumes from the last valid checkpoint.
+- **Poison Pill Defense:** Isolates and skips specific commits that cause external tools (PMD) to hang.
 
 ---
 
@@ -105,113 +112,122 @@ smell-ranker/
 ```
 ## 3. The Execution Pipeline
 
+The pipeline consists of four sequential phases:
+
+| Phase | Component | Responsibility | Output |
+| :--- | :--- | :--- | :--- |
+| **0** | **Metadata Miner** | Extracts Git Lineage (Parent-Child Graph) for Time Travel. | `commit_lineage.jsonl` |
+| **1** | **RefactoringMiner** | Extracts historical refactoring operations. | `refactorings.jsonl` |
+| **2** | **PMD History** | "Time Travels" to every commit to snapshot code quality. | `pmd_history.jsonl` |
+| **3** | **Metrics Engine** | Aggregates raw data into density/purity metrics. | `repo_metrics.json` |
+| **4** | **Heuristic Engine** | Correlates all inputs to prove causality. | `ground_truth.parquet` |
+
 The `main.py` facade coordinates the analysis modules sequentially:
 
-### Phase 0: Verification & Baseline
+### Phase 0: Metadata & Verification
+- **Lineage Mining:** `MetadataAdapter` extracts the full Git commit graph (`commit_lineage.jsonl`) to build a "Time Machine" map for the Heuristic Engine.
+- **Baseline Metrics:** `repo_mets.py` calculates global denominators (Total Commits, Age, Churn) to normalize downstream scores.
 - **Dynamic Branch Detection:** Automatically identifies `main` vs. `master` to force the repository into a consistent state.
-- **Repo Mining:** `repo_mets.py` calculates the global denominator (Total Commits) and baseline heuristics.
 
 ### Phase 1: History Mining (RefactoringMiner)
 - **Scanning:** `RefactoringMinerAdapter` scans the full Git object history to identify architectural changes without requiring physical file checkouts.
-- **Resilience:** Uses Explicit File I/O to separate data streams from control logs, preventing parser corruption.
+- **Resilience:** Uses Explicit File I/O and JSONL streaming to separate data streams from control logs, preventing parser corruption.
 
 ### Phase 2: Stateful Candidate Generation (PMD)
 - **Time-Travel Strategy:** `PMDHistoryAdapter` physically checks out each commit in history to run static analysis.
-- **Atomic JSONL Streaming:** Results are streamed to a unified `.jsonl` log (JSON Lines) rather than fragmented files, solving inode exhaustion risks.
+- **Atomic JSONL Streaming:** Results are streamed to a unified `.jsonl` log rather than fragmented files, solving inode exhaustion risks.
 - **Poison Pill Defense:** Automatically identifies and quarantines corrupt Git commits to prevent infinite retry loops.
-- **Crash Recovery:** The `BatchStateManager` persists progress atomically. If the process is killed (e.g., Colab timeout), it resumes exactly where it left off ("Lazarus" capability).
+- **Crash Recovery:** The `BatchStateManager` persists progress atomically ("Lazarus" capability), allowing execution to resume exactly where it left off.
+
+### Phase 3: Metrics Aggregation
+- **Consolidation:** `pmd_mets.py` and `refm_mets.py` read the raw event streams to calculate high-level indicators like "Smell Density" and "Refactoring Purity".
+- **Normalization:** Converts raw counts into comparable metrics (e.g., Smells per KLOC) for cross-project analysis.
+
+### Phase 4: Heuristic Correlation (Causality Engine)
+- **Polars Streaming Engine:** `HeuristicEngine` uses an "Out-of-Core" architecture to join GB-scale datasets (Refactorings + Smells) in milliseconds.
+- **Dual-Lookup Algorithm:** The `AST_Proximity` strategy uses the Phase 0 Lineage map to check the **Pre-Condition** (Parent Commit) and **Post-Condition** (Current Commit) of every refactoring.
+- **Causality Classification:** Distinguishes between **Fixed Smells** (Strong Causality) and **Persistent Smells** (Weak Causality).
 
 ## 4. Key Data Artifacts
 
 All results are stored in the `persistent_storage` path (e.g., Google Drive).
 
+### 📂 Generated Artifacts
+
 | Artifact | Format | Description |
 |--------|--------|-------------|
+| **`commit_lineage_[repo].jsonl`** | **JSONL** | **Phase 0 Output.** Git Commit Graph (Parent-Child relationships) required for "Time Travel" lookups. |
 | `repo_metrics_[repo].json` | JSON | Project metadata (Age, Churn, Languages). |
-| `refactorings_[repo].json` | JSON | List of all refactoring operations detected in history. |
-| `pmd_history_[repo].jsonl` | JSONL | Unified Event Stream. Contains every PMD run (Success/Failure/Violations) in a single, append-only log file. |
+| `refactorings_[repo].jsonl` | JSONL | Stream of all refactoring operations detected in history. |
+| `pmd_history_[repo].jsonl` | JSONL | Unified Event Stream. Contains every PMD run (Violations) in a single, append-only log file. |
+| **`ground_truth_[repo].parquet`** | **Parquet** | **Phase 4 Output.** The Final Dataset. Contains joined Refactoring-Smell pairs with `Fixed` vs `Persistent` causality scores. |
 | `pmd_metrics_[repo].json` | JSON | Aggregated density and hotspot analysis. |
-| `batch_status_[tool]_[repo].json` | JSON | State File. Tracks the last successfully processed commit index for resume capability. |
+| `batch_status_[tool]_[repo].json` | JSON | State File. Tracks the last successfully processed commit index for the "Lazarus" resume capability. |
 | `*_execution_[repo].log` | Text | Diagnostic Log. Records only critical failures (checkouts, crashes, timeouts). |
 
 
-## 5. Execution Flow (The “How-To”)
+## 6. Execution Flow (The “How-To”)
 
-The system is designed to be run from **Google Colab** or a **local machine**.
+The system is designed to be run as a **CLI Application** on a local machine or server.
 
 ---
 
 ### Step 1: Initialization
 
 **Trigger**
-- User runs:
-  - `!bash exec_pipeline.sh` (Colab)  
-  - `python -m pipeline.main` (Local)
+- User runs: `python -m pipeline.main --repo [url] --stage all`
 
 **Action**
-- The system detects the environment.
-  - **Colab**: Mounts Google Drive
-  - **Local**: Creates a `workspace_data/` directory
-
-**Result**
-- Tools (PMD, RefactoringMiner) are downloaded and provisioned automatically
-- Target repositories are cloned if missing
+- The system automatically detects the OS and creates a `workspace_data/` directory.
+- **Lazy Provisioning:** Checks for tools (PMD, RefactoringMiner). If missing, downloads and configures them JIT (Just-In-Time).
 
 ---
 
 ### Step 2: Analysis Phases
 
-The pipeline executes the following stages sequentially or individually via flags.
+The pipeline executes the following stages sequentially.
+
+#### Phase 0: Metadata & Verification
+- **Module:** `metadata_adapt.py` & `repo_mets.py`
+- **Action:** 1. Mines the full commit lineage ($Child \to Parent$) for "Time Travel" lookups.
+  2. Calculates global denominators (Age, Churn, Total Commits).
+- **Output:** - `commit_lineage_[repo].jsonl` (Lineage Map)
+  - `repo_metrics_[repo].json` (Baseline Stats)
 
 ---
 
-#### Phase 0: Metric Verification
-
-- **Module**: `repo_metrics.py`
-- **Action**: Mines the total commit history to calculate project stats (LOC, Churn, Age)
-- **Output**:  
-  - `repo_metrics_[repo_name].json`  
-  - Includes Churn Map
-
----
-
-#### Phase 1: History Mining
-
-- **Module**: `refm_adapt.py`
-- **Strategy**: Forced-Loop  
-  Iterates explicitly through `git rev-list` to capture all commits (including detached heads) while filtering out non-code noise.
-- **Optimization**: Smart Skipping to bypass already processed commits
-- **Output**:  
-  - `refactorings_[repo_name].json`
+#### Phase 1: History Mining (RefactoringMiner)
+- **Module:** `refm_adapt.py`
+- **Strategy:** **Streaming IO**
+  - Scans the Git object history without physical checkout.
+  - Streams detected refactorings directly to a unified log.
+- **Output:** - `refactorings_[repo].jsonl` (Append-Only Stream)
 
 ---
 
-#### Phase 2: Stateful Candidate Generation
-
-- **Module**: `pmd_history_adapt.py`
-- **Strategy**: Time-Travel Batching
-- **Stateful**: Uses `BatchStateManager` to track progress commit-by-commit  
-  - Resumes instantly after crashes
-- **Buffered**: Lazy Flushing to minimize disk I/O
-- **Silent Mode**:  
-  - Redirects verbose logs to `pmd_history_execution.log` to keep the console clean
-- **Output**:  
-  - `outputs/pmd_raw/[repo_name]/pmd_out_[sha].json` (thousands of files)
+#### Phase 2: Stateful Candidate Generation (PMD)
+- **Module:** `pmd_history_adapt.py`
+- **Strategy:** **Time-Travel Batching**
+  - Physically checks out every commit to run static analysis.
+  - Uses `BatchStateManager` to track progress commit-by-commit ("Lazarus Protocol").
+- **Optimization:** - Writes to a **Unified Event Stream** (`.jsonl`) instead of creating thousands of small files, preventing inode exhaustion.
+- **Output:** - `pmd_history_[repo].jsonl` (Unified Stream)
 
 ---
 
-#### Phase 3: Aggregation & Metrics
-
-- **Module**: `pmd_mets.py`
-- **Action**: Aggregates fragmented batch files into a unified dataset
-- **Metrics**:
-  - Smell Density
-  - Intensity
-  - Hotspots
-- **Output**:  
-  - `pmd_metrics_[repo_name].json`
+#### Phase 3: Metrics Aggregation
+- **Module:** `pmd_mets.py`
+- **Action:** Reads the raw history stream to calculate density and purity metrics.
+- **Output:** - `pmd_metrics_[repo].json`
 
 ---
+
+#### Phase 4: Heuristic Causality Engine
+- **Module:** `heuristic_cmd.py` -> `polars_engine.py`
+- **Strategy:** **Out-of-Core Correlation**
+  - Joins the Refactoring Stream, PMD Stream, and Lineage Map.
+  - Executes the **Dual-Lookup Algorithm** to detect if a smell was *Fixed* or *Persistent*.
+- **Output:** - `ground_truth_[repo].parquet` (High-Performance Dataset)
 
 ## 6. 🚀 Local Installation & Usage (Windows / Linux / macOS)
 
@@ -261,61 +277,46 @@ python -m pipeline.utils.allocate_tools
 ```
 You should now see a new folder named `workspace_data` in your project root.
 
-### 4. Prepare Your Target Repository
+### 4. Repository Setup
 
-The pipeline expects target repositories to exist in workspace_data/repos/.
+The pipeline includes a smart `RepositoryLoader` that handles acquisition automatically. You generally **do not** need to manually clone repositories.
 
-**Step A: Initialize Workspace**
+**Modes of Operation:**
+1.  **URL Mode (Auto-Clone):** Pass a GitHub URL (e.g., `https://github.com/user/repo.git`). The system will automatically clone it into `workspace_data/repos/`.
+2.  **Local Mode:** Pass a folder name (e.g., `toy_project`) if the repository already exists in `workspace_data/repos/`.
 
-Running the pipeline help command triggers the config.py logic, which creates the `workspace_data` folder structure if it doesn't exist.
+**Workspace Initialization:**
+The `workspace_data` directory structure (inputs/outputs/tools) is automatically created and provisioned the first time you run the pipeline.
 
-```bash
-python -m pipeline.main --help
-```
+---
 
-**Step B: Clone Target**
+### 5. Run the Pipeline
 
-Navigate into the repos folder and clone the project you want to analyze (e.g., the Toy Project).
-
-```bash
-cd workspace_data/repos
-git clone [https://github.com/danilofes/refactoring-toy-example.git](https://github.com/danilofes/refactoring-toy-example.git) toy_project
-cd ../..
-```
-
-## 7. Run the Pipeline
-
-You are now ready to execute the analysis. The system will automatically detect your OS and use the appropriate tool binaries (e.g., `RefactoringMiner.bat` on Windows).
+You are now ready to execute the analysis. The system automatically detects your OS and uses the appropriate tool binaries.
 
 **Command Syntax:**
 ```bash
-# General Syntax: python -m pipeline.main --repo <FOLDER_NAME> --stage <STAGE>
-python -m pipeline.main --repo toy_project --stage all --batch-size 50
+python -m pipeline.main --repo <URL_OR_NAME> --stage <STAGE> [OPTIONS]
 ```
-**Execution Details**
-- **Tools**: Located in `workspace_data/tools/`.
-- **Outputs**: JSON results are saved to `workspace_data/outputs/`.
-- **Logs**: Execution logs (for debugging) are saved to `workspace_data/outputs/pmd_history_execution_[repo].log`.
-- **Repos**: Targeted repositories are expected in `workspace_data/repos/`.
-
----
 
 ## 8. Design Principles & Patterns
 
 The architecture adheres strictly to software engineering best practices.
 
-| Principle | Implementation                                                                                        |
-|---------|-------------------------------------------------------------------------------------------------------|
-| Continuous Integration | `ci_tests.yml` enforces "Shift-Left" verification on every push                                       |
-| Continuous Delivery | `auto_merge.yml` automates PR creation, review, and merging                                           |
-| Idempotency | `BatchStateManager` allows the pipeline to resume safely after crashes                                        |
-| Separation of Concerns | Logic `pipeline/`, configuration `config.py`, and adapters `pipeline/adapters/` are strictly distinct |
-| Command Pattern | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects                                    |
-| Adapter Pattern | `IAdapter` interface standardizes diverse tools (PMD, RefactoringMiner)                               |
-| Factory Method | `ToolFactory` encapsulates adapter instantiation logic                                                |
-| Template Method | `BaseMetrics` defines the skeleton algorithm for metric reporting                                     |
-| Strategy Pattern | `ui_strategy.py` selects visualization (Jupyter Widget vs. standard `\r`)                             |
-| Fail-Fast | Critical dependencies (e.g., PyDriller) are checked at startup                                        |
+| Principle | Implementation |
+|---------|----------------|
+| **Continuous Integration** | `ci_tests.yml` enforces "Shift-Left" verification on every push. |
+| **Continuous Delivery** | `auto_merge.yml` automates PR creation, review, and merging. |
+| **Idempotency** | `BatchStateManager` allows the pipeline to resume safely after crashes. |
+| **Separation of Concerns** | Logic `pipeline/`, config `config.py`, and adapters `pipeline/adapters/` are strictly distinct. |
+| **Command Pattern** | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects. |
+| **Adapter Pattern** | `IAdapter` interface standardizes diverse tools (PMD, RefactoringMiner, Git Log). |
+| **Factory Method** | `ToolFactory` and `HeuristicFactory` encapsulate object instantiation logic. |
+| **Template Method** | `BaseMetrics` defines the skeleton algorithm for metric reporting. |
+| **Strategy Pattern** | `ui_strategy.py` (UI) and `IHeuristicStrategy` (Logic) allow runtime algorithm swapping. |
+| **Chain of Responsibility** | `HeuristicEngine` executes a dynamic sequence of strategies (e.g., AST $\to$ Complexity $\to$ Criticality). |
+| **Pipe and Filter** | `MetadataAdapter` produces lineage data which is consumed downstream by the Heuristic Engine. |
+| **Lazy Evaluation** | `polars_engine.py` uses execution graphs to process GB-scale datasets without loading them into RAM. |
 
 ---
 
@@ -362,10 +363,21 @@ pytest tests/unit/
 
 ## 11. Future Roadmap
 
-- [x] **Phase 3: Scalability & Resilience** (Completed Dec 2025)
-  - [x] JSONL Streaming for inode optimization
-  - [x] "Lazarus" Crash Recovery
-  - [x] DevOps Pipeline (CI/CD)
-- [ ] **Phase 4: Heuristic Correlator** - Implement `overlap_score.py` to link Refactoring events to Smells.
-  - Development of `Heuristic B` (AST-Proximity).
-- [ ] **Phase 5: Oracle Project Execution** - Full-scale run on `apache/commons-lang`.
+- [x] **Phase 1: History Mining** (Completed)
+- [x] **Phase 2: Static Analysis Integration** (Completed)
+- [x] **Phase 3: Resilience & Scalability** (Completed)
+- [ ] **Phase 4: Multi-Dimensional Heuristics** (In Progress)
+  - [x] **Phase 4.1: Causality Core (Time Travel)** (Completed Jan 2026)
+    - [x] Metadata Lineage Extraction
+    - [x] AST Proximity Strategy (Fix Detection)
+    - [x] Polars Streaming Engine
+  - [ ] **Phase 4.2: Complexity Analysis** (Next Up)
+    - [ ] `ComplexityStrategy`: Calculate Cyclomatic Complexity Delta ($\Delta CC$).
+    - [ ] Correlate refactoring effort with complexity reduction.
+  - [ ] **Phase 4.3: Criticality & Churn**
+    - [ ] `CriticalityStrategy`: Integrate "Bus Factor" and "File Churn".
+    - [ ] Prioritize smells in frequently touched/high-risk files.
+- [ ] **Phase 5: Large Scale Validation** (Future)
+  - [ ] Analysis of `commons-io` (Medium Scale)
+  - [ ] Analysis of `junit4` (High Scale)
+  - [ ] Final Thesis Data Visualization
