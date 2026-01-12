@@ -14,7 +14,7 @@ class RunToolCommand(IPipelineCommand):
 
     def execute(self) -> bool:
         print(f"\n🚀 COMMAND: Executing {self._adapter.get_tool_name()}...")
-        success = self._adapter.execute()  # Ensure adapter uses .run(), not .execute() if that's the interface
+        success = self._adapter.execute()  # [FIX] Delegate directly to IAdapter.execute()
 
         if success:
             print(f"✅ COMMAND: {self._adapter.get_tool_name()} finished successfully.")
