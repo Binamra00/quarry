@@ -34,11 +34,14 @@ def create_pmd_7_record(sha, filename, rule, start, end):
     }
 
 
+# tests/unit/ast_proximity_test.py
+
 def create_ref_record(sha, filename, type, l_start, l_end, r_start, r_end):
     """
     Helper to create RefactoringMiner mock records with left/right coordinates.
     """
     return {
+        "repository": "dummy_repo",  # [FIX] Added required schema field
         "sha1": sha,
         "refactorings": [{
             "type": type,
