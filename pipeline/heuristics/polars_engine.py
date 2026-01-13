@@ -27,7 +27,7 @@ class HeuristicEngine:
     def _validate_data_integrity(self, refactoring_path: str, pmd_path: str) -> None:
         """
         Internal Helper: Performs a fail-fast check to ensure
-        we have Quality (PMD) data for every refactoring event.
+        we have Quality (PMD) data for every refactoring event
         """
         print("    🔍 Verifying Data Integrity...")
 

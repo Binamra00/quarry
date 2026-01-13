@@ -275,7 +275,7 @@ def test_integrity_check_missing_files(mock_paths):
 def test_integrity_check_corrupt_files(mock_paths):
     """
     Scenario: Files exist but are malformed (PolarsError/SchemaError).
-    Expected: RuntimeError (Fail Fast).
+    Expected: RuntimeError (Fail Fast)
     """
     # Create invalid file
     with open(mock_paths["ref"], "w") as f:
