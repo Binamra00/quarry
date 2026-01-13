@@ -26,7 +26,6 @@ class MockStrategy(IHeuristicStrategy):
         return "Mock Description"
 
     def execute(self, context, data):
-        # Return a dummy LazyFrame if none exists, else pass it through
         if data is None:
             return pl.DataFrame({"col": [1]}).lazy()
         return data
@@ -34,7 +33,6 @@ class MockStrategy(IHeuristicStrategy):
 
 @pytest.fixture
 def mock_paths(tmp_path):
-    """Standard paths for general tests."""
     return {
         "ref": tmp_path / "ref.jsonl",
         "pmd": tmp_path / "pmd.jsonl",
@@ -44,20 +42,25 @@ def mock_paths(tmp_path):
 
 
 def create_dummy_jsonl(path: Path, shas: list, sha_col: str):
-    """Helper to create physical JSONL files for integrity testing."""
     with open(path, "w") as f:
         for sha in shas:
             record = {sha_col: sha, "other_data": "dummy"}
             f.write(json.dumps(record) + "\n")
 
 
-# --- General Orchestration Tests ---
+# --- Tests ---
 
 def test_engine_initialization_empty_list():
     """Verify the engine rejects an empty list of strategies."""
     engine = HeuristicEngine([])
     with pytest.raises(ValueError, match="No strategies registered"):
         engine.run(Path("a"), Path("b"), Path("c"), Path("out"))
+
+
+def test_initialization_invalid_threshold():
+    """Verify engine rejects invalid fail-fast thresholds."""
+    with pytest.raises(ValueError, match="between 0.0 and 1.0"):
+        HeuristicEngine([MockStrategy()], fail_fast_threshold=1.5)
 
 
 def test_chain_execution(mock_paths):
@@ -72,8 +75,8 @@ def test_chain_execution(mock_paths):
 
     with patch("polars.LazyFrame.sink_parquet") as mock_sink, \
             patch("polars.scan_parquet") as mock_scan, \
-            patch.object(engine,
-                         "_validate_data_integrity") as mock_validate:  # Mock integrity check to avoid relying on file-based validation
+            patch.object(engine, "_validate_data_integrity") as mock_validate:
+        # Mock integrity check to avoid relying on file-based validation
 
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 10
         result = engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
@@ -92,8 +95,8 @@ def test_fallback_logic(mock_paths):
     with patch("polars.LazyFrame.sink_parquet", side_effect=PolarsError("Streaming failed")) as mock_sink, \
             patch("polars.LazyFrame.collect") as mock_collect, \
             patch("polars.scan_parquet") as mock_scan, \
-            patch.object(engine,
-                         "_validate_data_integrity") as mock_validate:  # Mock integrity checks to focus on fallback behavior
+            patch.object(engine, "_validate_data_integrity") as mock_validate:
+        # Mock integrity checks to focus on fallback behavior
 
         mock_df = MagicMock()
         mock_collect.return_value = mock_df
@@ -101,7 +104,6 @@ def test_fallback_logic(mock_paths):
 
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
-    # Now this will be True because the integrity check is mocked out and doesn't consume additional calls
     mock_sink.assert_called_once()
     mock_collect.assert_called_once()
     mock_df.write_parquet.assert_called_once()
@@ -126,42 +128,32 @@ def test_no_data_generated(mock_paths):
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
 
-# --- Integrity Check Tests (New) ---
+# --- Integrity Check Tests ---
 
 def test_integrity_check_critical_failure(mock_paths):
-    """
-    Scenario: >50% of Refactoring Commits are missing PMD data.
-    Expected: RuntimeError (Fail Fast).
-    """
-    # 1. Setup Data - Explicitly defining sets to ensure test robustness
-    ref_shas = [f"sha_{i}" for i in range(10)]  # 10 commits
-    pmd_shas = [f"sha_{i}" for i in range(2)]  # Only 2 overlap (0, 1)
+    """Scenario: >50% of Refactoring Commits are missing PMD data."""
+    ref_shas = [f"sha_{i}" for i in range(10)]
+    pmd_shas = [f"sha_{i}" for i in range(2)]  # Only 2 overlap
 
     create_dummy_jsonl(mock_paths["ref"], ref_shas, "sha1")
     create_dummy_jsonl(mock_paths["pmd"], pmd_shas, "sha")
 
     engine = HeuristicEngine([MockStrategy()])
 
-    # 2. Execution & Assertion
     with pytest.raises(RuntimeError) as excinfo:
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
     msg = str(excinfo.value)
     assert "CRITICAL" in msg
 
-    # Calculate expected percentage dynamically to avoid magic string brittleness
-    expected_missing_pct = (1 - len(pmd_shas) / len(ref_shas)) * 100
-    assert f"{expected_missing_pct:.1f}% of refactoring data is missing" in msg
+    # [FIX] Use correct percentage formatting logic
+    expected_missing_pct = 1 - len(pmd_shas) / len(ref_shas)
+    assert f"{expected_missing_pct:.1%} of refactoring data is missing" in msg
 
 
 def test_integrity_check_warning_only(mock_paths):
-    """
-    Scenario: <50% of Refactoring Commits are missing PMD data.
-    Expected: Warning printed, but pipeline continues.
-    """
-    # 1. Setup Data
+    """Scenario: <50% missing data triggers warning but continues."""
     ref_shas = [f"sha_{i}" for i in range(10)]
-    # PMD has 8 commits overlapping ref_shas; sha_8 and sha_9 are missing (20% missing - Acceptable)
     pmd_shas = [f"sha_{i}" for i in range(8)]
 
     create_dummy_jsonl(mock_paths["ref"], ref_shas, "sha1")
@@ -169,31 +161,23 @@ def test_integrity_check_warning_only(mock_paths):
 
     engine = HeuristicEngine([MockStrategy()])
 
-    # 2. Mock internals to allow run to finish
     with patch("polars.LazyFrame.sink_parquet"), \
             patch("polars.scan_parquet") as mock_scan, \
             patch("builtins.print") as mock_print:
 
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 0
-
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
-    # 3. Assertions
     warning_printed = False
     for call_args in mock_print.call_args_list:
         if "WARNING: Data Mismatch Detected" in str(call_args):
             warning_printed = True
             break
-
     assert warning_printed, "Engine should have warned about mismatch"
 
 
 def test_integrity_check_exact_boundary(mock_paths):
-    """
-    Scenario: Exactly 50% of Refactoring Commits are missing PMD data.
-    Expected: Warning printed, but NO RuntimeError (Boundary Condition).
-    """
-    # 1. Setup Data: 10 refactorings, 5 overlaps -> 50% missing
+    """Scenario: Exactly 50% missing data (Boundary condition)."""
     ref_shas = [f"sha_{i}" for i in range(10)]
     pmd_shas = [f"sha_{i}" for i in range(5)]
 
@@ -202,7 +186,6 @@ def test_integrity_check_exact_boundary(mock_paths):
 
     engine = HeuristicEngine([MockStrategy()])
 
-    # 2. Execution - Should NOT raise
     with patch("polars.LazyFrame.sink_parquet"), \
             patch("polars.scan_parquet") as mock_scan, \
             patch("builtins.print") as mock_print:
@@ -210,21 +193,16 @@ def test_integrity_check_exact_boundary(mock_paths):
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 0
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
-    # 3. Assertions
     warning_printed = False
     for call_args in mock_print.call_args_list:
         if "WARNING: Data Mismatch Detected" in str(call_args):
             warning_printed = True
             break
-
     assert warning_printed, "Engine should warn at 50% boundary"
 
 
 def test_integrity_check_pass(mock_paths):
-    """
-    Scenario: All refactoring commits have corresponding PMD data (100% coverage).
-    Expected: Integrity check passes, success message is printed, and pipeline continues.
-    """
+    """Scenario: 100% Data match."""
     shas = ["a", "b", "c"]
     create_dummy_jsonl(mock_paths["ref"], shas, "sha1")
     create_dummy_jsonl(mock_paths["pmd"], shas, "sha")
@@ -243,18 +221,12 @@ def test_integrity_check_pass(mock_paths):
         if "Integrity Verified: 100% Coverage" in str(call_args):
             success_printed = True
             break
-
-    assert success_printed, "Engine should have printed success message for 100% coverage"
+    assert success_printed, "Engine should have printed success message"
 
 
 def test_integrity_check_pmd_superset(mock_paths):
-    """
-    Scenario: PMD has MORE data than Refactorings (Superset).
-    Expected: Pass (We only care that Refactorings have context, not vice-versa).
-    """
-    # Refactorings: A, B
+    """Scenario: PMD has MORE data than Refactorings (Superset)."""
     ref_shas = ["a", "b"]
-    # PMD: A, B, C (Extra 'C' should be ignored)
     pmd_shas = ["a", "b", "c"]
 
     create_dummy_jsonl(mock_paths["ref"], ref_shas, "sha1")
@@ -269,20 +241,18 @@ def test_integrity_check_pmd_superset(mock_paths):
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 0
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
-    # Assertion: Should pass with 100% coverage
     success_printed = False
     for call_args in mock_print.call_args_list:
         if "Integrity Verified: 100% Coverage" in str(call_args):
             success_printed = True
             break
-
     assert success_printed, "Extra PMD data should not cause failure"
 
 
-def test_integrity_check_io_failure(mock_paths):
+def test_integrity_check_missing_files(mock_paths):
     """
-    Scenario: Files do not exist (IO Error during check).
-    Expected: Check is skipped, pipeline proceeds (Graceful Degradation).
+    Scenario: Files do not exist (FileNotFoundError).
+    Expected: Check is skipped with warning, pipeline proceeds.
     """
     engine = HeuristicEngine([MockStrategy()])
 
@@ -291,14 +261,27 @@ def test_integrity_check_io_failure(mock_paths):
             patch("builtins.print") as mock_print:
 
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 0
-
         # Should not raise
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
-    failure_logged = False
+    skipped_log = False
     for call_args in mock_print.call_args_list:
-        if "Integrity Check Skipped/Failed" in str(call_args):
-            failure_logged = True
+        if "Integrity Check Skipped (Missing File)" in str(call_args):
+            skipped_log = True
             break
+    assert skipped_log, "Engine should log skipped check for missing files"
 
-    assert failure_logged, "Engine should have logged IO failure during integrity check"
+
+def test_integrity_check_corrupt_files(mock_paths):
+    """
+    Scenario: Files exist but are malformed (PolarsError/SchemaError).
+    Expected: RuntimeError (Fail Fast).
+    """
+    # Create invalid file
+    with open(mock_paths["ref"], "w") as f:
+        f.write("THIS IS NOT JSONL")
+
+    engine = HeuristicEngine([MockStrategy()])
+
+    with pytest.raises(RuntimeError, match="Data integrity verification failed"):
+        engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
