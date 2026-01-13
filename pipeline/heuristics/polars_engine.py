@@ -5,8 +5,6 @@ from polars.exceptions import PolarsError
 from pipeline.heuristics.i_heuristics import IHeuristicStrategy
 
 
-# [FIX] Removed 'from pipeline.heuristics.dto_loader import DTOLoader' as it was unused
-
 class HeuristicEngine:
     """
     The Orchestrator for Phase 4.
@@ -16,24 +14,39 @@ class HeuristicEngine:
     def __init__(self, strategies: List[IHeuristicStrategy]):
         self.strategies = strategies
 
-    def _validate_data_integrity(self, refactoring_path: str, pmd_path: str):
+    def _validate_data_integrity(self, refactoring_path: str, pmd_path: str) -> None:
         """
-        Internal Helper: Performs a Fail-Fast check to ensure
-        we have Quality (PMD) data for every Refactoring event.
-        Uses LazyFrames to minimize memory overhead.
+        Internal Helper: Performs a fail-fast check to ensure
+        we have Quality (PMD) data for every refactoring event.
+
+        Args:
+            refactoring_path (str): Path to the refactoring events dataset
+                (expected to be in NDJSON/JSONL format).
+            pmd_path (str): Path to the PMD metrics dataset.
+
+        Raises:
+            RuntimeError: If the proportion of refactoring events without
+            corresponding PMD data exceeds the configured fail-fast threshold
+            (i.e., when data is considered critically corrupted).
         """
         print("    🔍 Verifying Data Integrity...")
 
         try:
-            # 1. Lazy Scan (Metadata only, no full load)
-            # Use scan_ndjson (Newline Delimited JSON) or scan_parquet depending on your input
-            # Assuming inputs are JSONL based on your project status
+            # 1. Lazy scan of input files, then materialize unique SHAs for comparison
+            # We use scan_ndjson to avoid loading full records eagerly, but `.collect()`
+            # below will load the distinct SHA columns into memory. This is acceptable
+            # for our expected scale (thousands of commits, not millions).
             refm_shas = pl.scan_ndjson(refactoring_path).select("sha1").unique().collect().get_column("sha1")
             pmd_shas = pl.scan_ndjson(pmd_path).select("sha").unique().collect().get_column("sha")
 
-            # Convert to python sets for fast comparison
+            # Convert to Python sets for fast comparison
             refm_set = set(refm_shas)
             pmd_set = set(pmd_shas)
+
+            # Guard Clause: Prevent division by zero if no refactorings exist
+            if len(refm_set) == 0:
+                print("    ℹ️  No refactoring commits found. Skipping integrity check.")
+                return
 
             # 2. Find Missing Ground Truth
             missing_ground_truth = refm_set - pmd_set
@@ -47,7 +60,11 @@ class HeuristicEngine:
 
                 # Fail-Fast Principle: Stop if data is significantly corrupted
                 miss_ratio = len(missing_ground_truth) / len(refm_set)
-                if miss_ratio > 0.5:
+
+                # Configurable threshold (hardcoded for now as per heuristics definition)
+                FAIL_FAST_THRESHOLD = 0.5
+
+                if miss_ratio > FAIL_FAST_THRESHOLD:
                     raise RuntimeError(
                         f"CRITICAL: {miss_ratio:.1%} of refactoring data is missing PMD context. "
                         "Pipeline aborted to prevent invalid training data."
@@ -55,23 +72,10 @@ class HeuristicEngine:
             else:
                 print("    ✅ Integrity Verified: 100% Coverage.")
 
-
-        # [FIX] Catch only relevant errors, or check for our Critical error
-
         except (PolarsError, FileNotFoundError) as e:
-
+            # Only catch IO/Parsing errors. Critical Logic errors (RuntimeError) bubble up.
             print(f"    ⚠️  Integrity Check Skipped/Failed (IO Error): {e}")
-
             print("       Continuing with caution...")
-
-        # [FIX] Explicitly re-raise the RuntimeError we generated above
-
-        except RuntimeError as e:
-
-            if "CRITICAL" in str(e):
-                raise e
-
-            print(f"    ⚠️  Runtime Error during check: {e}")
 
     def run(self,
             refactoring_path: Path,
@@ -84,9 +88,8 @@ class HeuristicEngine:
 
         print(f" [Engine] Initializing Lazy Stream...")
 
-        # --- [FIX] CALL THE VALIDATION HERE ---
+        # Run Validation
         self._validate_data_integrity(str(refactoring_path), str(pmd_path))
-        # --------------------------------------
 
         # 1. Build the Context
         context = {
@@ -112,12 +115,12 @@ class HeuristicEngine:
             current_data.sink_parquet(output_path)
 
         except PolarsError as e:
-            # Fallback to in-memory collection if streaming fails (e.g., complex joins)
+            # Fallback to in-memory collection if streaming fails
             print(f" Streaming failed (Polars Error): {e}")
             print("    Fallback: collecting to memory first...")
             current_data.collect().write_parquet(output_path)
 
-        # Verification Step: Count rows from the file we just wrote
+        # Verification Step
         final_count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
 
         return {
