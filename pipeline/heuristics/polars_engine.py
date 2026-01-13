@@ -22,7 +22,8 @@ class HeuristicEngine:
         Args:
             refactoring_path (str): Path to the refactoring events dataset
                 (expected to be in NDJSON/JSONL format).
-            pmd_path (str): Path to the PMD metrics dataset.
+            pmd_path (str): Path to the PMD metrics dataset
+                (expected to be in NDJSON/JSONL format).
 
         Raises:
             RuntimeError: If the proportion of refactoring events without
@@ -36,30 +37,30 @@ class HeuristicEngine:
             # We use scan_ndjson to avoid loading full records eagerly, but `.collect()`
             # below will load the distinct SHA columns into memory. This is acceptable
             # for our expected scale (thousands of commits, not millions).
-            refm_shas = pl.scan_ndjson(refactoring_path).select("sha1").unique().collect().get_column("sha1")
+            refactoring_shas = pl.scan_ndjson(refactoring_path).select("sha1").unique().collect().get_column("sha1")
             pmd_shas = pl.scan_ndjson(pmd_path).select("sha").unique().collect().get_column("sha")
 
             # Convert to Python sets for fast comparison
-            refm_set = set(refm_shas)
+            refactoring_set = set(refactoring_shas)
             pmd_set = set(pmd_shas)
 
             # Guard Clause: Prevent division by zero if no refactorings exist
-            if len(refm_set) == 0:
+            if len(refactoring_set) == 0:
                 print("    ℹ️  No refactoring commits found. Skipping integrity check.")
                 return
 
             # 2. Find Missing Ground Truth
-            missing_ground_truth = refm_set - pmd_set
+            missing_ground_truth = refactoring_set - pmd_set
 
             if len(missing_ground_truth) > 0:
                 print(f"    ⚠️  WARNING: Data Mismatch Detected!")
-                print(f"       Refactorings Found: {len(refm_set)} commits")
+                print(f"       Refactorings Found: {len(refactoring_set)} commits")
                 print(f"       PMD Profiles Found: {len(pmd_set)} commits")
                 print(
                     f"       ❌ MISSING CONTEXT: {len(missing_ground_truth)} commits have Refactorings but NO PMD data.")
 
                 # Fail-Fast Principle: Stop if data is significantly corrupted
-                miss_ratio = len(missing_ground_truth) / len(refm_set)
+                miss_ratio = len(missing_ground_truth) / len(refactoring_set)
 
                 # Configurable threshold (hardcoded for now as per heuristics definition)
                 FAIL_FAST_THRESHOLD = 0.5
@@ -72,9 +73,9 @@ class HeuristicEngine:
             else:
                 print("    ✅ Integrity Verified: 100% Coverage.")
 
-        except (PolarsError, FileNotFoundError) as e:
-            # Only catch IO/Parsing errors. Critical Logic errors (RuntimeError) bubble up.
-            print(f"    ⚠️  Integrity Check Skipped/Failed (IO Error): {e}")
+        except (PolarsError, FileNotFoundError, KeyError) as e:
+            # Only catch IO/Parsing/Schema errors. Critical Logic errors (RuntimeError) bubble up.
+            print(f"    ⚠️  Integrity Check Skipped/Failed (IO/Schema Error): {e}")
             print("       Continuing with caution...")
 
     def run(self,
