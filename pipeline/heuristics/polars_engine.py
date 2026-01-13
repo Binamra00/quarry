@@ -11,8 +11,15 @@ class HeuristicEngine:
     Executes a dynamic pipeline of strategies (Chain of Responsibility).
     """
 
-    def __init__(self, strategies: List[IHeuristicStrategy]):
+    def __init__(self, strategies: List[IHeuristicStrategy], fail_fast_threshold: float = 0.5):
+        """
+        Args:
+            strategies: List of strategies to execute.
+            fail_fast_threshold: Ratio (0.0 - 1.0) of missing data allowed before crashing.
+                                 Default 0.5 (50%).
+        """
         self.strategies = strategies
+        self.fail_fast_threshold = fail_fast_threshold
 
     def _validate_data_integrity(self, refactoring_path: str, pmd_path: str) -> None:
         """
@@ -56,16 +63,13 @@ class HeuristicEngine:
                 print(f"    ⚠️  WARNING: Data Mismatch Detected!")
                 print(f"       Refactorings Found: {len(refactoring_set)} commits")
                 print(f"       PMD Profiles Found: {len(pmd_set)} commits")
-                print(
-                    f"       ❌ MISSING CONTEXT: {len(missing_ground_truth)} commits have Refactorings but NO PMD data.")
+                print(f"       ❌ MISSING CONTEXT: {len(missing_ground_truth)} commits have Refactorings but NO PMD data.")
 
                 # Fail-Fast Principle: Stop if data is significantly corrupted
                 miss_ratio = len(missing_ground_truth) / len(refactoring_set)
 
-                # Configurable threshold (hardcoded for now as per heuristics definition)
-                FAIL_FAST_THRESHOLD = 0.5
-
-                if miss_ratio > FAIL_FAST_THRESHOLD:
+                # Use the configured class attribute
+                if miss_ratio > self.fail_fast_threshold:
                     raise RuntimeError(
                         f"CRITICAL: {miss_ratio:.1%} of refactoring data is missing PMD context. "
                         "Pipeline aborted to prevent invalid training data."

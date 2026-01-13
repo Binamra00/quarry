@@ -72,7 +72,8 @@ def test_chain_execution(mock_paths):
 
     with patch("polars.LazyFrame.sink_parquet") as mock_sink, \
             patch("polars.scan_parquet") as mock_scan, \
-            patch.object(engine, "_validate_data_integrity") as mock_validate:  # [FIX] Mock integrity check
+            patch.object(engine,
+                         "_validate_data_integrity") as mock_validate:  # Mock integrity check to avoid relying on file-based validation
 
         mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 10
         result = engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
@@ -244,6 +245,38 @@ def test_integrity_check_pass(mock_paths):
             break
 
     assert success_printed, "Engine should have printed success message for 100% coverage"
+
+
+def test_integrity_check_pmd_superset(mock_paths):
+    """
+    Scenario: PMD has MORE data than Refactorings (Superset).
+    Expected: Pass (We only care that Refactorings have context, not vice-versa).
+    """
+    # Refactorings: A, B
+    ref_shas = ["a", "b"]
+    # PMD: A, B, C (Extra 'C' should be ignored)
+    pmd_shas = ["a", "b", "c"]
+
+    create_dummy_jsonl(mock_paths["ref"], ref_shas, "sha1")
+    create_dummy_jsonl(mock_paths["pmd"], pmd_shas, "sha")
+
+    engine = HeuristicEngine([MockStrategy()])
+
+    with patch("polars.LazyFrame.sink_parquet"), \
+            patch("polars.scan_parquet") as mock_scan, \
+            patch("builtins.print") as mock_print:
+
+        mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 0
+        engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
+
+    # Assertion: Should pass with 100% coverage
+    success_printed = False
+    for call_args in mock_print.call_args_list:
+        if "Integrity Verified: 100% Coverage" in str(call_args):
+            success_printed = True
+            break
+
+    assert success_printed, "Extra PMD data should not cause failure"
 
 
 def test_integrity_check_io_failure(mock_paths):
