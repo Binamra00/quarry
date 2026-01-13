@@ -16,6 +16,63 @@ class HeuristicEngine:
     def __init__(self, strategies: List[IHeuristicStrategy]):
         self.strategies = strategies
 
+    def _validate_data_integrity(self, refactoring_path: str, pmd_path: str):
+        """
+        Internal Helper: Performs a Fail-Fast check to ensure
+        we have Quality (PMD) data for every Refactoring event.
+        Uses LazyFrames to minimize memory overhead.
+        """
+        print("    🔍 Verifying Data Integrity...")
+
+        try:
+            # 1. Lazy Scan (Metadata only, no full load)
+            # Use scan_ndjson (Newline Delimited JSON) or scan_parquet depending on your input
+            # Assuming inputs are JSONL based on your project status
+            refm_shas = pl.scan_ndjson(refactoring_path).select("sha1").unique().collect().get_column("sha1")
+            pmd_shas = pl.scan_ndjson(pmd_path).select("sha").unique().collect().get_column("sha")
+
+            # Convert to python sets for fast comparison
+            refm_set = set(refm_shas)
+            pmd_set = set(pmd_shas)
+
+            # 2. Find Missing Ground Truth
+            missing_ground_truth = refm_set - pmd_set
+
+            if len(missing_ground_truth) > 0:
+                print(f"    ⚠️  WARNING: Data Mismatch Detected!")
+                print(f"       Refactorings Found: {len(refm_set)} commits")
+                print(f"       PMD Profiles Found: {len(pmd_set)} commits")
+                print(
+                    f"       ❌ MISSING CONTEXT: {len(missing_ground_truth)} commits have Refactorings but NO PMD data.")
+
+                # Fail-Fast Principle: Stop if data is significantly corrupted
+                miss_ratio = len(missing_ground_truth) / len(refm_set)
+                if miss_ratio > 0.5:
+                    raise RuntimeError(
+                        f"CRITICAL: {miss_ratio:.1%} of refactoring data is missing PMD context. "
+                        "Pipeline aborted to prevent invalid training data."
+                    )
+            else:
+                print("    ✅ Integrity Verified: 100% Coverage.")
+
+
+        # [FIX] Catch only relevant errors, or check for our Critical error
+
+        except (PolarsError, FileNotFoundError) as e:
+
+            print(f"    ⚠️  Integrity Check Skipped/Failed (IO Error): {e}")
+
+            print("       Continuing with caution...")
+
+        # [FIX] Explicitly re-raise the RuntimeError we generated above
+
+        except RuntimeError as e:
+
+            if "CRITICAL" in str(e):
+                raise e
+
+            print(f"    ⚠️  Runtime Error during check: {e}")
+
     def run(self,
             refactoring_path: Path,
             pmd_path: Path,
@@ -26,6 +83,10 @@ class HeuristicEngine:
             raise ValueError("No strategies registered in HeuristicEngine.")
 
         print(f" [Engine] Initializing Lazy Stream...")
+
+        # --- [FIX] CALL THE VALIDATION HERE ---
+        self._validate_data_integrity(str(refactoring_path), str(pmd_path))
+        # --------------------------------------
 
         # 1. Build the Context
         context = {
@@ -56,7 +117,6 @@ class HeuristicEngine:
             print("    Fallback: collecting to memory first...")
             current_data.collect().write_parquet(output_path)
 
-        # [FIX] Moved out of the 'except' block so it runs regardless of the save method
         # Verification Step: Count rows from the file we just wrote
         final_count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
 
