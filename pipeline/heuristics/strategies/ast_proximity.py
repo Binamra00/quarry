@@ -32,8 +32,12 @@ class ASTProximityStrategy(IHeuristicStrategy):
         if not ref_path or not pmd_path or not lineage_path:
             raise ValueError("AST_Proximity requires refactorings, pmd, and lineage paths.")
 
-        # 1. Load Data
-        refactorings = DTOLoader.load_refactorings(ref_path)
+        # 1. Load Data (Preserve Chain of Responsibility)
+        # [GOOD PIPE FIX]: If data is passed from Heuristic A, use it. Don't reload from disk.
+        if data is None:
+            refactorings = DTOLoader.load_refactorings(ref_path)
+        else:
+            refactorings = data
         pmd = DTOLoader.load_pmd(pmd_path)
         lineage = DTOLoader.load_lineage(lineage_path)
 
@@ -102,26 +106,18 @@ class ASTProximityStrategy(IHeuristicStrategy):
             # 6. Coalesce Logic: Unified View
             .with_columns([
                 pl.coalesce(["rule_current", "rule_parent"]).alias("rule_name"),
-                pl.coalesce(["start_current", "start_parent"]).alias("start_line"),
-                pl.coalesce(["end_current", "end_parent"]).alias("end_line"),
-                pl.coalesce(["priority_current", "priority_parent"]).alias("priority"),
+                pl.coalesce(["start_current", "start_parent"]).alias("pmd_smell_start_line"),
+                pl.coalesce(["end_current", "end_parent"]).alias("pmd_smell_end_line"),
+                pl.coalesce(["priority_current", "priority_parent"]).alias("pmd_priority_score"),
                 pl.coalesce(["message_current", "message_parent"]).alias("message")
             ])
 
-            # 7. Final Selection: REMOVED .filter() to include all candidates for ML
-            .select([
-                "commit_sha",
-                "file_path",
-                "rule_name",
-                "priority",
-                "start_line",
-                "end_line",
-                "start_line_ref_left",
-                "start_line_ref_right",
-                "refactoring_type",
-                "message",
-                "score_AST_Proximity",
-                "causality_type"
+            # 7. Cleanup: Drop intermediate join columns, keep everything else
+            # [FIX] We switch from .select() to .drop() so Heuristic A's columns (complexity_score) pass through.
+            .drop([
+                "rule_current", "start_current", "end_current", "priority_current", "message_current",
+                "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
+                "parent_sha", "repository"
             ])
         )
 

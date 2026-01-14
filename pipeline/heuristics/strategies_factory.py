@@ -1,6 +1,7 @@
 from typing import Dict, Type, List, Optional
 from pipeline.heuristics.i_heuristics import IHeuristicStrategy  # [FIX] Updated Import
 from pipeline.heuristics.strategies.ast_proximity import ASTProximityStrategy
+from pipeline.heuristics.strategies.weighted_refactoring import WeightedRefactoringStrategy
 
 class HeuristicFactory:
     """
@@ -11,7 +12,7 @@ class HeuristicFactory:
     # REGISTRY: Map string names to Class Types
     _REGISTRY: Dict[str, Optional[Type[IHeuristicStrategy]]] = {
         "AST_Proximity": ASTProximityStrategy,
-        "Complexity": None,  # Placeholder for Phase 4.2
+        "Complexity": WeightedRefactoringStrategy,
         "Criticality": None  # Placeholder for Phase 4.3
     }
 

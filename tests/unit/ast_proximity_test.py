@@ -1,5 +1,6 @@
 import pytest
 import json
+import polars as pl
 from pipeline.heuristics.strategies.ast_proximity import ASTProximityStrategy
 
 
@@ -151,3 +152,49 @@ def test_windows_absolute_path_normalization(mock_paths):
     assert len(df) == 1
     assert df["file_path"][0] == "src/org/App.java"
     assert df["score_AST_Proximity"][0] == 1.0
+
+
+def test_chaining_preserves_columns(mock_paths):
+    """
+    Integration Test: Verifies that AST Proximity acts as a 'Good Pipe'.
+    It should accept an incoming DataFrame (from Heuristic A) and preserve
+    its columns (e.g., complexity_score) instead of dropping them.
+    """
+    # 1. Simulate Incoming Data from Heuristic A (Complexity)
+    incoming_df = pl.DataFrame({
+        "commit_sha": ["c1"],
+        "file_path": ["src/A.java"],
+        "refactoring_type": ["Extract Method"],
+        "start_line_ref_left": [10],
+        "end_line_ref_left": [20],
+        "start_line_ref_right": [10],
+        "end_line_ref_right": [20],
+        # [CRITICAL] Columns from Heuristic A
+        "complexity_score": [1.0],
+        "impact_category": ["High_Arch"]
+    }).lazy()
+
+    # 2. Setup Dependencies (Lineage & PMD)
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
+
+    with open(mock_paths["pmd"], "w") as f:
+        f.write(json.dumps(create_pmd_7_record("c1", "src/A.java", "Rule", 10, 20)) + "\n")
+
+    # 3. Execute with 'incoming_df' passed as 'data'
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),  # Ignored but required by checks
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+
+    result = strategy.execute(context, incoming_df).collect()
+
+    # 4. Verify columns survived
+    assert "complexity_score" in result.columns
+    assert "impact_category" in result.columns
+    assert result["complexity_score"][0] == 1.0
+    # 5. Verify AST work was added
+    assert "score_AST_Proximity" in result.columns
+    assert result["score_AST_Proximity"][0] == 1.0
