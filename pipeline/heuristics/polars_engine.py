@@ -1,8 +1,10 @@
 import polars as pl
+import json
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any
 from polars.exceptions import PolarsError
 from pipeline.heuristics.i_heuristics import IHeuristicStrategy
+from pipeline import config
 
 
 class HeuristicEngine:
@@ -27,7 +29,7 @@ class HeuristicEngine:
     def _validate_data_integrity(self, refactoring_path: str, pmd_path: str) -> None:
         """
         Internal Helper: Performs a fail-fast check to ensure
-        we have Quality (PMD) data for every refactoring event
+        we have Quality (PMD) data for every refactoring event.
         """
         print("    🔍 Verifying Data Integrity...")
 
@@ -78,6 +80,18 @@ class HeuristicEngine:
                 "Aborting heuristics pipeline to avoid using corrupted data."
             ) from e
 
+    def _load_heuristic_seeds(self) -> Dict[str, Any]:
+        """Loads the JSON configuration for heuristics."""
+        # config.HEURISTICS_PATH is already defined in your config.py
+        seeds_path = config.HEURISTICS_PATH
+
+        try:
+            with open(seeds_path, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"    ⚠️ Warning: Could not load heuristic_seeds.json ({e}). Strategies will use defaults.")
+            return {}
+
     def run(self,
             refactoring_path: Path,
             pmd_path: Path,
@@ -92,11 +106,17 @@ class HeuristicEngine:
         # Run Validation
         self._validate_data_integrity(str(refactoring_path), str(pmd_path))
 
+        # --- [ADDITION STARTS HERE] ---
+        # Load Configuration
+        seeds_config = self._load_heuristic_seeds()
+        # --- [ADDITION ENDS HERE] ---
+
         # 1. Build the Context
         context = {
             "refactorings_path": str(refactoring_path),
             "pmd_path": str(pmd_path),
-            "lineage_path": str(lineage_path)
+            "lineage_path": str(lineage_path),
+            "heuristic_seeds": seeds_config
         }
 
         # 2. Pipeline Loop

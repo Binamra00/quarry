@@ -1,8 +1,21 @@
+import pytest
+from unittest.mock import patch
 from pipeline.utils.batch_state import BatchStateManager
 from pipeline import config
 
 
 class TestBatchStateManager:
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self, tmp_path):
+        """
+        Redirects config.OUTPUTS_PATH to a temporary pytest folder.
+        This ensures every test starts with a clean slate.
+        """
+        self.mock_path = tmp_path
+        # This patch forces the code to look at tmp_path instead of your real workspace
+        with patch("pipeline.config.OUTPUTS_PATH", self.mock_path):
+            yield
 
     def test_initialization_fresh(self):
         """Test 1: Should create default state if no file exists."""
@@ -48,11 +61,11 @@ class TestBatchStateManager:
         repo = "corrupt_repo"
         tool = "pmd"
 
-        # Setup: Create a BROKEN json file
-        state_file = config.OUTPUTS_PATH / f"batch_status_{tool}_{repo}.json"
+        # [UPDATE]: Write to the temporary mock path, not the real config path
+        state_file = self.mock_path / f"batch_status_{tool}_{repo}.json"
         state_file.write_text("{ incomplete_json: ...")  # Malformed
 
-        # Action: Initialize manager
+        # Action: Initialize manager (it reads from the mocked config.OUTPUTS_PATH)
         manager = BatchStateManager(repo, tool)
 
         # Assert:
@@ -60,7 +73,10 @@ class TestBatchStateManager:
         assert manager.state["last_index"] == -1
 
         # 2. Corrupt file should be renamed (Archived)
-        archived_files = list(config.OUTPUTS_PATH.glob("*.corrupt_*.json"))
+        # [UPDATE]: Check the temporary folder
+        archived_files = list(self.mock_path.glob("*.corrupt_*.json"))
+
+        # Now this will always be 1, because the folder is fresh for every test run
         assert len(archived_files) == 1
         assert "batch_status_pmd_corrupt_repo" in archived_files[0].name
 

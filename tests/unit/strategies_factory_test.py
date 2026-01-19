@@ -38,9 +38,11 @@ def test_ignore_unknown_strategy(capsys):
 
 def test_ignore_unimplemented_strategy(capsys):
     """Verify factory warns and skips placeholders (None in registry)."""
-    # "Complexity" is currently mapped to None in your factory
-    strategies = HeuristicFactory.create_strategies(["Complexity"])
+    # [FIX] "Complexity" is now implemented, so we check "Criticality" (Phase 4.3)
+    strategies = HeuristicFactory.create_strategies(["Criticality"])
+
     assert len(strategies) == 0
 
+    # Optional: Check if warning was printed
     captured = capsys.readouterr()
-    assert "defined but not yet implemented" in captured.out
+    assert "is defined but not yet implemented" in captured.out

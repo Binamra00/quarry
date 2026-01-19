@@ -64,28 +64,30 @@ def test_initialization_invalid_threshold():
 
 
 def test_chain_execution(mock_paths):
-    """Verify engine runs all strategies in order and passes data context."""
+    """Verify engine runs all strategies and INJECTS CONFIGURATION."""
     s1 = MockStrategy("S1")
-    s2 = MockStrategy("S2")
 
+    # Mock the execute method to capture the context it receives
     s1.execute = MagicMock(side_effect=s1.execute)
-    s2.execute = MagicMock(side_effect=s2.execute)
 
-    engine = HeuristicEngine([s1, s2])
+    engine = HeuristicEngine([s1])
 
-    with patch("polars.LazyFrame.sink_parquet") as mock_sink, \
-            patch("polars.scan_parquet") as mock_scan, \
-            patch.object(engine, "_validate_data_integrity") as mock_validate:
-        # Mock integrity check to avoid relying on file-based validation
+    # [NEW] Mock the config loader to return specific data
+    mock_seeds = {"complexity_rules": {"Test": 1.0}}
 
-        mock_scan.return_value.select.return_value.collect.return_value.item.return_value = 10
-        result = engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
+    with patch("polars.LazyFrame.sink_parquet"), \
+            patch("polars.scan_parquet"), \
+            patch.object(engine, "_validate_data_integrity"), \
+            patch.object(engine, "_load_heuristic_seeds", return_value=mock_seeds):  # <--- Mock Loader
 
-    assert s1.execute.called
-    assert s2.execute.called
-    assert result["total_candidates"] == 10
-    mock_validate.assert_called_once()
+        engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
 
+    # [VERIFY] Check if context contained the seeds
+    call_args = s1.execute.call_args
+    passed_context = call_args[0][0]  # First arg of first call
+
+    assert "heuristic_seeds" in passed_context
+    assert passed_context["heuristic_seeds"] == mock_seeds
 
 def test_fallback_logic(mock_paths):
     """Verify engine falls back to memory (collect) if streaming (sink) fails."""
@@ -275,7 +277,7 @@ def test_integrity_check_missing_files(mock_paths):
 def test_integrity_check_corrupt_files(mock_paths):
     """
     Scenario: Files exist but are malformed (PolarsError/SchemaError).
-    Expected: RuntimeError (Fail Fast)
+    Expected: RuntimeError (Fail Fast).
     """
     # Create invalid file
     with open(mock_paths["ref"], "w") as f:

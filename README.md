@@ -1,8 +1,8 @@
 # Smell-Ranker: Automated Code Smell Prioritization and Ranking
 
 **Project:** Automated Code Smell Prioritization and Ranking  
-**Version:** 1.0.0 (Operational Pipeline)  
-**Status:** Phase 4.2 Complexity Analysis (Next Up)
+**Version:** 1.1.0 (Heuristic Triad Integrated)  
+**Status:** Phase 4.3 Criticality & Churn (Next Up)
 
 ---
 
@@ -19,12 +19,17 @@ Unlike traditional tools that only look at the *current* state, Smell-Ranker rec
 - **Fixed Smells:** Detected when a smell existed in the *Parent Commit* but vanished in the *Current Commit* (Strong Causality).
 - **Persistent Smells:** Detected when a smell survived the refactoring (Weak Causality).
 
+#### 💰 Economic Cost Modeling (Heuristic A)
+Assigns a "Price Tag" to every refactoring based on its architectural impact.
+- **Configurable Weights:** Loads scoring rules dynamically from `heuristic_seeds.json` (Dependency Injection), allowing weights to be tuned without code changes.
+- **Context-Aware Escalation:** Automatically detects "API Breaking Changes" (e.g., `Rename Method` on `public` methods) and escalates their impact score.
+
 #### ⚡ "Out-of-Core" Performance
 Built on the **Polars** DataFrame library, the Heuristic Engine processes GB-scale datasets in milliseconds using a streaming, lazy-evaluation architecture.
 
 #### 🛡️ Resilience & Self-Healing
-- **Lazarus Protocol:** Automatically detects crashed batch jobs and resumes from the last valid checkpoint.
-- **Poison Pill Defense:** Isolates and skips specific commits that cause external tools (PMD) to hang.
+- **Lazarus Protocol:** Automatically detects crashed batch jobs, archives corrupt state files, and resumes from the last valid commit.
+- **Good Pipe Architecture:** Heuristic strategies employ a "Blacklist" data flow, ensuring that signals from upstream components (like Complexity Scores) are never lost during processing.
 
 ---
 
@@ -371,13 +376,10 @@ pytest tests/unit/
     - [x] Metadata Lineage Extraction
     - [x] AST Proximity Strategy (Fix Detection)
     - [x] Polars Streaming Engine
-  - [ ] **Phase 4.2: Complexity Analysis** (Next Up)
-    - [ ] `ComplexityStrategy`: Calculate Cyclomatic Complexity Delta ($\Delta CC$).
-    - [ ] Correlate refactoring effort with complexity reduction.
-  - [ ] **Phase 4.3: Criticality & Churn**
-    - [ ] `CriticalityStrategy`: Integrate "Bus Factor" and "File Churn".
-    - [ ] Prioritize smells in frequently touched/high-risk files.
-- [ ] **Phase 5: Large Scale Validation** (Future)
-  - [ ] Analysis of `commons-io` (Medium Scale)
-  - [ ] Analysis of `junit4` (High Scale)
-  - [ ] Final Thesis Data Visualization
+  - [x] **Phase 4.2: Complexity Analysis (Heuristic A)** (Completed Jan 2026)
+    - [x] `WeightedRefactoringStrategy`: Implemented configurable "Economic Cost" model.
+    - [x] **Dependency Injection**: Dynamic loading of weights from `heuristic_seeds.json`.
+    - [x] **API Escalation**: Regex-based detection of high-impact visibility changes.
+  - [ ] **Phase 4.3: Criticality & Churn (Heuristic C)** (Next Up)
+    - [ ] `CriticalityStrategy`: Integrate "Bus Factor" and "Refactoring Hotness".
+    - [ ] Normalize churn scores to determine Business Value.
