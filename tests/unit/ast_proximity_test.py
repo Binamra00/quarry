@@ -162,6 +162,7 @@ def test_chaining_preserves_columns(mock_paths):
     """
     # 1. Simulate Incoming Data from Heuristic A (Complexity)
     incoming_df = pl.DataFrame({
+        "repository": ["dummy_path"],
         "commit_sha": ["c1"],
         "file_path": ["src/A.java"],
         "refactoring_type": ["Extract Method"],
