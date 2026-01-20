@@ -7,6 +7,7 @@ from pipeline.heuristics.dto_loader import DTOLoader
 class ASTProximityStrategy(IHeuristicStrategy):
     """
         Implementation of AST Spatial Proximity Heuristic.
+
         [UPGRADE]: Includes 'left_smell' and 'right_smell' booleans for explicit state tracking.
     """
 

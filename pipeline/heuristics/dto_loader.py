@@ -76,13 +76,6 @@ class DTOLoader:
                 .str.replace(r"^.*?(src|source|lib)/", r"$1/", literal=False)
                 .alias("right_side_path"),
 
-                # 3. Default Path (Must match PMD's current report)
-                # We alais 'file_path' to RIGHT side (Current), not left.
-                pl.col("rightSideLocations").list.first().struct.field("filePath")
-                .str.replace_all(r"\\", "/")
-                .str.replace(r"^.*?(src|source|lib)/", r"$1/", literal=False)
-                .alias("file_path"),
-
                 # PARENT Coordinates
                 pl.col("leftSideLocations").list.first().struct.field("startLine").alias("start_line_ref_left"),
                 pl.col("leftSideLocations").list.first().struct.field("endLine").alias("end_line_ref_left"),
@@ -96,7 +89,7 @@ class DTOLoader:
                 pl.col("description")
             ])
             # [FIX]: Robust File Path Definition (Coalesce Right -> Left)
-            # If Right is missing (empty list -> null), use Left.
+            # This is the SINGLE source of truth for file_path now.
             .with_columns([
                 pl.coalesce([pl.col("right_side_path"), pl.col("left_side_path")]).alias("file_path")
             ])
