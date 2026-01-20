@@ -126,9 +126,10 @@ def test_spatial_bva_one_line_outside(mock_paths):
     # 5. Assertions
     # Should be 0.0 because it is outside the range
     assert result["score_AST_Proximity"][0] == 0.0
-    # [FIX] Added explicit assertion as requested by Copilot
+
+    # Explicit assertion to verify causality classification for out-of-range smells
     assert result["causality_type"][0] == "None"
-    # Causality should be None (or at least not Fixed/Persistent)
+
     assert result["left_smell"][0] is False
     assert result["right_smell"][0] is False
 
@@ -321,7 +322,7 @@ def test_rename_file_persistence(mock_paths):
         f.write(json.dumps(create_ref_record(
             "c1", "src/Old.java", "Rename Class",
             10, 20, 10, 20,
-            right_filename="src/New.java" # <--- Key Change
+            right_filename="src/New.java"  # <--- Key Change
         )) + "\n")
 
     # 3. PMD History

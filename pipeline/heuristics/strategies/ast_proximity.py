@@ -77,7 +77,7 @@ class ASTProximityStrategy(IHeuristicStrategy):
                     "priority": "priority_parent",
                     "message": "message_parent"
                 }),
-                left_on=["ref_parent_sha", "left_side_path"], # Explicitly use Left (Parent) Path
+                left_on=["ref_parent_sha", "left_side_path"],  # Explicitly use Left (Parent) Path
                 right_on=["pmd_parent_sha", "file_path"],
                 how="left"
             )

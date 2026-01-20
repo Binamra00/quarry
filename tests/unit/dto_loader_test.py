@@ -156,6 +156,9 @@ def test_refactoring_rename_columns(mock_files):
     assert df["left_side_path"][0] == "src/Old.java"
     assert df["right_side_path"][0] == "src/New.java"
 
+    # [NEW] Verify that file_path defaults to the Right Side (New Location)
+    assert df["file_path"][0] == "src/New.java"
+
     # Verify the line numbers map correctly
     assert df["start_line_ref_left"][0] == 10
     assert df["start_line_ref_right"][0] == 15
