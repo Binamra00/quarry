@@ -118,3 +118,44 @@ def test_refactoring_empty_right_side(mock_files):
     assert len(df) == 1
     # Should result in nulls for right-side columns, not a crash
     assert df["start_line_ref_right"][0] is None
+
+
+def test_refactoring_rename_columns(mock_files):
+    """
+    [NEW] Verify that 'left_side_path' and 'right_side_path' are correctly
+    extracted for Move/Rename refactorings.
+    """
+    # 1. Mock Data: A "Move Class" refactoring (Old -> New)
+    data = {
+        "repository": "repo",
+        "sha1": "commit_123",
+        "refactorings": [{
+            "type": "Move Class",
+            "description": "Move Class src.Old moved to src.New",
+            "leftSideLocations": [{
+                "filePath": "src/Old.java",
+                "startLine": 10, "endLine": 20
+            }],
+            "rightSideLocations": [{
+                "filePath": "src/New.java",
+                "startLine": 15, "endLine": 25
+            }]
+        }]
+    }
+
+    # 2. Write to mock file
+    with open(mock_files["ref"], "w") as f:
+        f.write(json.dumps(data) + "\n")
+
+    # 3. Execute Loader
+    df = DTOLoader.load_refactorings(str(mock_files["ref"])).collect()
+
+    # 4. Assertions
+    assert len(df) == 1
+    # Verify the split paths exist and are correct
+    assert df["left_side_path"][0] == "src/Old.java"
+    assert df["right_side_path"][0] == "src/New.java"
+
+    # Verify the line numbers map correctly
+    assert df["start_line_ref_left"][0] == 10
+    assert df["start_line_ref_right"][0] == 15
