@@ -126,6 +126,8 @@ def test_spatial_bva_one_line_outside(mock_paths):
     # 5. Assertions
     # Should be 0.0 because it is outside the range
     assert result["score_AST_Proximity"][0] == 0.0
+    # [FIX] Added explicit assertion as requested by Copilot
+    assert result["causality_type"][0] == "None"
     # Causality should be None (or at least not Fixed/Persistent)
     assert result["left_smell"][0] is False
     assert result["right_smell"][0] is False
