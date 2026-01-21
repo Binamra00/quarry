@@ -181,7 +181,8 @@ def main():
             print(f"⚠️ {tool_name} failed or was interrupted. Marking pipeline as UNHEALTHY.")
             pipeline_healthy = False
             # [CRITICAL]: We DO NOT exit here. We continue the loop so
-            # other independent miners (like PMD) can still run and save state.
+            # other independent miners (like PMD) can still run and save state,
+            # even though the pipeline will ultimately exit with an error status.
 
     # --- 6. Finalization ---
     # We exit with error if ANY tool failed, ensuring CI/CD knows this run was partial.

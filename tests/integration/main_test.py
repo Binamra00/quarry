@@ -73,7 +73,9 @@ def test_stage_heuristics_command_list(mock_sys_argv, mock_dependencies):
     # 1. REMOVE patch("pipeline.main.RunHeuristicsCommand") from this list
     with mock_sys_argv(["--stage", "heuristics"]), \
             patch("pipeline.main.RunToolCommand") as mock_tool_cmd:
-        # 2. Spy on the Fake Class __init__ to verify it was instantiated
+        # 2. Spy on the Fake Class __init__
+        # [FIX] Use return_value=None because __init__ must return None.
+        # Since FakeHeuristicsCommand.__init__ is empty (pass), bypassing it is safe.
         with patch.object(FakeHeuristicsCommand, '__init__', return_value=None) as mock_init:
             main()
 
@@ -97,6 +99,7 @@ def test_stage_all_command_list(mock_sys_argv, mock_dependencies):
             patch("pipeline.main.RunToolCommand") as mock_tool_cmd, \
             patch("pipeline.main.MetadataAdapter") as mock_meta_adapter:
         # 2. Spy on the Fake Class __init__
+        # [FIX] Use return_value=None (see above)
         with patch.object(FakeHeuristicsCommand, '__init__', return_value=None) as mock_init:
             main()
 
@@ -108,7 +111,6 @@ def test_stage_all_command_list(mock_sys_argv, mock_dependencies):
 
             # Heuristics command should be called
             mock_init.assert_called_once()
-
 
 def test_invalid_heuristic_exit(mock_sys_argv, mock_dependencies):
     """Verify script exits with code 1 if an invalid heuristic is requested."""
