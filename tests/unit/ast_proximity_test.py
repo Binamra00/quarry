@@ -93,6 +93,7 @@ def test_spatial_bva_one_line_outside(mock_paths):
         "repository": ["dummy_repo"],
         "commit_sha": ["c1"],
         "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method public foo..."],
         "left_side_path": ["src/A.java"],
         "right_side_path": ["src/A.java"],
         "file_path": ["src/A.java"],  # Primary path
@@ -148,6 +149,7 @@ def test_persistent_with_coordinate_shift(mock_paths):
         "repository": ["dummy_repo"],
         "commit_sha": ["c1"],
         "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method..."],
         "left_side_path": ["src/A.java"],
         "right_side_path": ["src/A.java"],
         "file_path": ["src/A.java"],

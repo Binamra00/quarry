@@ -90,6 +90,8 @@ class DTOLoader:
             ])
             # [FIX]: Robust File Path Definition (Coalesce Right -> Left)
             # This is the SINGLE source of truth for file_path now.
+            # IMPORTANT: When right_side_path is null/empty (e.g., 'Remove Method'),
+            # we fall back to left_side_path to ensure the row is not dropped.
             .with_columns([
                 pl.coalesce([pl.col("right_side_path"), pl.col("left_side_path")]).alias("file_path")
             ])
