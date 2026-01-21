@@ -127,16 +127,18 @@ class ASTProximityStrategy(IHeuristicStrategy):
                 pl.coalesce(["priority_current", "priority_parent"]).alias("pmd_priority_score"),
                 pl.coalesce(["message_current", "message_parent"]).alias("message")
             ])
-
-            # 7. Cleanup: Drop intermediate join columns, keep everything else
-            # [FIX] We switch from .select() to .drop() so Heuristic A's columns pass through.
-            .drop([
-                "rule_current", "start_current", "end_current", "priority_current", "message_current",
-                "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
-                "ref_parent_sha",  # Drop the left-side join key
-                "pmd_parent_sha",  # [NEW] Drop right-side alias
-                "repository"
-            ], strict=False)  # [NEW] strict=False prevents errors if columns are missing
         )
 
-        return final_df
+        # 7. Cleanup: Robust Drop (Defensive Coding)
+        cols_to_remove = {
+            "rule_current", "start_current", "end_current", "priority_current", "message_current",
+            "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
+            "ref_parent_sha",
+            "pmd_parent_sha",
+            "repository", "type", "file_path"
+        }
+
+        # [FIX] Use select(pl.exclude()) pattern.
+        # This is safe because if a column in the set doesn't exist, pl.exclude simply ignores it.
+        # It avoids the need to check the schema entirely (fixing the PerformanceWarning too).
+        return final_df.select(pl.exclude(cols_to_remove))

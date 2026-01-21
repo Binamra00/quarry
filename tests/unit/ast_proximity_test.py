@@ -207,8 +207,14 @@ def test_windows_absolute_path_normalization(mock_paths):
         "lineage_path": str(mock_paths["lin"])
     }, None).collect()
 
+    # 1. Normalization verification:
+    # If the Windows backslashes weren't normalized to Unix slashes,
+    # this join would return 0 rows. The fact that it is 1 proves normalization worked.
     assert len(df) == 1
-    assert df["file_path"][0] == "src/org/App.java"
+
+    # 2. [DELETED] assert df["file_path"][0] == "src/org/App.java"
+    # This column was dropped for ML hygiene.
+
     assert df["score_AST_Proximity"][0] == 1.0
 
 

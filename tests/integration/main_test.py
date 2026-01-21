@@ -130,7 +130,7 @@ def test_circuit_breaker_failure(mock_sys_argv, mock_dependencies):
             patch("pipeline.main.RunToolCommand") as mock_tool_cmd, \
             patch("pipeline.main.MetadataAdapter"), \
             patch(
-                "pipeline.main.ToolFactory.create_adapters") as mock_create_adapters:  # [FIX] We need to mock this return value
+                "pipeline.main.ToolFactory.create_adapters") as mock_create_adapters:  # [TEST SETUP] We need to mock this return value
 
         # 1. Setup the Mining Phase to produce 2 dummy adapters
         mock_create_adapters.return_value = ["refm_adapter", "pmd_adapter"]
