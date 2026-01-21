@@ -83,7 +83,7 @@ class ASTProximityStrategy(IHeuristicStrategy):
             )
 
             # 4. [NEW] Calculate Spatial Booleans FIRST
-            # This is the raw truth: Is the smell fully contained within the refactoring bounds ?
+            # This is the raw truth: Is the smell fully contained within the refactoring bounds?
             # Boundary Logic: INCLUSIVE [start, end].
             # Design Decision: We enforce STRICT CONTAINMENT.
             # Partial overlaps (e.g., smell 15-25 vs refactoring 10-20) are ignored to ensure
