@@ -166,7 +166,7 @@ def main():
         tool_name = command.get_tool_name()
 
         # Dependency Guard: The Heuristic Engine is a CONSUMER.
-        # It must strict-fail if the upstream pipeline is unhealthy.
+        # It must fail if the upstream pipeline is unhealthy.
         if isinstance(command, RunHeuristicsCommand):
             if not pipeline_healthy:
                 print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")

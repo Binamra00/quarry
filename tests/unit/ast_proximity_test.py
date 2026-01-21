@@ -37,10 +37,10 @@ def create_pmd_7_record(sha, filename, rule, start, end):
 
 # tests/unit/ast_proximity_test.py
 
-def create_ref_record(sha, filename, type, l_start, l_end, r_start, r_end, right_filename=None):
+def create_ref_record(sha, filename, ref_type, l_start, l_end, r_start, r_end, right_filename=None):
     """
     Helper to create RefactoringMiner mock records.
-    [UPDATED]: Allows different filenames for left/right (Rename scenarios).
+    [UPDATED]: Allows specifying different filenames for left/right sides (Moves/Renames).
     """
     if right_filename is None:
         right_filename = filename
@@ -49,8 +49,8 @@ def create_ref_record(sha, filename, type, l_start, l_end, r_start, r_end, right
         "repository": "dummy_repo",
         "sha1": sha,
         "refactorings": [{
-            "type": type,
-            "description": f"{type} at {filename}",
+            "type": ref_type,
+            "description": f"{ref_type} at {filename}",
             # [CRITICAL]: Structure matches new DTOLoader schema
             "leftSideLocations": [{"filePath": filename, "startLine": l_start, "endLine": l_end}],
             "rightSideLocations": [{"filePath": right_filename, "startLine": r_start, "endLine": r_end}]

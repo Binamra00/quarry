@@ -7,6 +7,7 @@ from pipeline.main import main
 class FakeToolCommand:
     """Helper to mock RunToolCommand instances with specific success/fail outcomes."""
     def __init__(self, adapter=None, name="MockTool", success=True):
+        # NOTE: `adapter` is accepted to mirror the RunToolCommand interface but is not used.
         self.name = name
         self.success = success
 
