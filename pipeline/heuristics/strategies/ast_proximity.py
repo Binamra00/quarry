@@ -83,7 +83,7 @@ class ASTProximityStrategy(IHeuristicStrategy):
             )
 
             # 4. [NEW] Calculate Spatial Booleans FIRST
-            # This is the raw truth: Did the refactoring overlap the smell?
+            # This is the raw truth: Is the smell fully contained within the refactoring bounds ?
             .with_columns([
                 (
                         (pl.col("rule_parent").is_not_null()) &
