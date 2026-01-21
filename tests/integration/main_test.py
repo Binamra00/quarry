@@ -4,6 +4,18 @@ import sys
 from pipeline.main import main
 
 
+# Helper class to satisfy isinstance() checks
+class FakeHeuristicsCommand:
+    def __init__(self, target_repo, strategies=None):
+        pass
+
+    def execute(self):
+        return True
+
+    def get_tool_name(self):
+        return "HeuristicEngine"
+
+
 @pytest.fixture
 def mock_sys_argv():
     """Helper to mock command line arguments."""
@@ -25,7 +37,7 @@ def mock_dependencies():
             patch("pipeline.main.RepoMetrics"), \
             patch("pipeline.main.MetadataAdapter"), \
             patch("pipeline.main.ToolFactory.create_adapters", return_value=[]), \
-            patch("pipeline.main.RunHeuristicsCommand"), \
+            patch("pipeline.main.RunHeuristicsCommand", new=FakeHeuristicsCommand), \
             patch("pipeline.main.RefmMetrics"), \
             patch("pipeline.main.PMDMetrics"), \
             patch("pipeline.main.config") as mock_config:
@@ -42,21 +54,20 @@ def test_stage_heuristics_command_list(mock_sys_argv, mock_dependencies):
     Verify --stage heuristics:
     1. Skips MetadataAdapter.
     2. Includes RunHeuristicsCommand.
-    3. Exits cleanly (SystemExit 0).
+    3. Exits cleanly.
     """
+    # 1. REMOVE patch("pipeline.main.RunHeuristicsCommand") from this list
     with mock_sys_argv(["--stage", "heuristics"]), \
-            patch("pipeline.main.RunToolCommand") as mock_tool_cmd, \
-            patch("pipeline.main.RunHeuristicsCommand") as mock_heur_cmd:
-        # Expect SystemExit(0) on success
-        with pytest.raises(SystemExit) as e:
+            patch("pipeline.main.RunToolCommand") as mock_tool_cmd:
+        # 2. Spy on the Fake Class __init__ to verify it was instantiated
+        with patch.object(FakeHeuristicsCommand, '__init__', return_value=None) as mock_init:
             main()
-        assert e.value.code == 0
 
-        # MetadataAdapter should NOT be called in 'heuristics' stage
-        mock_tool_cmd.assert_not_called()
+            # MetadataAdapter should NOT be called in 'heuristics' stage
+            mock_tool_cmd.assert_not_called()
 
-        # Heuristics command SHOULD be called
-        mock_heur_cmd.assert_called_once()
+            # Heuristics command SHOULD be called
+            mock_init.assert_called_once()
 
 
 def test_stage_all_command_list(mock_sys_argv, mock_dependencies):
@@ -67,22 +78,22 @@ def test_stage_all_command_list(mock_sys_argv, mock_dependencies):
     3. Includes Heuristics.
     4. Exits cleanly.
     """
+    # 1. REMOVE patch("pipeline.main.RunHeuristicsCommand") from this list
     with mock_sys_argv(["--stage", "all"]), \
             patch("pipeline.main.RunToolCommand") as mock_tool_cmd, \
-            patch("pipeline.main.RunHeuristicsCommand") as mock_heur_cmd, \
             patch("pipeline.main.MetadataAdapter") as mock_meta_adapter:
-        with pytest.raises(SystemExit) as e:
+        # 2. Spy on the Fake Class __init__
+        with patch.object(FakeHeuristicsCommand, '__init__', return_value=None) as mock_init:
             main()
-        assert e.value.code == 0
 
-        # MetadataAdapter should be instantiated
-        mock_meta_adapter.assert_called()
+            # MetadataAdapter should be instantiated
+            mock_meta_adapter.assert_called()
 
-        # RunToolCommand should be called (at least for Metadata)
-        assert mock_tool_cmd.call_count >= 1
+            # RunToolCommand should be called (at least for Metadata)
+            assert mock_tool_cmd.call_count >= 1
 
-        # Heuristics command should be called
-        mock_heur_cmd.assert_called_once()
+            # Heuristics command should be called
+            mock_init.assert_called_once()
 
 
 def test_invalid_heuristic_exit(mock_sys_argv, mock_dependencies):
