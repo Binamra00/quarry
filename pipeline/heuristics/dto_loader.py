@@ -64,11 +64,17 @@ class DTOLoader:
             .explode("refactorings")
             .unnest("refactorings")
             .with_columns([
-                # Path Symmetry Logic
+                # 1. Left Side Path (parent / Old Location)
                 pl.col("leftSideLocations").list.first().struct.field("filePath")
                 .str.replace_all(r"\\", "/")
                 .str.replace(r"^.*?(src|source|lib)/", r"$1/", literal=False)
-                .alias("file_path"),
+                .alias("left_side_path"),
+
+                # 2. Right Side Path (current / New Location)
+                pl.col("rightSideLocations").list.first().struct.field("filePath")
+                .str.replace_all(r"\\", "/")
+                .str.replace(r"^.*?(src|source|lib)/", r"$1/", literal=False)
+                .alias("right_side_path"),
 
                 # PARENT Coordinates
                 pl.col("leftSideLocations").list.first().struct.field("startLine").alias("start_line_ref_left"),
@@ -78,8 +84,16 @@ class DTOLoader:
                 pl.col("rightSideLocations").list.first().struct.field("startLine").alias("start_line_ref_right"),
                 pl.col("rightSideLocations").list.first().struct.field("endLine").alias("end_line_ref_right"),
 
+                # Metadata
                 pl.col("type").alias("refactoring_type"),
                 pl.col("description")
+            ])
+            # [FIX]: Robust File Path Definition (Coalesce Right -> Left)
+            # This is the SINGLE source of truth for file_path now.
+            # IMPORTANT: When right_side_path is null/empty (e.g., 'Remove Method'),
+            # we fall back to left_side_path to ensure the row is not dropped.
+            .with_columns([
+                pl.coalesce([pl.col("right_side_path"), pl.col("left_side_path")]).alias("file_path")
             ])
             .filter(pl.col("file_path").is_not_null())
             .drop(["leftSideLocations", "rightSideLocations"])

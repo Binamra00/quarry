@@ -7,7 +7,8 @@ from pipeline.heuristics.dto_loader import DTOLoader
 class ASTProximityStrategy(IHeuristicStrategy):
     """
     Implementation of AST Spatial Proximity Heuristic.
-    Returns ALL potential candidates (Score 1.0 and 0.0) to avoid ML bias.
+
+    [UPGRADE]: Includes 'left_smell' and 'right_smell' booleans for explicit state tracking.
     """
 
     MATCH_SCORE = 1.0
@@ -39,9 +40,15 @@ class ASTProximityStrategy(IHeuristicStrategy):
         else:
             refactorings = data
         pmd = DTOLoader.load_pmd(pmd_path)
-        lineage = DTOLoader.load_lineage(lineage_path)
+        # [FIX] Explicit Projection & Aliasing (Standard ETL Pattern)
+        # We strictly select only the join keys we need to avoid polluting the namespace.
+        lineage = DTOLoader.load_lineage(lineage_path).select([
+            pl.col("commit_sha"),
+            pl.col("parent_sha").alias("ref_parent_sha")
+        ])
 
-        # 2. Attach Parent SHA (Crucial for causality)
+        # 2. Attach Parent SHA (Explicit Rename to avoid ambiguity)
+        # We rename 'parent_sha' to 'ref_parent_sha' to distinguish it from PMD columns
         refactorings = refactorings.join(lineage, on="commit_sha", how="left")
 
         # 3. Dual-Lookup (Past + Present)
@@ -56,52 +63,63 @@ class ASTProximityStrategy(IHeuristicStrategy):
                     "priority": "priority_current",
                     "message": "message_current"
                 }),
-                on=["commit_sha", "file_path"],
+                left_on=["commit_sha", "right_side_path"],  # Explicitly use Right (Current) Path
+                right_on=["commit_sha", "file_path"],
                 how="left"
             )
             # JOIN B: Check Parent Commit (Fixed?)
             .join(
                 pmd.rename({
-                    "commit_sha": "parent_sha",
+                    "commit_sha": "pmd_parent_sha",
                     "rule_name": "rule_parent",
                     "start_line": "start_parent",
                     "end_line": "end_parent",
                     "priority": "priority_parent",
                     "message": "message_parent"
                 }),
-                left_on=["parent_sha", "file_path"],
-                right_on=["parent_sha", "file_path"],
+                left_on=["ref_parent_sha", "left_side_path"],  # Explicitly use Left (Parent) Path
+                right_on=["pmd_parent_sha", "file_path"],
                 how="left"
             )
 
-            # 4. Coordinate-Aware Spatial Scoring
-            # We determine if the smell is INSIDE the refactoring bounds.
-            .with_columns(
-                pl.when(
-                    # Scenario A: Persistent (Check CHILD smell vs CHILD refactoring)
-                    (pl.col("rule_current").is_not_null() &
-                     (pl.col("start_current") >= pl.col("start_line_ref_right")) &
-                     (pl.col("end_current") <= pl.col("end_line_ref_right"))) |
+            # 4. [NEW] Calculate Spatial Booleans FIRST
+            # This is the raw truth: Is the smell fully contained within the refactoring bounds?
+            # Boundary Logic: INCLUSIVE [start, end].
+            # Design Decision: We enforce STRICT CONTAINMENT.
+            # Partial overlaps (e.g., smell 15-25 vs refactoring 10-20) are ignored to ensure
+            # high statistical confidence that the refactoring interacts with the smell.
+            .with_columns([
+                (
+                        (pl.col("rule_parent").is_not_null()) &
+                        (pl.col("start_parent") >= pl.col("start_line_ref_left")) &
+                        (pl.col("end_parent") <= pl.col("end_line_ref_left"))
+                ).fill_null(False).alias("left_smell"),  # Was it there before? (Parent)
 
-                    # Scenario B: Fixed (Check PARENT smell vs PARENT refactoring)
-                    (pl.col("rule_parent").is_not_null() &
-                     (pl.col("start_parent") >= pl.col("start_line_ref_left")) &
-                     (pl.col("end_parent") <= pl.col("end_line_ref_left")))
-                )
+                (
+                        (pl.col("rule_current").is_not_null()) &
+                        (pl.col("start_current") >= pl.col("start_line_ref_right")) &
+                        (pl.col("end_current") <= pl.col("end_line_ref_right"))
+                ).fill_null(False).alias("right_smell")  # Is it there now? (Current)
+            ])
+
+            # 5. Score & Causality (Derived from Booleans)
+            .with_columns([
+                # Score: 1.0 if it overlaps on EITHER side
+                pl.when(pl.col("left_smell") | pl.col("right_smell"))
                 .then(self.MATCH_SCORE)
                 .otherwise(self.NO_MATCH_SCORE)
-                .alias("score_AST_Proximity")
-            )
+                .alias("score_AST_Proximity"),
 
-            # 5. Metadata: Causality Type
-            .with_columns(
-                pl.when(pl.col("rule_current").is_null() & pl.col("rule_parent").is_not_null())
+                # Causality: Explicit Logic
+                pl.when(pl.col("left_smell") & ~pl.col("right_smell"))
                 .then(pl.lit("Fixed"))
-                .when(pl.col("rule_current").is_not_null())
+                .when(pl.col("left_smell") & pl.col("right_smell"))
                 .then(pl.lit("Persistent"))
+                .when(~pl.col("left_smell") & pl.col("right_smell"))
+                .then(pl.lit("Introduction"))  # [Bonus] Now we track regressions!
                 .otherwise(pl.lit("None"))
                 .alias("causality_type")
-            )
+            ])
 
             # 6. Coalesce Logic: Unified View
             .with_columns([
@@ -111,14 +129,18 @@ class ASTProximityStrategy(IHeuristicStrategy):
                 pl.coalesce(["priority_current", "priority_parent"]).alias("pmd_priority_score"),
                 pl.coalesce(["message_current", "message_parent"]).alias("message")
             ])
-
-            # 7. Cleanup: Drop intermediate join columns, keep everything else
-            # [FIX] We switch from .select() to .drop() so Heuristic A's columns (complexity_score) pass through.
-            .drop([
-                "rule_current", "start_current", "end_current", "priority_current", "message_current",
-                "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
-                "parent_sha", "repository"
-            ])
         )
 
-        return final_df
+        # 7. Cleanup: Robust Drop (Defensive Coding)
+        cols_to_remove = {
+            "rule_current", "start_current", "end_current", "priority_current", "message_current",
+            "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
+            "ref_parent_sha",
+            "pmd_parent_sha",
+            "repository", "type", "file_path"
+        }
+
+        # [FIX] Use select(pl.exclude()) pattern.
+        # This is safe because if a column in the set doesn't exist, pl.exclude simply ignores it.
+        # It avoids the need to check the schema entirely (fixing the PerformanceWarning too).
+        return final_df.select(pl.exclude(cols_to_remove))

@@ -37,18 +37,23 @@ def create_pmd_7_record(sha, filename, rule, start, end):
 
 # tests/unit/ast_proximity_test.py
 
-def create_ref_record(sha, filename, type, l_start, l_end, r_start, r_end):
+def create_ref_record(sha, filename, refactoring_type, l_start, l_end, r_start, r_end, right_filename=None):
     """
-    Helper to create RefactoringMiner mock records with left/right coordinates.
+    Helper to create RefactoringMiner mock records.
+    [UPDATED]: Allows specifying different filenames for left/right sides (Moves/Renames).
     """
+    if right_filename is None:
+        right_filename = filename
+
     return {
-        "repository": "dummy_repo",  # [FIX] Added required schema field
+        "repository": "dummy_repo",
         "sha1": sha,
         "refactorings": [{
-            "type": type,
-            "description": f"{type} at {filename}",
+            "type": refactoring_type,
+            "description": f"{refactoring_type} at {filename}",
+            # [CRITICAL]: Structure matches new DTOLoader schema
             "leftSideLocations": [{"filePath": filename, "startLine": l_start, "endLine": l_end}],
-            "rightSideLocations": [{"filePath": filename, "startLine": r_start, "endLine": r_end}]
+            "rightSideLocations": [{"filePath": right_filename, "startLine": r_start, "endLine": r_end}]
         }]
     }
 
@@ -79,53 +84,106 @@ def test_spatial_bva_exact_match(mock_paths):
 
 def test_spatial_bva_one_line_outside(mock_paths):
     """
-    BVA: Smell starts 1 line before refactoring.
-    Should return 1 candidate with Score 0.0 (Negative Sample for ML).
+    Test Case: Boundary Value Analysis - One Line Outside.
+    Refactoring: 10-20. Smell: 21 (Start).
+    Result should be NONE (Score 0.0), because it strictly falls outside.
     """
+    # 1. Refactoring Data (Explicit - Bypassing DTO to test Logic)
+    ref_df = pl.DataFrame({
+        "repository": ["dummy_repo"],
+        "commit_sha": ["c1"],
+        "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method public foo..."],
+        "left_side_path": ["src/A.java"],
+        "right_side_path": ["src/A.java"],
+        "file_path": ["src/A.java"],  # Primary path
+        # Refactoring Range: 10-20
+        "start_line_ref_left": [10], "end_line_ref_left": [20],
+        "start_line_ref_right": [10], "end_line_ref_right": [20]
+    }).lazy()
+
+    # 2. Lineage
     with open(mock_paths["lin"], "w") as f:
-        f.write(json.dumps({"commit_sha": "child", "parent_sha": "parent"}) + "\n")
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
 
-    # Refactoring 10-20, Smell 9-20 (Parent)
-    with open(mock_paths["ref"], "w") as f:
-        f.write(json.dumps(create_ref_record("child", "src/A.java", "Extract", 10, 20, 10, 20)) + "\n")
+    # 3. PMD History
     with open(mock_paths["pmd"], "w") as f:
-        f.write(json.dumps(create_pmd_7_record("parent", "src/A.java", "Complexity", 9, 20)) + "\n")
+        # Parent: Smell at 21 (Just outside 10-20) -> Should NOT match
+        f.write(json.dumps(create_pmd_7_record("p1", "src/A.java", "Rule1", 21, 25)) + "\n")
+        # Current: Smell at 21 -> Should NOT match
+        f.write(json.dumps(create_pmd_7_record("c1", "src/A.java", "Rule1", 21, 25)) + "\n")
 
-    df = ASTProximityStrategy().execute({
-        "refactorings_path": str(mock_paths["ref"]),
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),  # Unused by logic but required by check
         "pmd_path": str(mock_paths["pmd"]),
         "lineage_path": str(mock_paths["lin"])
-    }, None).collect()
+    }
 
-    assert len(df) == 1
-    assert df["score_AST_Proximity"][0] == 0.0  # Fails spatial overlap
-    assert df["causality_type"][0] == "Fixed"  # Temporal link still exists
+    # We pass the dataframe directly
+    result = strategy.execute(context, ref_df).collect()
+
+    # 5. Assertions
+    # Should be 0.0 because it is outside the range
+    assert result["score_AST_Proximity"][0] == 0.0
+
+    # Explicit assertion to verify causality classification for out-of-range smells
+    assert result["causality_type"][0] == "None"
+
+    assert result["left_smell"][0] is False
+    assert result["right_smell"][0] is False
 
 
 # --- 2. Edge Case: Coordinate Shift ---
 
 def test_persistent_with_coordinate_shift(mock_paths):
-    """Edge Case: Smell persists but shifted line numbers in child commit."""
+    """
+    Test Case: Persistent Smell with Coordinate Shift.
+    Parent: Ref(10-20), Smell(10-20) -> Match
+    Current: Ref(30-40), Smell(30-40) -> Match
+    Result: Persistent
+    """
+    # 1. Refactoring Data (Explicit)
+    ref_df = pl.DataFrame({
+        "repository": ["dummy_repo"],
+        "commit_sha": ["c1"],
+        "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method..."],
+        "left_side_path": ["src/A.java"],
+        "right_side_path": ["src/A.java"],
+        "file_path": ["src/A.java"],
+        # Parent Range: 10-20
+        "start_line_ref_left": [10], "end_line_ref_left": [20],
+        # Current Range: 30-40 (Shifted)
+        "start_line_ref_right": [30], "end_line_ref_right": [40]
+    }).lazy()
+
+    # 2. Lineage
     with open(mock_paths["lin"], "w") as f:
-        f.write(json.dumps({"commit_sha": "child", "parent_sha": "parent"}) + "\n")
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
 
-    # Refactoring shifted from Parent (10-20) to Child (50-60)
-    with open(mock_paths["ref"], "w") as f:
-        f.write(json.dumps(create_ref_record("child", "src/A.java", "Move", 10, 20, 50, 60)) + "\n")
-
+    # 3. PMD History
     with open(mock_paths["pmd"], "w") as f:
-        # Smell is now at line 55 in child commit
-        f.write(json.dumps(create_pmd_7_record("child", "src/A.java", "Complexity", 55, 55)) + "\n")
+        # Parent: Smell at 10-20 (Matches Left)
+        f.write(json.dumps(create_pmd_7_record("p1", "src/A.java", "Rule1", 10, 20)) + "\n")
+        # Current: Smell at 30-40 (Matches Right)
+        f.write(json.dumps(create_pmd_7_record("c1", "src/A.java", "Rule1", 30, 40)) + "\n")
 
-    df = ASTProximityStrategy().execute({
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
         "refactorings_path": str(mock_paths["ref"]),
         "pmd_path": str(mock_paths["pmd"]),
         "lineage_path": str(mock_paths["lin"])
-    }, None).collect()
+    }
+    result = strategy.execute(context, ref_df).collect()
 
-    assert len(df) == 1
-    assert df["score_AST_Proximity"][0] == 1.0
-    assert df["causality_type"][0] == "Persistent"
+    # 5. Assertions
+    assert result["score_AST_Proximity"][0] == 1.0
+    assert result["causality_type"][0] == "Persistent"
+    assert result["left_smell"][0] is True
+    assert result["right_smell"][0] is True
 
 
 # --- 3. Path Normalization Edge Case ---
@@ -149,8 +207,14 @@ def test_windows_absolute_path_normalization(mock_paths):
         "lineage_path": str(mock_paths["lin"])
     }, None).collect()
 
+    # 1. Normalization verification:
+    # If the Windows backslashes weren't normalized to Unix slashes,
+    # this join would return 0 rows. The fact that it is 1 proves normalization worked.
     assert len(df) == 1
-    assert df["file_path"][0] == "src/org/App.java"
+
+    # Note: Previously asserted df["file_path"][0] == "src/org/App.java" but this
+    # column was dropped for ML hygiene.
+
     assert df["score_AST_Proximity"][0] == 1.0
 
 
@@ -164,6 +228,9 @@ def test_chaining_preserves_columns(mock_paths):
     incoming_df = pl.DataFrame({
         "repository": ["dummy_path"],
         "commit_sha": ["c1"],
+        # [NEW] Explicit Left/Right paths required by the updated Strategy
+        "left_side_path": ["src/A.java"],
+        "right_side_path": ["src/A.java"],
         "file_path": ["src/A.java"],
         "refactoring_type": ["Extract Method"],
         "start_line_ref_left": [10],
@@ -199,3 +266,138 @@ def test_chaining_preserves_columns(mock_paths):
     # 5. Verify AST work was added
     assert "score_AST_Proximity" in result.columns
     assert result["score_AST_Proximity"][0] == 1.0
+
+
+def test_true_fix_detection(mock_paths):
+    """
+    Test Case: Strong Causality (True Fix).
+    Smell exists in Parent, but NOT in Current.
+    """
+    # 1. Setup Data
+    # Refactoring: 10-20 (Parent) -> 10-20 (Current)
+    ref_df = pl.DataFrame({
+        "repository": ["dummy_repo"],
+        "commit_sha": ["c1"],
+        "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method..."],
+        "left_side_path": ["src/A.java"],
+        "right_side_path": ["src/A.java"],
+        "file_path": ["src/A.java"],
+        "start_line_ref_left": [10], "end_line_ref_left": [20],
+        "start_line_ref_right": [10], "end_line_ref_right": [20]
+    }).lazy()
+
+    # 2. Lineage
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
+
+    # 3. PMD: Smell ONLY in Parent (p1)
+    with open(mock_paths["pmd"], "w") as f:
+        f.write(json.dumps(create_pmd_7_record("p1", "src/A.java", "Rule1", 12, 15)) + "\n")
+        # Current commit (c1) has NO smells
+
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+    result = strategy.execute(context, ref_df).collect()
+
+    # 5. Assert
+    assert result["score_AST_Proximity"][0] == 1.0
+    assert result["causality_type"][0] == "Fixed"
+
+    # [NEW] Verify Explainability Booleans
+    assert result["left_smell"][0] is True
+    assert result["right_smell"][0] is False
+
+
+def test_rename_file_persistence(mock_paths):
+    """
+    [NEW] Test Case: File Rename Support (Scenario B).
+    The file is renamed from 'src/Old.java' to 'src/New.java'.
+    The smell persists across the rename.
+    """
+    # 1. Lineage
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
+
+    # 2. Refactoring (Rename Class)
+    # Uses the updated helper to create split paths
+    with open(mock_paths["ref"], "w") as f:
+        f.write(json.dumps(create_ref_record(
+            "c1", "src/Old.java", "Rename Class",
+            10, 20, 10, 20,
+            right_filename="src/New.java"  # <--- Key Change
+        )) + "\n")
+
+    # 3. PMD History
+    with open(mock_paths["pmd"], "w") as f:
+        # Parent Commit: Smell is in 'Old.java'
+        f.write(json.dumps(create_pmd_7_record("p1", "src/Old.java", "Complex", 12, 15)) + "\n")
+        # Current Commit: Smell is in 'New.java'
+        f.write(json.dumps(create_pmd_7_record("c1", "src/New.java", "Complex", 12, 15)) + "\n")
+
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+    result = strategy.execute(context, None).collect()
+
+    # 5. Assert
+    assert result["score_AST_Proximity"][0] == 1.0
+    assert result["causality_type"][0] == "Persistent"
+    # Verify we tracked it to the new file
+    assert result["right_side_path"][0] == "src/New.java"
+    # [NEW] Verify Explainability Booleans
+    assert result["left_smell"][0] is True
+    assert result["right_smell"][0] is True
+
+
+def test_introduction_detection(mock_paths):
+    """
+    [NEW] Test Case: Introduction (Regression).
+    Smell did NOT exist in Parent, but DOES exist in Current.
+    """
+    # 1. Refactoring Data
+    ref_df = pl.DataFrame({
+        "repository": ["dummy_repo"],
+        "commit_sha": ["c1"],
+        "refactoring_type": ["Extract Method"],
+        "description": ["Extract Method..."],
+        "left_side_path": ["src/A.java"],
+        "right_side_path": ["src/A.java"],
+        "file_path": ["src/A.java"],
+        "start_line_ref_left": [10], "end_line_ref_left": [20],
+        "start_line_ref_right": [10], "end_line_ref_right": [20],
+    }).lazy()
+
+    # 2. Lineage
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
+
+    # 3. PMD History (Smell ONLY in Current)
+    with open(mock_paths["pmd"], "w") as f:
+        # Parent: Clean
+        # Current: Has Smell
+        f.write(json.dumps(create_pmd_7_record("c1", "src/A.java", "Complex", 12, 15)) + "\n")
+
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+    result = strategy.execute(context, ref_df).collect()
+
+    # 5. Assertions
+    assert result["score_AST_Proximity"][0] == 1.0
+    assert result["causality_type"][0] == "Introduction"
+    assert result["left_smell"][0] is False
+    assert result["right_smell"][0] is True

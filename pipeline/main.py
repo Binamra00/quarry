@@ -158,18 +158,40 @@ def main():
             print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
             sys.exit(1)
 
-    # --- 5. Execution Loop ---
+    # --- 5. Execution Loop (Circuit Breaker Pattern) ---
     execution_results = {}
+    pipeline_healthy = True
+
     for command in commands:
         tool_name = command.get_tool_name()
+
+        # Dependency Guard: The Heuristic Engine is a CONSUMER.
+        # It must fail if the upstream pipeline is unhealthy.
+        if isinstance(command, RunHeuristicsCommand):
+            if not pipeline_healthy:
+                print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")
+                execution_results[tool_name] = False
+                continue  # Skips the execute() call below
+
+        # Execute the tool
         success = command.execute()
         execution_results[tool_name] = success
 
-        if not success and args.stage != "all":
-            print(f"\n❌ Critical Failure in {tool_name}. Aborting.")
-            sys.exit(1)
+        if not success:
+            print(f"⚠️ {tool_name} failed or was interrupted. Marking pipeline as UNHEALTHY.")
+            pipeline_healthy = False
+            # [CRITICAL]: We DO NOT exit here. We continue the loop so
+            # other independent miners (like PMD) can still run and save state,
+            # even though the pipeline will ultimately exit with an error status.
 
-    # --- 6. Metrics Calculation ---
+    # --- 6. Finalization ---
+    # We exit with error if ANY tool failed, ensuring CI/CD knows this run was partial.
+    if not pipeline_healthy:
+        print("\n❌ Pipeline completed with errors. Ground Truth was NOT generated.")
+        print("Execution Summary:", execution_results)
+        sys.exit(1)
+
+    # Only run Metrics if the pipeline was completely healthy
     print("\n--- 🏁 Pipeline Completion Report ---\n")
 
     if args.stage in ["all", "refm", "history"]:
@@ -184,12 +206,9 @@ def main():
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
-    if all(execution_results.values()):
-        print("🎉 PIPELINE SUCCESS.")
-        sys.exit(0)
-    else:
-        print("⚠️ PIPELINE COMPLETED WITH ERRORS.")
-        sys.exit(1)
+    # [FIX] Removed unreachable 'if all()' check.
+    # Since we passed the 'if not pipeline_healthy' check above, success is guaranteed.
+    print("\n✅ SUCCESS: Pipeline finished successfully.")
 
 
 if __name__ == "__main__":
