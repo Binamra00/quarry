@@ -4,6 +4,19 @@ import sys
 from pipeline.main import main
 
 
+class FakeToolCommand:
+    """Helper to mock RunToolCommand instances with specific success/fail outcomes."""
+    def __init__(self, adapter=None, name="MockTool", success=True):
+        self.name = name
+        self.success = success
+
+    def get_tool_name(self):
+        return self.name
+
+    def execute(self):
+        return self.success
+
+
 # Helper class to satisfy isinstance() checks
 class FakeHeuristicsCommand:
     def __init__(self, target_repo, strategies=None):
@@ -105,3 +118,40 @@ def test_invalid_heuristic_exit(mock_sys_argv, mock_dependencies):
 
     assert pytest_wrapped_e.type == SystemExit
     assert pytest_wrapped_e.value.code == 1
+
+
+def test_circuit_breaker_failure(mock_sys_argv, mock_dependencies):
+    """
+    CRITICAL TEST: Verify Circuit Breaker Logic.
+    1. Setup: Upstream tool (RefactoringMiner) FAILS.
+    2. Expectation: Script Exits with Code 1 and Heuristics are SKIPPED.
+    """
+    with mock_sys_argv(["--stage", "all"]), \
+            patch("pipeline.main.RunToolCommand") as mock_tool_cmd, \
+            patch("pipeline.main.MetadataAdapter"), \
+            patch(
+                "pipeline.main.ToolFactory.create_adapters") as mock_create_adapters:  # [FIX] We need to mock this return value
+
+        # 1. Setup the Mining Phase to produce 2 dummy adapters
+        mock_create_adapters.return_value = ["refm_adapter", "pmd_adapter"]
+
+        # 2. Setup the Command Instances (NOT Booleans)
+        # Command 1: Metadata (Success)
+        cmd_meta = FakeToolCommand(name="Metadata", success=True)
+        # Command 2: RefMiner (FAILURE) <--- The Poison Pill
+        cmd_refm = FakeToolCommand(name="RefactoringMiner", success=False)
+        # Command 3: PMD (Success)
+        cmd_pmd = FakeToolCommand(name="PMD", success=True)
+
+        # 3. Assign these objects as the side_effect of the Constructor
+        mock_tool_cmd.side_effect = [cmd_meta, cmd_refm, cmd_pmd]
+
+        # 4. Spy on Heuristics
+        with patch.object(FakeHeuristicsCommand, 'execute') as mock_heur_exec:
+            # Expect SystemExit(1) because the pipeline is unhealthy
+            with pytest.raises(SystemExit) as e:
+                main()
+            assert e.value.code == 1
+
+            # ASSERTION: The Heuristic Engine must NOT have run
+            mock_heur_exec.assert_not_called()

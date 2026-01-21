@@ -6,9 +6,9 @@ from pipeline.heuristics.dto_loader import DTOLoader
 
 class ASTProximityStrategy(IHeuristicStrategy):
     """
-        Implementation of AST Spatial Proximity Heuristic.
+    Implementation of AST Spatial Proximity Heuristic.
 
-        [UPGRADE]: Includes 'left_smell' and 'right_smell' booleans for explicit state tracking.
+    [UPGRADE]: Includes 'left_smell' and 'right_smell' booleans for explicit state tracking.
     """
 
     MATCH_SCORE = 1.0
@@ -84,6 +84,8 @@ class ASTProximityStrategy(IHeuristicStrategy):
 
             # 4. [NEW] Calculate Spatial Booleans FIRST
             # This is the raw truth: Is the smell fully contained within the refactoring bounds ?
+            # Boundary Logic: INCLUSIVE [start, end].
+            # A smell at 10-20 IS contained in a refactoring at 10-20.
             .with_columns([
                 (
                         (pl.col("rule_parent").is_not_null()) &
@@ -127,12 +129,14 @@ class ASTProximityStrategy(IHeuristicStrategy):
             ])
 
             # 7. Cleanup: Drop intermediate join columns, keep everything else
-            # [FIX] We switch from .select() to .drop() so Heuristic A's columns (complexity_score) pass through.
+            # [FIX] We switch from .select() to .drop() so Heuristic A's columns pass through.
             .drop([
                 "rule_current", "start_current", "end_current", "priority_current", "message_current",
                 "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
-                "ref_parent_sha"  # Only drop the left side key (which definitely exists)
-            ])
+                "ref_parent_sha",  # Drop the left-side join key
+                "pmd_parent_sha",  # [NEW] Drop right-side alias
+                "repository"
+            ], strict=False)  # [NEW] strict=False prevents errors if columns are missing
         )
 
         return final_df

@@ -190,7 +190,7 @@ def main():
         print("Execution Summary:", execution_results)
         sys.exit(1)
 
-        # Only run Metrics if the pipeline was completely healthy
+    # Only run Metrics if the pipeline was completely healthy
     print("\n--- 🏁 Pipeline Completion Report ---\n")
 
     if args.stage in ["all", "refm", "history"]:
@@ -205,11 +205,9 @@ def main():
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
 
-    if all(execution_results.values()):
-        print("\n✅ SUCCESS: Pipeline finished successfully.")
-    else:
-        # This block is technically unreachable due to the check above, but good for safety
-        sys.exit(1)
+    # [FIX] Removed unreachable 'if all()' check.
+    # Since we passed the 'if not pipeline_healthy' check above, success is guaranteed.
+    print("\n✅ SUCCESS: Pipeline finished successfully.")
 
 
 if __name__ == "__main__":
