@@ -41,10 +41,12 @@ def run_command(
         if log_file_path:
             # OPTION A: Stream to File (Silent Mode / Debug Log)
             # Use append mode 'a' to prevent overwriting previous logs
-            with open(log_file_path, "a") as f:
+            # [FIX] Open file with UTF-8 to handle special characters in logs
+            with open(log_file_path, "a", encoding="utf-8") as f:
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
                 f.flush()  # Ensure header is written before subprocess writes
 
+                # [FIX] Force UTF-8 and ignore errors to prevent crashes on Windows
                 result = subprocess.run(
                     command,
                     cwd=cwd,
@@ -52,21 +54,27 @@ def run_command(
                     stderr=subprocess.STDOUT,
                     check=False,
                     timeout=timeout,
-                    text=True  # Ensure text mode so file writing works
+                    text=True,  # Ensure text mode so file writing works
+                    encoding='utf-8',  # FORCE UTF-8
+                    errors='replace'  # Replace bad characters with '?' instead of crashing
                 )
 
             # [FIX] Unindented: This assignment is part of return preparation, not file IO
             output_content = f"Log saved to {log_file_path.name}"
         else:
             # OPTION B: Capture to Memory (Standard)
+            # [FIX] Force UTF-8 and ignore errors to prevent crashes on Windows
             result = subprocess.run(
                 command,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=timeout
+                timeout=timeout,
+                encoding='utf-8',  # FORCE UTF-8
+                errors='replace'  # Replace bad characters with '?' instead of crashing
             )
+
             output_content = result.stdout.strip() + "\n" + result.stderr.strip()
 
         exit_code = result.returncode
