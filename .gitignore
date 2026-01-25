@@ -8,3 +8,4 @@ thesis_evidence_candidates.csv
 debug_heuristic.py
 .pytest_cache/
 validation/
+venv library root/
