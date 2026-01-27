@@ -3,9 +3,9 @@
 venv/
 workspace_data/
 __pycache__/
-temp_view_results.py
 thesis_evidence_candidates.csv
 debug_heuristic.py
 .pytest_cache/
 validation/
 venv library root/
+temp_generate_plots.py
