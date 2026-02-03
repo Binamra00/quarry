@@ -213,7 +213,7 @@ class PMDHistoryAdapter(IAdapter):
                                         for violation in file_obj.get('violations', []):
                                             score = self._extract_metric_score(
                                                 violation.get('rule', ''),
-                                                violation.get('description', '')
+                                                violation.get('description', violation.get('message', ''))
                                             )
                                             # Inject the score directly into the violation object
                                             violation['metric_value'] = score
