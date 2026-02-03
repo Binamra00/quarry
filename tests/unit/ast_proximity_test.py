@@ -14,7 +14,7 @@ def mock_paths(tmp_path):
     }
 
 
-def create_pmd_7_record(sha, filename, rule, start, end):
+def create_pmd_7_record(sha, filename, rule, start, end, score=10): # [CHANGED] Added score param with default
     """
     Helper to create PMD 7 double-nested mock records.
     Structure: sha -> list(file_obj -> list(violation_obj))
@@ -29,7 +29,8 @@ def create_pmd_7_record(sha, filename, rule, start, end):
                 "priority": 3,
                 "beginline": start,
                 "endline": end,
-                "description": "Mock violation"
+                "description": "Mock violation",
+                "metric_value": score  # [NEW] Include the score in the mock data
             }]
         }]
     }
@@ -401,3 +402,38 @@ def test_introduction_detection(mock_paths):
     assert result["causality_type"][0] == "Introduction"
     assert result["left_smell"][0] is False
     assert result["right_smell"][0] is True
+
+def test_amelioration_detection(mock_paths):
+    """
+    [NEW] Test Case: Amelioration (Revealed Preference).
+    Smell persists, but score drops (20 -> 10).
+    """
+    # 1. Lineage
+    with open(mock_paths["lin"], "w") as f:
+        f.write(json.dumps({"commit_sha": "c1", "parent_sha": "p1"}) + "\n")
+
+    # 2. Refactoring
+    with open(mock_paths["ref"], "w") as f:
+        f.write(json.dumps(create_ref_record("c1", "src/A.java", "Refactoring", 10, 20, 10, 20)) + "\n")
+
+    # 3. PMD History
+    with open(mock_paths["pmd"], "w") as f:
+        # Parent: Score 20
+        f.write(json.dumps(create_pmd_7_record("p1", "src/A.java", "Complex", 10, 20, score=20)) + "\n")
+        # Current: Score 10 (Improved!)
+        f.write(json.dumps(create_pmd_7_record("c1", "src/A.java", "Complex", 10, 20, score=10)) + "\n")
+
+    # 4. Execute
+    strategy = ASTProximityStrategy()
+    context = {
+        "refactorings_path": str(mock_paths["ref"]),
+        "pmd_path": str(mock_paths["pmd"]),
+        "lineage_path": str(mock_paths["lin"])
+    }
+    result = strategy.execute(context, None).collect()
+
+    # 5. Assertions
+    assert len(result) == 1
+    assert result["causality_type"][0] == "Ameliorated"
+    assert result["previous_pmd_score"][0] == 20
+    assert result["current_pmd_score"][0] == 10
