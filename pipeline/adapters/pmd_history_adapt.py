@@ -2,6 +2,7 @@ import json
 import time
 import tempfile
 import uuid
+import re
 from pathlib import Path
 from typing import List
 
@@ -10,6 +11,16 @@ from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
 from pipeline.utils.batch_state import BatchStateManager
 from pipeline.adapters.i_adapters import IAdapter
+
+
+# ==========================================
+# CONSTANTS (Module Level)
+# ==========================================
+# Pre-compiled patterns for performance
+# Matches: "The method 'foo' has a cyclomatic complexity of 10."
+CC_PATTERN = re.compile(r'complexity of (\d+)')
+# Matches: "The method 'foo' has an NCSS line count of 50."
+NCSS_PATTERN = re.compile(r'line count of (\d+)')
 
 
 class PMDHistoryAdapter(IAdapter):
@@ -65,6 +76,21 @@ class PMDHistoryAdapter(IAdapter):
         success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
         # [FIX] Ensure output is not empty/whitespace before converting to int
         return int(output.strip()) if success and output and output.strip() else 0
+
+    def _extract_metric_score(self, rule_name: str, message: str) -> int:
+        """
+        Internal Utility: Extracts raw numeric scores from PMD messages.
+        Returns 0 if no score is found.
+        """
+        match = None
+        if "CyclomaticComplexity" in rule_name:
+            match = CC_PATTERN.search(message)
+        elif "NcssCount" in rule_name:
+            match = NCSS_PATTERN.search(message)
+
+        if match:
+            return int(match.group(1))
+        return 0
 
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
@@ -180,6 +206,18 @@ class PMDHistoryAdapter(IAdapter):
                                 with open(temp_json_path, 'r') as temp_file:
                                     raw_json = json.load(temp_file)
                                     violation_data = raw_json.get("files", [])
+
+                                    # [NEW] Enriched Logic for Revealed Preference
+                                    # We extract the score now so the JSONL has it immediately
+                                    for file_obj in violation_data:
+                                        for violation in file_obj.get('violations', []):
+                                            score = self._extract_metric_score(
+                                                violation.get('rule', ''),
+                                                violation.get('description', '')
+                                            )
+                                            # Inject the score directly into the violation object
+                                            violation['metric_value'] = score
+
                                 success_count += 1
                                 run_status = "success"
                             except json.JSONDecodeError:
