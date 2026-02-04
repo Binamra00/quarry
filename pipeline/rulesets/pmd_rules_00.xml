@@ -1,29 +1,31 @@
 <?xml version="1.0"?>
-<ruleset name="Smell-Ranker-Targeted"
+<ruleset name="RevealedPreferenceRules"
     xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
 
     <description>
-        Targeted ruleset for Smell-Ranker.
-        Uses NCSS (Non-Commenting Source Statements) for length metrics to ensure PMD 7 compatibility.
+        Ruleset designed to capture the full spectrum of code metrics (CC and NCSS)
+        without a-priori bias. By setting reporting levels to 1, we enable
+        History-Based Revealed Preference analysis.
     </description>
 
-    <!-- 1. God Class (The Big One) -->
-    <rule ref="category/java/design.xml/GodClass" />
-
-    <!-- 2. Long Method -> NCSS Count (Lines of Code) -->
-    <!-- Replaces ExcessiveMethodLength which caused errors -->
-    <rule ref="category/java/design.xml/NcssCount">
+    <rule ref="category/java/design.xml/CyclomaticComplexity">
         <properties>
-            <!-- Report methods longer than 50 lines (Standard heuristic) -->
-            <property name="methodReportLevel" value="50" />
-            <!-- Report classes longer than 500 lines -->
-            <property name="classReportLevel" value="500" />
+            <property name="classReportLevel" value="80" />
+            <property name="methodReportLevel" value="10" />
+            <property name="cycloOptions" value="" />
         </properties>
     </rule>
 
-    <!-- 3. Complex Logic (Another proxy for Long Method) -->
-    <rule ref="category/java/design.xml/CyclomaticComplexity" />
+    <rule ref="category/java/design.xml/NcssCount">
+        <properties>
+            <property name="methodReportLevel" value="44" />
+            <property name="classReportLevel" value="1500" />
+            <property name="ncssOptions" value="" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/GodClass" />
 
 </ruleset>

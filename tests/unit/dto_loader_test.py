@@ -71,7 +71,7 @@ def test_path_normalization_multiple_src(mock_files):
 # --- 2. PMD Double-Nesting Tests ---
 
 def test_pmd_double_nesting(mock_files):
-    """Verify loader correctly extracting nested violations."""
+    """Verify loader correctly extracting nested violations and score."""
     data = {
         "sha": "abc",
         "status": "success",
@@ -81,7 +81,8 @@ def test_pmd_double_nesting(mock_files):
                 "rule": "GodClass",
                 "priority": 1,
                 "beginline": 10, "endline": 100,
-                "description": "Complex"
+                "description": "Complex",
+                "metric_value": 50  # <--- [NEW] Raw Score added here
             }]
         }]
     }
@@ -94,6 +95,9 @@ def test_pmd_double_nesting(mock_files):
     assert df["file_path"][0] == "src/App.java"
     assert df["rule_name"][0] == "GodClass"
     assert df["start_line"][0] == 10
+
+    # [NEW] Verify score extraction and renaming
+    assert df["pmd_complexity_score"][0] == 50
 
 
 # --- 3. Safety Tests (Empty Lists) ---

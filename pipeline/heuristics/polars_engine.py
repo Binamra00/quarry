@@ -30,34 +30,42 @@ class HeuristicEngine:
         """
         Internal Helper: Performs a fail-fast check to ensure
         we have Quality (PMD) data for every refactoring event.
+
+        [INDUSTRY STANDARD FIX]
+        Uses purely Lazy operations (Anti-Join) to count missing rows
+        without ever loading the dataset into Python memory.
         """
-        print("    🔍 Verifying Data Integrity...")
+        print("    🔍 Verifying Data Integrity (Lazy Mode)...")
 
         try:
-            # 1. Lazy scan of input files
-            refactoring_shas = pl.scan_ndjson(refactoring_path).select("sha1").unique().collect().get_column("sha1")
-            pmd_shas = pl.scan_ndjson(pmd_path).select("sha").unique().collect().get_column("sha")
+            # 1. Define Lazy Plans (No execution yet)
+            q_refs = pl.scan_ndjson(refactoring_path).select("sha1")
+            q_pmd = pl.scan_ndjson(pmd_path).select("sha")
 
-            refactoring_set = set(refactoring_shas)
-            pmd_set = set(pmd_shas)
+            # 2. Check for Missing Context using an ANTI-JOIN
+            # "Find rows in Refs that do NOT exist in PMD"
+            # This runs entirely in the optimized Query Engine (Rust)
+            missing_count = (
+                q_refs.join(q_pmd, left_on="sha1", right_on="sha", how="anti")
+                .select(pl.len())
+                .collect()  # Only materializes a single integer!
+                .item()
+            )
 
-            if len(refactoring_set) == 0:
+            # 3. Get total count for ratio calculation
+            total_refs = q_refs.select(pl.len()).collect().item()
+
+            if total_refs == 0:
                 print("    ℹ️  No refactoring commits found. Skipping integrity check.")
                 return
 
-            # 2. Find Missing Ground Truth
-            missing_ground_truth = refactoring_set - pmd_set
-
-            if len(missing_ground_truth) > 0:
+            if missing_count > 0:
                 print(f"    ⚠️  WARNING: Data Mismatch Detected!")
-                print(f"       Refactorings Found: {len(refactoring_set)} commits")
-                print(f"       PMD Profiles Found: {len(pmd_set)} commits")
-                print(
-                    f"       ❌ MISSING CONTEXT: {len(missing_ground_truth)} commits have Refactorings but NO PMD data.")
+                print(f"       Total Refactorings: {total_refs}")
+                print(f"       ❌ MISSING CONTEXT: {missing_count} commits have Refactorings but NO PMD data.")
 
-                miss_ratio = len(missing_ground_truth) / len(refactoring_set)
+                miss_ratio = missing_count / total_refs
 
-                # Use the configured instance-level fail-fast threshold
                 if miss_ratio > self.fail_fast_threshold:
                     raise RuntimeError(
                         f"CRITICAL: {miss_ratio:.1%} of refactoring data is missing PMD context. "
@@ -67,18 +75,12 @@ class HeuristicEngine:
                 print("    ✅ Integrity Verified: 100% Coverage.")
 
         except FileNotFoundError as e:
-            # Missing file: treat as graceful degradation but make it very visible.
             print(f"    ⚠️  Integrity Check Skipped (Missing File): {e}")
-            print("       Proceeding without integrity verification for the missing dataset.")
             return
 
         except (PolarsError, KeyError) as e:
-            # Parsing/Schema errors indicate potentially corrupted data: fail fast.
             print(f"    ❌ Integrity Check Failed (IO/Schema Error): {e}")
-            raise RuntimeError(
-                "Data integrity verification failed due to IO/Schema issues. "
-                "Aborting heuristics pipeline to avoid using corrupted data."
-            ) from e
+            raise RuntimeError("Aborting heuristics pipeline due to IO/Schema issues.") from e
 
     def _load_heuristic_seeds(self) -> Dict[str, Any]:
         """Loads the JSON configuration for heuristics."""
