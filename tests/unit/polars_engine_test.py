@@ -279,12 +279,15 @@ def test_integrity_check_corrupt_files(mock_paths):
     Scenario: Files exist but are malformed (PolarsError/SchemaError).
     Expected: RuntimeError (Fail Fast).
     """
-    # Create invalid file
+    # 1. Create the INVALID Ref file (The Trap)
     with open(mock_paths["ref"], "w") as f:
         f.write("THIS IS NOT JSONL")
 
+    # 2. [FIX] Create a VALID PMD file (Required to bypass the "Missing File" check)
+    with open(mock_paths["pmd"], "w") as f:
+        f.write('{"sha": "dummy", "violation": "none"}\n')
+
     engine = HeuristicEngine([MockStrategy()])
 
-    # [FIX] Update match string to align with actual engine exception
     with pytest.raises(RuntimeError, match="Aborting heuristics pipeline"):
         engine.run(mock_paths["ref"], mock_paths["pmd"], mock_paths["lin"], mock_paths["out"])
