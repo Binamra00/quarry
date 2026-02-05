@@ -39,7 +39,7 @@ class HeuristicEngine:
 
         try:
             # 1. Define Lazy Plans (No execution yet)
-            q_refs = pl.scan_ndjson(refactoring_path).select("sha1")
+            q_refs = pl.scan_ndjson(refactoring_path).select("sha1").unique()
             q_pmd = pl.scan_ndjson(pmd_path).select("sha")
 
             # 2. Check for Missing Context using an ANTI-JOIN
@@ -75,12 +75,15 @@ class HeuristicEngine:
                 print("    ✅ Integrity Verified: 100% Coverage.")
 
         except FileNotFoundError as e:
+            # Missing file: treat as graceful degradation but make it very visible.
             print(f"    ⚠️  Integrity Check Skipped (Missing File): {e}")
             return
 
         except (PolarsError, KeyError) as e:
             print(f"    ❌ Integrity Check Failed (IO/Schema Error): {e}")
-            raise RuntimeError("Aborting heuristics pipeline due to IO/Schema issues.") from e
+            raise RuntimeError(
+                f"Aborting heuristics pipeline during data integrity verification due to IO/Schema issues: {e}"
+            ) from e
 
     def _load_heuristic_seeds(self) -> Dict[str, Any]:
         """Loads the JSON configuration for heuristics."""
