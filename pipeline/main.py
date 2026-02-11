@@ -29,6 +29,10 @@ def main():
                         default="toy_project",
                         help="Target Repository. Can be a local folder name OR a GitHub URL.")
 
+    parser.add_argument("--version",
+                        default=None,
+                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0)")
+
     parser.add_argument("--stage",
                         choices=config.VALID_STAGES,
                         default="all",
