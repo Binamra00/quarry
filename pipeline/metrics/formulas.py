@@ -4,47 +4,61 @@ from typing import List, Dict
 
 
 # ==========================================
-# 1. Refactoring Logic Strategy
+# 1. Refactoring Logic Strategy (STREAMING EDITION)
 # ==========================================
 
-class IRefactoringLogic(ABC):
-    @abstractmethod
-    def is_impure(self, churn: int, operation_count: int) -> bool:
-        pass
-
-    @abstractmethod
-    def calculate_density(self, ref_commits: int, total_commits: int) -> float:
-        """Returns density as a raw ratio (0.0 to 1.0)."""
-        pass
-
-    @abstractmethod
-    def calculate_purity_score(self, pure_commits: int, total_ref_commits: int) -> float:
-        """Returns purity as a raw ratio (0.0 to 1.0)."""
-        pass
-
-
-class StandardRefactoringLogic(IRefactoringLogic):
+class IRefactoringAnalysisLogic(ABC):
     """
-    The 'Standard' Model: Linear relationships for churn and density.
+    Strategy Interface for calculating Refactoring metrics in a Streaming Architecture.
+    """
+
+    @abstractmethod
+    def calculate_commit_purity(self, refactorings: List[dict], total_churn: int) -> float:
+        """Returns a purity score (0.0 to 1.0) for a single commit."""
+        pass
+
+    @abstractmethod
+    def calculate_purity_aggregation(self, purity_scores: List[float]) -> float:
+        """Aggregates individual commit scores into a repository-wide average (0-100)."""
+        pass
+
+    @abstractmethod
+    def identify_hotspots(self, locations_map: Dict[str, int], limit: int) -> Dict[str, int]:
+        """Returns the top N most refactored files."""
+        pass
+
+
+class StandardRefactoringLogic(IRefactoringAnalysisLogic):
+    """
+    Standard implementation for RefactoringMiner metrics.
     """
 
     def __init__(self, churn_sensitivity: int = 20):
-        self.sensitivity = churn_sensitivity
+        self.churn_sensitivity = churn_sensitivity
 
-    def is_impure(self, churn: int, operation_count: int) -> bool:
-        return churn > (operation_count * self.sensitivity)
+    def calculate_commit_purity(self, refactorings: List[dict], total_churn: int) -> float:
+        if not refactorings:
+            return None
 
-    def calculate_density(self, ref_commits: int, total_commits: int) -> float:
-        # [FIX] Multi-line zero check
-        if total_commits == 0:
+        # Heuristic: Each refactoring 'explains' some churn (e.g., 20 lines).
+        explained_churn = len(refactorings) * self.churn_sensitivity
+
+        if total_churn <= 0:
+            return 1.0  # Pure refactoring (renames often have 0 line churn)
+
+        ratio = explained_churn / total_churn
+        return min(ratio, 1.0)  # Cap at 1.0
+
+    def calculate_purity_aggregation(self, purity_scores: List[float]) -> float:
+        if not purity_scores:
             return 0.0
-        return float(ref_commits) / total_commits
+        # Return average purity percentage (0-100)
+        return (sum(purity_scores) / len(purity_scores)) * 100
 
-    def calculate_purity_score(self, pure_commits: int, total_ref_commits: int) -> float:
-        # [FIX] Multi-line zero check
-        if total_ref_commits == 0:
-            return 0.0
-        return float(pure_commits) / total_ref_commits
+    def identify_hotspots(self, locations_map: Dict[str, int], limit: int) -> Dict[str, int]:
+        # Sort by frequency (descending) and take top N
+        sorted_hotspots = sorted(locations_map.items(), key=lambda x: x[1], reverse=True)[:limit]
+        return dict(sorted_hotspots)
 
 
 # ==========================================
