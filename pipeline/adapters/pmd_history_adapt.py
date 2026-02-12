@@ -34,9 +34,16 @@ class PMDHistoryAdapter(IAdapter):
         self.batch_size = batch_size
         self.state_manager = BatchStateManager(target_repo_path.name, "pmd_history")
         self.checkpoint_interval_seconds = 300
+        # Sampling State: Stores the set of interesting SHAs
+        self.sampling_filter = None
 
         # Output to a single JSONL file instead of a directory
         self.jsonl_output_path = config.OUTPUTS_PATH / f"pmd_history_{self.target_repo_path.name}.jsonl"
+
+    def set_sampling_filter(self, sampled_shas: set):
+        """[OVERRIDE] Configure the adapter to skip uninteresting commits."""
+        self.sampling_filter = sampled_shas
+        print(f"   🎯 Adapter Strategy Update: Filtering for {len(self.sampling_filter)} specific commits.")
 
     def get_tool_name(self) -> str:
         return f"PMD History (Stateful Batch: {self.batch_size})"
@@ -139,8 +146,25 @@ class PMDHistoryAdapter(IAdapter):
                 for i, commit_hash in enumerate(batch):
                     global_index = batch_start_index + i
 
-                    # 1. UI Update
-                    ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]")
+                    # [NEW] 0. Sampling Gate (The Filter)
+                    should_process = True
+                    if self.sampling_filter is not None:
+                        if commit_hash not in self.sampling_filter:
+                            should_process = False
+                            # Optional: Log skipped commit for debugging
+                            # log_file.write(f"[INFO] Skipping {commit_hash} (Not in sample)\n")
+
+                    # [NEW] 1. Sampling Guard Clause (The Filter)
+                    # If we have a filter, and this commit isn't in it: Update State & Skip.
+                    if self.sampling_filter is not None and commit_hash not in self.sampling_filter:
+                        ui_strategy.update_progress(i + 1, len(batch),
+                                                    prefix=f"   ⏩ Skipping [{commit_hash[:7]}]")
+
+                        # CRITICAL: We must mark progress so the resume-cursor advances!
+                        # We flush only if it's the last item to keep skipping fast.
+                        is_last_item = (i == len(batch) - 1)
+                        self.state_manager.save_progress(commit_hash, global_index, total_commits,flush=is_last_item)
+                        continue
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):

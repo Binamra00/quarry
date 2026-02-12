@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Set
 
 class IAdapter(ABC):
     """
@@ -41,3 +42,13 @@ class IAdapter(ABC):
         """
         # Example: outputs/pmd_candidates.json -> outputs/pmd_candidates.log
         return self.get_output_path().with_suffix(".log")
+
+    def set_sampling_filter(self, sampled_shas: Set[str]):
+        """
+        [HOOK] Optional configuration for adapters that support sampling.
+
+        Default implementation does nothing (No-Op).
+        Concrete classes (like PMDHistoryAdapter) can override this to
+        apply the filter logic.
+        """
+        pass

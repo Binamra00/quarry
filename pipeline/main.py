@@ -19,6 +19,8 @@ from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
 from pipeline.heuristics.strategies_factory import HeuristicFactory
 # [NEW] Import the Metadata Adapter
 from pipeline.adapters.metadata_adapt import MetadataAdapter
+# Add this with your other imports
+from pipeline.utils.pmd_inflection_sampler import Sampler
 
 
 def main():
@@ -37,6 +39,12 @@ def main():
                         choices=config.VALID_STAGES,
                         default="all",
                         help="Pipeline stage. 'all' runs RefactoringMiner + PMD + Heuristics.")
+
+    # [NEW] Add the Sample Flag
+    parser.add_argument("--sample",
+                        action="store_true",
+                        default=False,
+                        help="If True, applies Systematic Stratified Activity-Sampling to the lineage.")
 
     parser.add_argument("--batch-size",
                         type=int,
@@ -125,6 +133,13 @@ def main():
     # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
 
+    # [NEW] Handle Sampling Logic
+    sampled_shas = None
+    if args.sample:
+        print("🎯 Sampling Mode: ON (Systematic Stratified Activity-Sampling)")
+        sampler = Sampler(target_repo)
+        sampled_shas = sampler.get_priority_shas(window_size=50)
+
     # Phase 0: Metadata Mining (Git Lineage)
     # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
     if args.stage in ["all", "history"]:
@@ -134,7 +149,15 @@ def main():
     # Run these unless we are in isolated heuristic mode
     if args.stage != "heuristics":
         mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+
         for adapter in mining_adapters:
+
+            # [CLEAN] Polymorphic call.
+            # If the adapter supports it, it configures itself.
+            # If not, it safely ignores the call.
+            if sampled_shas:
+                adapter.set_sampling_filter(sampled_shas)
+
             commands.append(RunToolCommand(adapter))
 
     # Phase 4: Heuristic Analysis
@@ -175,7 +198,7 @@ def main():
             if not pipeline_healthy:
                 print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")
                 execution_results[tool_name] = False
-                continue  # Skips the execute() call below
+                continue  # Skips to execute() call below
 
         # Execute the tool
         success = command.execute()
