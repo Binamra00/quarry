@@ -73,7 +73,7 @@ def main():
 
     # --- 2. REPOSITORY ACQUISITION (FACADE) ---
     try:
-        target_repo = RepositoryLoader.ensure_local_copy(args.repo)
+        target_repo = RepositoryLoader.ensure_local_copy(args.repo, args.version)
     # [FIX] Distinguish between User Errors (NotFound) and System Errors (Security/Git)
     except FileNotFoundError as e:
         print(f"\n❌ REPOSITORY ERROR:\n   {e}")
@@ -85,6 +85,10 @@ def main():
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
     print(f"🎯 Batch Size: {args.batch_size}")
+    if args.version:
+        print("\n--- 🔖 Repo Revision (Trace) ---")
+        adapter_subprocess.run_command(["git", "describe", "--tags", "--always"], cwd=str(target_repo))
+        adapter_subprocess.run_command(["git", "rev-parse", "--short", "HEAD"], cwd=str(target_repo))
 
     # --- 3. Initial Setup (Phase 0) ---
     if args.stage not in ["heuristics"]:
@@ -117,13 +121,18 @@ def main():
                 default_branch = "master"
                 print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
 
-        print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
-        success, _ = adapter_subprocess.run_command(
-            ["git", "checkout", "-f", default_branch],
-            cwd=str(target_repo)
-        )
-        if not success:
-            print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Metrics might reflect Detached HEAD state.")
+        checkout_success = True
+
+        if args.version:
+            print(f"   📌 Version pin active ({args.version}); skipping default-branch checkout.")
+        else:
+            print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
+            checkout_success, _ = adapter_subprocess.run_command(
+                ["git", "checkout", "-f", default_branch],
+                cwd=str(target_repo)
+            )
+            if not checkout_success:
+                print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Proceeding anyway.")
 
         try:
             RepoMetrics(target_repo).run_report()

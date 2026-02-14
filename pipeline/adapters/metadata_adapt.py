@@ -26,7 +26,7 @@ class MetadataAdapter(IAdapter):
             # 1. Run Git Log
             # -C runs the command inside the repo directory
             # Format: "%H %P" -> "CommitHash ParentHash"
-            cmd = ["git", "-C", str(self.target_repo_path), "log", "--format=%H %P"]
+            cmd = ["git", "-C", str(self.target_repo_path), "log", "--format=%H %P %ct"]
 
             # Capture output directly
             result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
@@ -47,12 +47,15 @@ class MetadataAdapter(IAdapter):
                         continue
 
                     commit_sha = parts[0]
-                    # Take the first parent (simplifying merge commits)
-                    parent_sha = parts[1] if len(parts) > 1 else None
+                    # Use negative indexing to get the timestamp (it's always the last part)
+                    timestamp = parts[-1] if len(parts) > 1 else None
+                    # Parent is the middle part if it exists (handles 3 parts: SHA Parent Timestamp)
+                    parent_sha = parts[1] if len(parts) > 2 else None
 
                     record = {
                         "commit_sha": commit_sha,
-                        "parent_sha": parent_sha
+                        "parent_sha": parent_sha,
+                        "timestamp": timestamp
                     }
                     f.write(json.dumps(record) + "\n")
                     count += 1

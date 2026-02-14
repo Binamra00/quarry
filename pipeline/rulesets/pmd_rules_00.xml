@@ -12,19 +12,36 @@
 
     <rule ref="category/java/design.xml/CyclomaticComplexity">
         <properties>
-            <property name="classReportLevel" value="1" />
-            <property name="methodReportLevel" value="1" />
-            <property name="cycloOptions" value="" />
+            <property name="classReportLevel" value="30" />
+            <property name="methodReportLevel" value="8" />
         </properties>
     </rule>
 
     <rule ref="category/java/design.xml/NcssCount">
         <properties>
-            <property name="methodReportLevel" value="1" />
-            <property name="classReportLevel" value="1" />
-            <property name="ncssOptions" value="" />
+            <property name="methodReportLevel" value="22" />
+            <property name="classReportLevel" value="97" />
         </properties>
     </rule>
 
+    <rule ref="category/java/design.xml/ExcessiveParameterList">
+        <properties>
+            <property name="minimum" value="5" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/ExcessiveImports">
+        <properties>
+            <property name="minimum" value="33" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="threshold" value="24" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/DataClass" />
 
 </ruleset>
