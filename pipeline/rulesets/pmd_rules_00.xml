@@ -1,47 +1,41 @@
 <?xml version="1.0"?>
-<ruleset name="RevealedPreferenceRules"
-    xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
-
-    <description>
-        Ruleset designed to capture the full spectrum of code metrics (CC and NCSS)
-        without a-priori bias. By setting reporting levels to 1, we enable
-        History-Based Revealed Preference analysis.
-    </description>
-
-    <rule ref="category/java/design.xml/CyclomaticComplexity">
-        <properties>
-            <property name="classReportLevel" value="30" />
-            <property name="methodReportLevel" value="8" />
-        </properties>
-    </rule>
+<ruleset name="EASE Inflection Ruleset"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+    <description>Extracting raw continuous metrics for Inflection Point Analysis</description>
 
     <rule ref="category/java/design.xml/NcssCount">
         <properties>
-            <property name="methodReportLevel" value="22" />
-            <property name="classReportLevel" value="97" />
+            <property name="methodReportLevel" value="1"/>
+            <property name="classReportLevel" value="1"/>
         </properties>
+    </rule>
+    <rule ref="category/java/design.xml/CyclomaticComplexity">
+        <properties>
+            <property name="methodReportLevel" value="1"/>
+            <property name="classReportLevel" value="1"/>
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/TooManyMethods">
+        <properties><property name="maxmethods" value="1"/></properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/TooManyFields">
+        <properties><property name="maxfields" value="1"/></properties>
+    </rule>
+    <rule ref="category/java/design.xml/ExcessivePublicCount">
+        <properties><property name="minimum" value="1"/></properties>
     </rule>
 
     <rule ref="category/java/design.xml/ExcessiveParameterList">
-        <properties>
-            <property name="minimum" value="5" />
-        </properties>
+        <properties><property name="minimum" value="1"/></properties>
     </rule>
-
-    <rule ref="category/java/design.xml/ExcessiveImports">
-        <properties>
-            <property name="minimum" value="33" />
-        </properties>
-    </rule>
-
     <rule ref="category/java/design.xml/CouplingBetweenObjects">
-        <properties>
-            <property name="threshold" value="24" />
-        </properties>
+        <properties><property name="threshold" value="1"/></properties>
     </rule>
-
-    <rule ref="category/java/design.xml/DataClass" />
-
+    <rule ref="category/java/design.xml/ExcessiveImports">
+        <properties><property name="minimum" value="1"/></properties>
+    </rule>
 </ruleset>

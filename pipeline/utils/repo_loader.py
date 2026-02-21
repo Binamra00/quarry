@@ -129,8 +129,16 @@ class RepositoryLoader:
         print(f"   ☁️  Cloning remote repository: {url}")
         print(f"       Destination: {target_path.name}")
 
-        # Security: Use '--' to separate flags from positional arguments
-        cmd = ["git", "clone", "--", url, str(target_path)]
+        # Security & Automation Fix: Inject configuration to prevent freezing on prompts
+        cmd = [
+            "git",
+            "-c", "core.terminalprompt=false",
+            "-c", "credential.helper=",  # <-- THIS KILLS THE WINDOWS POPUP DEADLOCK
+            "clone",
+            "--",
+            url,
+            str(target_path)
+        ]
 
         success, output = adapter_subprocess.run_command(cmd, verbose=True)
 
