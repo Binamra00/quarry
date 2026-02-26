@@ -56,7 +56,7 @@ class PMDHistoryAdapter(IAdapter):
         Retrieves the next batch of commits to process.
         """
         # 1. Get full history
-        cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
+        cmd = ["git", "rev-list", "--all", "--reverse"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
@@ -79,7 +79,7 @@ class PMDHistoryAdapter(IAdapter):
         return all_commits[next_start: next_start + self.batch_size]
 
     def _get_total_commit_count(self) -> int:
-        cmd = ["git", "rev-list", "--count", "HEAD", "--", "*.java"]
+        cmd = ["git", "rev-list", "--count", "--all"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
         # [FIX] Ensure output is not empty/whitespace before converting to int
         return int(output.strip()) if success and output and output.strip() else 0
@@ -145,6 +145,12 @@ class PMDHistoryAdapter(IAdapter):
             try:
                 for i, commit_hash in enumerate(batch):
                     global_index = batch_start_index + i
+
+                    ui_strategy.update_progress(
+                        global_index + 1,
+                        total_commits,
+                        prefix=f"   🔄 Processing [{commit_hash[:7]}]"
+                    )
 
                     # [NEW] 0. Sampling Gate (The Filter)
                     should_process = True
@@ -216,6 +222,7 @@ class PMDHistoryAdapter(IAdapter):
                     # [FIX] Removed redundant 'run_status = pending' initialization
                     # Initialize violation data container
                     violation_data = []
+                    run_status = "pending"
 
                     try:
                         pmd_success, pmd_out = adapter_subprocess.run_command(
@@ -276,9 +283,17 @@ class PMDHistoryAdapter(IAdapter):
                             except OSError as e:
                                 log_file.write(f"[WARN] Could not delete temp file: {e}\n")
 
+                    # [NEW FIX]: Resolve the true Commit SHA
+                    # If commit_hash was an Annotated Tag, this forces Git to peel it back to the code commit.
+                    resolve_cmd = ["git", "rev-parse", f"{commit_hash}^{{commit}}"]
+                    res_success, true_sha = adapter_subprocess.run_command(resolve_cmd,
+                                                                           cwd=str(self.target_repo_path),
+                                                                           verbose=False)
+                    resolved_commit_hash = true_sha.strip() if res_success and true_sha else commit_hash
+
                     # 6. Stream to JSONL (Atomic Append)
                     record = {
-                        "sha": commit_hash,
+                        "sha": resolved_commit_hash,  # Use the mathematically resolved SHA here!
                         "timestamp": int(time.time()),
                         "status": run_status,
                         "violations": violation_data

@@ -58,14 +58,15 @@ class RefactoringMinerAdapter(IAdapter):
         return output_path
 
     def _get_all_commits(self) -> List[str]:
-        cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
+        # Change 'HEAD' to '--all' to capture every branch and tag in the repo
+        cmd = ["git", "rev-list", "--all", "--reverse", "--", "*.java"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
             verbose=False
         )
         if success and output:
-            # [DEFENSIVE] Filter out empty strings to avoid processing invalid SHAs
+            # Returns every commit in the history that touched a Java file
             return [sha for sha in output.strip().split('\n') if sha.strip()]
         return []
 

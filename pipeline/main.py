@@ -94,6 +94,11 @@ def main():
     if args.stage not in ["heuristics"]:
         print("\n--- Step 1: Repository Verification ---")
 
+        # NEW: Ensure the local clone knows about ALL remote branches/tags
+        # This prevents the "missing release branch" issue.
+        print("   Fetching all remote references...")
+        adapter_subprocess.run_command(["git", "fetch", "--all", "--tags"], cwd=str(target_repo))
+
         default_branch = "main"
 
         print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
@@ -125,6 +130,8 @@ def main():
 
         if args.version:
             print(f"   📌 Version pin active ({args.version}); skipping default-branch checkout.")
+            # Force checkout the specific version/tag to ensure the workspace matches the study target
+            adapter_subprocess.run_command(["git", "checkout", "-f", args.version], cwd=str(target_repo))
         else:
             print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
             checkout_success, _ = adapter_subprocess.run_command(

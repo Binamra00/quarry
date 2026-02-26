@@ -26,7 +26,7 @@ class MetadataAdapter(IAdapter):
             # 1. Run Git Log
             # -C runs the command inside the repo directory
             # Format: "%H %P" -> "CommitHash ParentHash"
-            cmd = ["git", "-C", str(self.target_repo_path), "log", "--format=%H %P %ct"]
+            cmd = ["git", "-C", str(self.target_repo_path), "log", "--all", "--format=%H %P %ct"]
 
             # Capture output directly
             result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
