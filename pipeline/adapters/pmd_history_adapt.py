@@ -55,6 +55,12 @@ class PMDHistoryAdapter(IAdapter):
         """
         Retrieves the next batch of commits to process.
         """
+        if self.sampling_filter:
+            # We sort to ensure chronological processing if tags follow a naming convention
+            all_targets = sorted(list(self.sampling_filter))
+            next_start = self.state_manager.get_next_start_index()
+            return all_targets[next_start: next_start + self.batch_size]
+
         # 1. Get full history
         cmd = ["git", "rev-list", "HEAD", "--reverse"]
         success, output = adapter_subprocess.run_command(
@@ -102,13 +108,18 @@ class PMDHistoryAdapter(IAdapter):
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
 
-        # 1. Verification
-        total_commits = self._get_total_commit_count()
+        # [FIX] Set the total work based on strategy
+        if self.sampling_filter:
+            total_commits = len(self.sampling_filter)
+        else:
+            total_commits = self._get_total_commit_count()
 
-        # Handle empty repository case
         if total_commits == 0:
-            print("❌ No Java commits found to analyze.")
+            # Added a clear error message here for better UX
+            print("❌ No commits found to analyze.")
             return False
+
+        # [REMOVED REDUNDANT VERIFICATION LINE]
 
         batch = self._get_commit_batch()
 
@@ -151,26 +162,6 @@ class PMDHistoryAdapter(IAdapter):
                         total_commits,
                         prefix=f"   🔄 Processing [{commit_hash[:7]}]"
                     )
-
-                    # [NEW] 0. Sampling Gate (The Filter)
-                    should_process = True
-                    if self.sampling_filter is not None:
-                        if commit_hash not in self.sampling_filter:
-                            should_process = False
-                            # Optional: Log skipped commit for debugging
-                            # log_file.write(f"[INFO] Skipping {commit_hash} (Not in sample)\n")
-
-                    # [NEW] 1. Sampling Guard Clause (The Filter)
-                    # If we have a filter, and this commit isn't in it: Update State & Skip.
-                    if self.sampling_filter is not None and commit_hash not in self.sampling_filter:
-                        ui_strategy.update_progress(i + 1, len(batch),
-                                                    prefix=f"   ⏩ Skipping [{commit_hash[:7]}]")
-
-                        # CRITICAL: We must mark progress so the resume-cursor advances!
-                        # We flush only if it's the last item to keep skipping fast.
-                        is_last_item = (i == len(batch) - 1)
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits,flush=is_last_item)
-                        continue
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
