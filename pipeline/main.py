@@ -64,6 +64,22 @@ def main():
 
     args = parser.parse_args()
 
+    # --- 0. ARGUMENT VALIDATION (GUARDRAILS) ---
+    if args.version and args.stage in ["all", "meta", "pmd_history", "heuristics"]:
+        print(f"\n❌ CLI CONFLICT: The '--version' flag pins the repository to a single snapshot.")
+        print(f"   It cannot be used with historical or time-traveling stages like '{args.stage}'.")
+        print(f"   👉 To analyze a specific version, please use: --stage pmd (or --stage refm)")
+        sys.exit(1)
+    if args.sample and args.stage not in ["all", "pmd_history"]:
+        print(f"\n❌ CLI CONFLICT: The '--sample' flag applies Stratified Sampling.")
+        print(f"   It is only valid when running the 'pmd_history' stage (or 'all').")
+        sys.exit(1)
+    if args.batch != 50 and args.stage not in ["all", "pmd_history"]:
+        print(f"\n❌ CLI CONFLICT: The '--batch' flag manages memory for historical runs.")
+        print(f"   It is only valid when running the 'pmd_history' stage (or 'all').")
+        sys.exit(1)
+
+
     print("🚀 Starting Smell-Ranker Pipeline")
     print(f"📂 Configuration Loaded. Workspace: {config.WORKSPACE_ROOT.name}")
 
