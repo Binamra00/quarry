@@ -1,6 +1,23 @@
+import os
+import signal
+import sys
 import subprocess
 from pathlib import Path
 from typing import List, Tuple, Optional
+
+
+def kill_process_tree(pid: int):
+    """Cross-platform utility to brutally kill a process and all its child processes."""
+    try:
+        if sys.platform == 'win32':
+            # Windows: /F (Force) /T (Tree) /PID (Process ID)
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # POSIX (Mac/Linux): Send SIGKILL to the entire process group
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to clean up process tree for PID {pid}: {e}")
 
 
 def run_command(
@@ -37,6 +54,20 @@ def run_command(
     if verbose:
         print(f"   [EXEC]: {cmd_str}")
 
+    kwargs = {
+        'cwd': cwd,
+        'text': True,
+        'encoding': 'utf-8',
+        'errors': 'replace'
+    }
+
+    if sys.platform == 'win32':
+        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs['start_new_session'] = True
+
+    proc = None  # Initialize proc so the exception blocks can access it
+
     try:
         if log_file_path:
             # OPTION A: Stream to File (Silent Mode / Debug Log)
@@ -46,38 +77,35 @@ def run_command(
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
                 f.flush()  # Ensure header is written before subprocess writes
 
-                # [FIX] Force UTF-8 and ignore errors to prevent crashes on Windows
-                result = subprocess.run(
+                # OPTION A: Stream to File (Silent Mode / Debug Log)
+                proc = subprocess.Popen(
                     command,
-                    cwd=cwd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    check=False,
-                    timeout=timeout,
-                    text=True,  # Ensure text mode so file writing works
-                    encoding='utf-8',  # FORCE UTF-8
-                    errors='replace'  # Replace bad characters with '?' instead of crashing
+                    **kwargs
                 )
+
+                # Block and wait for timeout
+                proc.communicate(timeout=timeout)
+
+                output_content = f"Log saved to {log_file_path.name}"
+                exit_code = proc.returncode
 
             # [FIX] Unindented: This assignment is part of return preparation, not file IO
             output_content = f"Log saved to {log_file_path.name}"
         else:
             # OPTION B: Capture to Memory (Standard)
-            # [FIX] Force UTF-8 and ignore errors to prevent crashes on Windows
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 command,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-                encoding='utf-8',  # FORCE UTF-8
-                errors='replace'  # Replace bad characters with '?' instead of crashing
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                **kwargs
             )
 
-            output_content = result.stdout.strip() + "\n" + result.stderr.strip()
-
-        exit_code = result.returncode
+            # Block and capture
+            stdout, stderr = proc.communicate(timeout=timeout)
+            output_content = (stdout or "").strip() + "\n" + (stderr or "").strip()
+            exit_code = proc.returncode
 
         if exit_code in allowed_exit_codes:
             return True, output_content
@@ -86,37 +114,26 @@ def run_command(
                 print(f"❌ Command Failed (Exit Code {exit_code})")
             return False, output_content
 
-    except subprocess.TimeoutExpired as e:
+
+    except subprocess.TimeoutExpired:
+
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
 
-        # Safe attribute access (handle None if logging to file)
-        partial_stdout = e.stdout if e.stdout else ""
-        partial_stderr = e.stderr if e.stderr else ""
+        # NUKE THE ZOMBIES
+
+        if proc:
+            kill_process_tree(proc.pid)
 
         if verbose:
             print(msg)
-            if partial_stdout:
-                print("   [STDOUT before timeout]:")
-                print(partial_stdout.strip())
-            if partial_stderr:
-                print("   [STDERR before timeout]:")
-                print(partial_stderr.strip())
+
+            print("   🧹 Executed Process Tree Cleanup.")
 
         if log_file_path:
-            with open(log_file_path, "a") as f:
+            with open(log_file_path, "a", encoding="utf-8") as f:
                 f.write(f"\n{msg}\n")
-                # Log partial output if we captured it (Memory Mode)
-                if partial_stdout:
-                    f.write("\n[STDOUT before timeout]:\n")
-                    f.write(partial_stdout.strip() + "\n")
-                if partial_stderr:
-                    f.write("\n[STDERR before timeout]:\n")
-                    f.write(partial_stderr.strip() + "\n")
 
-                # Better message for File Mode
-                if not partial_stdout and not partial_stderr:
-                    f.write(
-                        "\n(Note: Command output, if any, was streamed directly to this log file above before the timeout.)\n")
+                f.write("🧹 Process Tree Cleanup Executed.\n")
 
         return False, "TIMEOUT"
 
@@ -125,7 +142,15 @@ def run_command(
             print(f"❌ Executable not found: {command[0]}")
         return False, "Command not found"
 
+
     except Exception as e:
+
         if verbose:
             print(f"❌ Unexpected Error: {e}")
+
+        # Failsafe cleanup
+
+        if proc:
+            kill_process_tree(proc.pid)
+
         return False, str(e)

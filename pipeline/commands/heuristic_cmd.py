@@ -39,11 +39,10 @@ class RunHeuristicsCommand(IPipelineCommand):
             print(f"❌ Missing Input: {self.refm_path.name} (Run --stage refm first)")
             return False
         if not self.pmd_path.exists():
-            print(f"❌ Missing Input: {self.pmd_path.name} (Run --stage pmd first)")
+            print(f"❌ Missing Input: {self.pmd_path.name} (Run --stage pmd_history first)")
             return False
-        # [NEW] Validation
         if not self.lineage_path.exists():
-            print(f"❌ Missing Input: {self.lineage_path.name} (Run --stage mining/history first)")
+            print(f"❌ Missing Input: {self.lineage_path.name} (Run --stage meta first)")
             return False
 
         try:

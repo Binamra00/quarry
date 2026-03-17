@@ -27,35 +27,40 @@ def main():
     parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
 
     parser.add_argument("--repo",
+                        metavar="",
                         # [UX] Default ensures backward compatibility for existing scripts
                         default="toy_project",
                         help="Target Repository. Can be a local folder name OR a GitHub URL.")
 
     parser.add_argument("--version",
+                        metavar="",
                         default=None,
-                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0)")
+                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Locks workspace to a single snapshot. Use for 'pmd' or 'refm', avoid for 'pmd_history' and 'meta'.")
 
     parser.add_argument("--stage",
+                        metavar="",
                         choices=config.VALID_STAGES,
                         default="all",
-                        help="Pipeline stage. 'all' runs RefactoringMiner + PMD + Heuristics.")
+                        help="Pipeline stage to execute. Choices: [all, meta, refm, pmd, pmd_history, heuristics].")
 
     # [NEW] Add the Sample Flag
     parser.add_argument("--sample",
                         action="store_true",
                         default=False,
-                        help="If True, applies Systematic Stratified Activity-Sampling to the lineage.")
+                        help="Applies Systematic Stratified Activity-Sampling to reduce commits processed (Applies to 'pmd_history' stage only).")
 
-    parser.add_argument("--batch-size",
+    parser.add_argument("--batch",
+                        metavar="",
                         type=int,
                         default=50,
-                        help="Number of commits to process in the PMD history batch.")
+                        help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only).")
 
     # [NEW] Granular control over heuristics
     parser.add_argument("--heuristic",
+                        metavar="",
                         choices=["all", "A", "B", "C"],
                         default="all",
-                        help="Which heuristic strategy to apply. Default is 'all' (Aggregated Score).")
+                        help="Heuristic strategy to apply. Choices: [all, A (Complexity), B (AST_Proximity), C (Criticality)]. Default is 'all'.")
 
     args = parser.parse_args()
 
@@ -84,7 +89,7 @@ def main():
 
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
-    print(f"🎯 Batch Size: {args.batch_size}")
+    print(f"🎯 Batch Size: {args.batch}")
     if args.version:
         print("\n--- 🔖 Repo Revision (Trace) ---")
         adapter_subprocess.run_command(["git", "describe", "--tags", "--always"], cwd=str(target_repo))
@@ -158,13 +163,13 @@ def main():
 
     # Phase 0: Metadata Mining (Git Lineage)
     # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
-    if args.stage in ["all", "history"]:
+    if args.stage in ["all", "meta"]:
         commands.append(RunToolCommand(MetadataAdapter(target_repo)))
 
     # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
     # Run these unless we are in isolated heuristic mode
-    if args.stage != "heuristics":
-        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch_size)
+    if args.stage in ["all", "refm", "pmd", "pmd_history"]:
+        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch)
 
         for adapter in mining_adapters:
 
@@ -237,13 +242,13 @@ def main():
     # Only run Metrics if the pipeline was completely healthy
     print("\n--- 🏁 Pipeline Completion Report ---\n")
 
-    if args.stage in ["all", "refm", "history"]:
+    if args.stage in ["all", "refm"]:
         try:
             RefmMetrics(target_repo).run_report()
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (RefM): {e}")
 
-    if args.stage in ["all", "pmd", "static", "pmd_history"]:
+    if args.stage in ["all", "pmd", "pmd_history"]:
         try:
             PMDMetrics(target_repo).run_report()
         except Exception as e:

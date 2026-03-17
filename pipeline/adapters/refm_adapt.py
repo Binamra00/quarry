@@ -1,7 +1,4 @@
 import json
-import os
-import time
-import subprocess
 import tempfile
 import uuid
 import shutil
@@ -154,7 +151,6 @@ class RefactoringMinerAdapter(IAdapter):
 
         log_path = self.get_log_path()
         new_commits_count = 0
-        env = os.environ.copy()
 
         # Robust directory creation with error handling
         output_dir = self.get_output_path().parent
@@ -195,13 +191,10 @@ class RefactoringMinerAdapter(IAdapter):
                         if i == 0:
                             log_file.write(f"\n[DEBUG] Java Command (Sample): {' '.join(cmd)}\n")
 
-                        result = subprocess.run(
+                        success, output_str = adapter_subprocess.run_command(
                             cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            check=False,
-                            env=env
+                            verbose=False,
+                            timeout=600  # 10 minute timeout per commit
                         )
 
                         valid_data_found = False
@@ -222,12 +215,12 @@ class RefactoringMinerAdapter(IAdapter):
                                 log_file.write(f"\n[ERROR] Corrupt JSON in temp file for {commit_hash}\n")
 
                         if not valid_data_found:
-                            if result.returncode != 0:
+                            if not success:
                                 log_file.write(
-                                    f"\n[FAILURE] Tool crashed for {commit_hash}. Exit: {result.returncode}\n")
-                                # Check for non-empty string (text=True returns "" not None)
-                                if result.stderr:
-                                    log_file.write(f"[STDERR] {result.stderr}\n")
+                                    f"\n[FAILURE] Tool crashed or timed out for {commit_hash}.\n")
+                                if output_str:
+                                    # adapter_subprocess combines STDOUT and STDERR for us
+                                    log_file.write(f"[OUTPUT] {output_str}\n")
 
                         stream_file.write(json.dumps(record) + "\n")
 
