@@ -162,8 +162,18 @@ def main():
             if not checkout_success:
                 print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Proceeding anyway.")
 
+        # --- [FIX] Smart Baseline Guardrail ---
+        # Only run baseline mining if the report doesn't already exist.
+        metrics_file = config.OUTPUTS_PATH / f"repo_metrics_{target_repo.name}.json"
+
         try:
-            RepoMetrics(target_repo).run_report()
+            if not metrics_file.exists():
+                print(f"\n--- 📊 Generating Baseline: Repository Mining ---")
+                RepoMetrics(target_repo).run_report()
+            else:
+                # The internal run_report() logic handles the "Skipping" message
+                # and loads data without re-mining the entire Git history.
+                RepoMetrics(target_repo).run_report()
         except Exception as e:
             print(f"⚠️ Verification Warning: {e}")
 

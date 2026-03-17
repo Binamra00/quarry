@@ -1,10 +1,11 @@
 import os
-import sys
 import json
 from collections import defaultdict, Counter
 from pathlib import Path
 from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
+from pipeline.utils import ui_strategy
+from pipeline.utils import adapter_subprocess
 
 # [SWE PRINCIPLE] Custom Exception for better error handling
 class DependencyMissingError(Exception):
@@ -76,7 +77,20 @@ class RepoMetrics(BaseMetrics):
         if not FIX_KEYWORDS:
             print("   ⚠️ Warning: No 'fix_keywords' found in heuristic config.")
 
+        # Get total commit count first so the progress bar knows the 100% mark
+        success, count_out = adapter_subprocess.run_command(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(repo_path),
+            verbose=False
+        )
+        total_commits = int(count_out.strip()) if success else 0
+
         for commit in Repository(str(repo_path)).traverse_commits():
+            ui_strategy.update_progress(
+                stats["total_commits"] + 1,
+                total_commits,
+                prefix=f"   ⏳ Analyzing Lineage"
+            )
             stats["total_commits"] += 1
             if stats["start_date"] is None:
                 stats["start_date"] = commit.committer_date
@@ -110,7 +124,7 @@ class RepoMetrics(BaseMetrics):
                     for j in range(i + 1, len(modified_java_files)):
                         pair = (modified_java_files[i], modified_java_files[j])
                         pair_coupling[pair] += 1
-
+        ui_strategy.clear_line()  # Clear the progress line after completion
         return (stats, file_authors, pair_coupling, churn_map)
 
     def calculate(self, data) -> dict:
