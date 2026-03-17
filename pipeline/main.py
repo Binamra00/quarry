@@ -43,11 +43,11 @@ def main():
                         default="all",
                         help="Pipeline stage to execute. Choices: [all, meta, refm, pmd, pmd_history, heuristics].")
 
-    # [NEW] Add the Sample Flag
     parser.add_argument("--sample",
-                        action="store_true",
-                        default=False,
-                        help="Applies Systematic Stratified Activity-Sampling to reduce commits processed (Applies to 'pmd_history' stage only).")
+                        metavar="FILE.json",
+                        type=str,
+                        default=None,
+                        help="Filename in workspace_data/versions/ containing target tags for sampling (Applies to 'pmd_history' stage only).")
 
     parser.add_argument("--batch",
                         metavar="",
@@ -173,9 +173,13 @@ def main():
     # [NEW] Handle Sampling Logic
     sampled_shas = None
     if args.sample:
-        print("🎯 Sampling Mode: ON (Systematic Stratified Activity-Sampling)")
-        sampler = Sampler(target_repo)
-        sampled_shas = sampler.get_priority_shas(window_size=50)
+        print(f"🎯 Sampling Mode: ON (Reading target tags from {args.sample})")
+        try:
+            sampler = Sampler(target_repo, args.sample)
+            sampled_shas = sampler.get_priority_shas()
+        except Exception as e:
+            print(e)
+            sys.exit(1)
 
     # Phase 0: Metadata Mining (Git Lineage)
     # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)

@@ -42,8 +42,9 @@ if not WORKSPACE_ROOT.exists():
 TOOLS_PATH = WORKSPACE_ROOT / "tools"
 REPOS_PATH = WORKSPACE_ROOT / "repos"
 OUTPUTS_PATH = WORKSPACE_ROOT / "outputs"
+VERSIONS_PATH = WORKSPACE_ROOT / "versions"
 
-for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
+for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH, VERSIONS_PATH]:
     path.mkdir(exist_ok=True)
 
 # --- 4. TOOL CONFIGURATION ---
