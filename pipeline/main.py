@@ -35,7 +35,7 @@ def main():
     parser.add_argument("--version",
                         metavar="",
                         default=None,
-                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Locks workspace to a single snapshot. Use for 'pmd' or 'refm', avoid for 'pmd_history' and 'meta'.")
+                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Sets the max boundary for historical miners. Avoid for 'meta'.")
 
     parser.add_argument("--stage",
                         metavar="",
@@ -65,10 +65,10 @@ def main():
     args = parser.parse_args()
 
     # --- 0. ARGUMENT VALIDATION (GUARDRAILS) ---
-    if args.version and args.stage in ["all", "meta", "pmd_history", "heuristics"]:
-        print(f"\n❌ CLI CONFLICT: The '--version' flag pins the repository to a single snapshot.")
-        print(f"   It cannot be used with historical or time-traveling stages like '{args.stage}'.")
-        print(f"   👉 To analyze a specific version, please use: --stage pmd (or --stage refm)")
+    if args.version and args.stage in ["all", "meta", "heuristics"]:
+        print(f"\n❌ CLI CONFLICT: The '--version' flag currently conflicts with '{args.stage}'.")
+        print(f"   (The 'meta' and 'refm' adapters currently require full unpinned history).")
+        print(f"   👉 To run history up to a specific version, use: --stage pmd_history")
         sys.exit(1)
     if args.sample and args.stage not in ["all", "pmd_history"]:
         print(f"\n❌ CLI CONFLICT: The '--sample' flag applies Stratified Sampling.")

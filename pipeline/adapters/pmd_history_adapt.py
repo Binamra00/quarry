@@ -56,7 +56,7 @@ class PMDHistoryAdapter(IAdapter):
         Retrieves the next batch of commits to process.
         """
         # 1. Get full history
-        cmd = ["git", "rev-list", "--all", "--reverse"]
+        cmd = ["git", "rev-list", "HEAD", "--reverse"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
@@ -79,7 +79,7 @@ class PMDHistoryAdapter(IAdapter):
         return all_commits[next_start: next_start + self.batch_size]
 
     def _get_total_commit_count(self) -> int:
-        cmd = ["git", "rev-list", "--count", "--all"]
+        cmd = ["git", "rev-list", "--count", "HEAD"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
         # [FIX] Ensure output is not empty/whitespace before converting to int
         return int(output.strip()) if success and output and output.strip() else 0
@@ -118,13 +118,13 @@ class PMDHistoryAdapter(IAdapter):
 
         print(f"   📊 Batch Scope: {len(batch)} commits")
 
-        # Detect current branch to restore later
-        success, current_branch = adapter_subprocess.run_command(
-            ["git", "symbolic-ref", "--short", "HEAD"],
+        # Robustly save the starting state (supports detached HEAD for version-pinned runs)
+        success, start_state = adapter_subprocess.run_command(
+            ["git", "rev-parse", "HEAD"],
             cwd=str(self.target_repo_path),
             verbose=False
         )
-        current_branch = current_branch.strip() if success else "main"
+        start_state = start_state.strip() if success else "main"
 
         log_path = self.get_output_path()
         last_checkpoint_time = time.time()
@@ -325,9 +325,9 @@ class PMDHistoryAdapter(IAdapter):
 
             finally:
                 ui_strategy.clear_line()
-                print(f"   🔙 Restoring branch: {current_branch}...")
+                print(f"   🔙 Restoring workspace state...")
                 adapter_subprocess.run_command(
-                    ["git", "checkout", "-f", current_branch],
+                    ["git", "checkout", "-f", start_state],
                     cwd=str(self.target_repo_path),
                     verbose=False
                 )
