@@ -38,13 +38,13 @@ def main():
                         help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Sets the max boundary for historical miners. Avoid for 'meta'.")
 
     parser.add_argument("--stage",
-                        metavar="",
+                        metavar="[all, meta, refm, pmd, pmd_history, heuristics]",
                         choices=config.VALID_STAGES,
                         default="all",
-                        help="Pipeline stage to execute. Choices: [all, meta, refm, pmd, pmd_history, heuristics].")
+                        help="Pipeline stage to execute. Default is 'all'.")
 
     parser.add_argument("--sample",
-                        metavar="FILE.json",
+                        metavar="[file_name.json]",
                         type=str,
                         default=None,
                         help="Filename in workspace_data/versions/ containing target tags for sampling (Applies to 'pmd_history' stage only).")
@@ -53,14 +53,14 @@ def main():
                         metavar="",
                         type=int,
                         default=50,
-                        help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only).")
+                        help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only). Set to 0 for unlimited (default: 50).")
 
     # [NEW] Granular control over heuristics
     parser.add_argument("--heuristic",
-                        metavar="",
+                        metavar="[all, A, B, C]",
                         choices=["all", "A", "B", "C"],
                         default="all",
-                        help="Heuristic strategy to apply. Choices: [all, A (Complexity), B (AST_Proximity), C (Criticality)]. Default is 'all'.")
+                        help="Heuristic strategy to apply. Choices: A (Complexity), B (AST_Proximity), C (Criticality). Default is 'all'.")
 
     args = parser.parse_args()
 
