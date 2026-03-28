@@ -72,12 +72,10 @@ def run_command(
         if log_file_path:
             # OPTION A: Stream to File (Silent Mode / Debug Log)
             # Use append mode 'a' to prevent overwriting previous logs
-            # [FIX] Open file with UTF-8 to handle special characters in logs
             with open(log_file_path, "a", encoding="utf-8") as f:
                 f.write(f"\n\n--- EXEC: {cmd_str} ---\n")
                 f.flush()  # Ensure header is written before subprocess writes
 
-                # OPTION A: Stream to File (Silent Mode / Debug Log)
                 proc = subprocess.Popen(
                     command,
                     stdout=f,
@@ -87,11 +85,9 @@ def run_command(
 
                 # Block and wait for timeout
                 proc.communicate(timeout=timeout)
-
-                output_content = f"Log saved to {log_file_path.name}"
                 exit_code = proc.returncode
 
-            # [FIX] Unindented: This assignment is part of return preparation, not file IO
+            # Assignment outdented outside the with block
             output_content = f"Log saved to {log_file_path.name}"
         else:
             # OPTION B: Capture to Memory (Standard)
@@ -120,20 +116,24 @@ def run_command(
         msg = f"❌ Command timed out after {timeout} seconds: {command[0]}"
 
         # NUKE THE ZOMBIES
-
         if proc:
             kill_process_tree(proc.pid)
 
+            # Reap the zombie pipes
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+
         if verbose:
             print(msg)
-
-            print("   🧹 Executed Process Tree Cleanup.")
+            print("   🧹 Executed Process Tree Cleanup & Reaped I/O Pipes.")
 
         if log_file_path:
             with open(log_file_path, "a", encoding="utf-8") as f:
                 f.write(f"\n{msg}\n")
-
-                f.write("🧹 Process Tree Cleanup Executed.\n")
+                f.write("🧹 Process Tree Cleanup & Pipe Reaping Executed.\n")
 
         return False, "TIMEOUT"
 
@@ -149,8 +149,13 @@ def run_command(
             print(f"❌ Unexpected Error: {e}")
 
         # Failsafe cleanup
-
         if proc:
             kill_process_tree(proc.pid)
+
+            # Failsafe pipe reaping
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
 
         return False, str(e)
