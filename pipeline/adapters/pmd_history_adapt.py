@@ -170,9 +170,15 @@ class PMDHistoryAdapter(IAdapter):
                         # No new JSONL record is written for them to preserve append-only history.
                         continue
 
-                    # 3. Time Travel
+                    # 3. Time Travel & Clean
+                    # FIRST: Destroy any untracked files/directories from the previous era
+                    clean_cmd = ["git", "clean", "-fdx"]
+                    adapter_subprocess.run_command(clean_cmd, cwd=str(self.target_repo_path), verbose=False)
+
+                    # THEN: Checkout the new target state
                     checkout_cmd = ["git", "checkout", "-f", commit_hash]
-                    checkout_success, _ = adapter_subprocess.run_command(checkout_cmd, cwd=str(self.target_repo_path),
+                    checkout_success, _ = adapter_subprocess.run_command(checkout_cmd,
+                                                                         cwd=str(self.target_repo_path),
                                                                          verbose=False)
 
                     if not checkout_success:

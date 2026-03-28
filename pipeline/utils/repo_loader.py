@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
 from pipeline.utils import adapter_subprocess
+from pipeline.utils.git_manager import GitManager
 
 
 class RepositoryLoader:
@@ -126,26 +127,12 @@ class RepositoryLoader:
             print(f"   🔍 Repo '{repo_name}' found locally. Skipping clone.")
             return target_path
 
-        print(f"   ☁️  Cloning remote repository: {url}")
-        print(f"       Destination: {target_path.name}")
-
-        # Security & Automation Fix: Inject configuration to prevent freezing on prompts
-        cmd = [
-            "git",
-            "-c", "core.terminalprompt=false",
-            "-c", "credential.helper=",  # <-- THIS KILLS THE WINDOWS POPUP DEADLOCK
-            "clone",
-            "--",
-            url,
-            str(target_path)
-        ]
-
-        success, output = adapter_subprocess.run_command(cmd, verbose=True)
+        # Let the GitManager handle the clone and stream the live progress bar
+        success = GitManager.clone_with_progress(url, target_path)
 
         if not success:
-            raise RuntimeError(f"❌ Failed to clone repository: {url}\nGit Output: {output}")
+            raise RuntimeError(f"❌ Failed to clone repository: {url}")
 
-        print(f"   ✅ Clone successful.")
         return target_path
 
     @staticmethod
