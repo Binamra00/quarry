@@ -16,3 +16,4 @@ analysis/
 docs/
 pipeline/heuristics/
 pipeline/heuristic_seeds.json
+heuristic_analysis.py
