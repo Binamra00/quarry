@@ -12,3 +12,4 @@ temp_generate_plots.
 pipeline/temp_test.py
 sampling/
 analyzer/
+analysis/
