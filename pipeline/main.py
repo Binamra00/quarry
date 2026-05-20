@@ -15,8 +15,8 @@ from pipeline.commands.i_commands import IPipelineCommand
 from pipeline.commands.adapter_cmd import RunToolCommand
 
 # [NEW] Phase 4 Imports
-from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
-from pipeline.heuristics.strategies_factory import HeuristicFactory
+# from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
+# from pipeline.heuristics.strategies_factory import HeuristicFactory
 # [NEW] Import the Metadata Adapter
 from pipeline.adapters.metadata_adapt import MetadataAdapter
 # Add this with your other imports
@@ -38,7 +38,7 @@ def main():
                         help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Sets the max boundary for historical miners. Avoid for 'meta'.")
 
     parser.add_argument("--stage",
-                        metavar="[all, meta, refm, pmd, pmd_history, heuristics]",
+                        metavar="[all, meta, refm, pmd, pmd_history]",
                         choices=config.VALID_STAGES,
                         default="all",
                         help="Pipeline stage to execute. Default is 'all'.")
@@ -56,16 +56,16 @@ def main():
                         help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only). Set to 0 for unlimited (default: 50).")
 
     # [NEW] Granular control over heuristics
-    parser.add_argument("--heuristic",
-                        metavar="[all, A, B, C]",
-                        choices=["all", "A", "B", "C"],
-                        default="all",
-                        help="Heuristic strategy to apply. Choices: A (Complexity), B (AST_Proximity), C (Criticality). Default is 'all'.")
+    # parser.add_argument("--heuristic",
+    #                     metavar="[all, A, B, C]",
+    #                     choices=["all", "A", "B", "C"],
+    #                     default="all",
+    #                     help="Heuristic strategy to apply. Choices: A (Complexity), B (AST_Proximity), C (Criticality). Default is 'all'.")
 
     args = parser.parse_args()
 
     # --- 0. ARGUMENT VALIDATION (GUARDRAILS) ---
-    if args.version and args.stage in ["all", "meta", "heuristics"]:
+    if args.version and args.stage in ["all", "meta"]:
         print(f"\n❌ CLI CONFLICT: The '--version' flag currently conflicts with '{args.stage}'.")
         print(f"   (The 'meta' and 'refm' adapters currently require full unpinned history).")
         print(f"   👉 To run history up to a specific version, use: --stage pmd_history")
@@ -112,70 +112,70 @@ def main():
         adapter_subprocess.run_command(["git", "rev-parse", "--short", "HEAD"], cwd=str(target_repo))
 
     # --- 3. Initial Setup (Phase 0) ---
-    if args.stage not in ["heuristics"]:
-        print("\n--- Step 1: Repository Verification ---")
+    # if args.stage not in ["heuristics"]:
+    print("\n--- Step 1: Repository Verification ---")
 
-        # NEW: Ensure the local clone knows about ALL remote branches/tags
-        # This prevents the "missing release branch" issue.
-        print("   Fetching all remote references...")
-        adapter_subprocess.run_command(["git", "fetch", "--all", "--tags"], cwd=str(target_repo))
+    # NEW: Ensure the local clone knows about ALL remote branches/tags
+    # This prevents the "missing release branch" issue.
+    print("   Fetching all remote references...")
+    adapter_subprocess.run_command(["git", "fetch", "--all", "--tags"], cwd=str(target_repo))
 
-        default_branch = "main"
+    default_branch = "main"
 
-        print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
-        success, output = adapter_subprocess.run_command(
-            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+    print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
+    success, output = adapter_subprocess.run_command(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd=str(target_repo)
+    )
+
+    if success and output:
+        try:
+            detected_branch = output.strip().split('/')[-1]
+            if detected_branch:
+                default_branch = detected_branch
+                print(f"   ✅ Detected Remote HEAD: {default_branch}")
+        except (IndexError, AttributeError):
+            # [FIX] If the symbolic-ref output is malformed or unexpected, ignore it and
+            # fall back to the default branch detection logic below.
+            pass
+    else:
+        s, _ = adapter_subprocess.run_command(
+            ["git", "rev-parse", "--verify", "master"],
             cwd=str(target_repo)
         )
+        if s:
+            default_branch = "master"
+            print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
 
-        if success and output:
-            try:
-                detected_branch = output.strip().split('/')[-1]
-                if detected_branch:
-                    default_branch = detected_branch
-                    print(f"   ✅ Detected Remote HEAD: {default_branch}")
-            except (IndexError, AttributeError):
-                # [FIX] If the symbolic-ref output is malformed or unexpected, ignore it and
-                # fall back to the default branch detection logic below.
-                pass
+    checkout_success = True
+
+    if args.version:
+        print(f"   📌 Version pin active ({args.version}); skipping default-branch checkout.")
+        # Force checkout the specific version/tag to ensure the workspace matches the study target
+        adapter_subprocess.run_command(["git", "checkout", "-f", args.version], cwd=str(target_repo))
+    else:
+        print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
+        checkout_success, _ = adapter_subprocess.run_command(
+            ["git", "checkout", "-f", default_branch],
+            cwd=str(target_repo)
+        )
+        if not checkout_success:
+            print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Proceeding anyway.")
+
+    # --- [FIX] Smart Baseline Guardrail ---
+    # Only run baseline mining if the report doesn't already exist.
+    metrics_file = config.OUTPUTS_PATH / f"repo_metrics_{target_repo.name}.json"
+
+    try:
+        if not metrics_file.exists():
+            print(f"\n--- 📊 Generating Baseline: Repository Mining ---")
+            RepoMetrics(target_repo).run_report()
         else:
-            s, _ = adapter_subprocess.run_command(
-                ["git", "rev-parse", "--verify", "master"],
-                cwd=str(target_repo)
-            )
-            if s:
-                default_branch = "master"
-                print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
-
-        checkout_success = True
-
-        if args.version:
-            print(f"   📌 Version pin active ({args.version}); skipping default-branch checkout.")
-            # Force checkout the specific version/tag to ensure the workspace matches the study target
-            adapter_subprocess.run_command(["git", "checkout", "-f", args.version], cwd=str(target_repo))
-        else:
-            print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
-            checkout_success, _ = adapter_subprocess.run_command(
-                ["git", "checkout", "-f", default_branch],
-                cwd=str(target_repo)
-            )
-            if not checkout_success:
-                print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Proceeding anyway.")
-
-        # --- [FIX] Smart Baseline Guardrail ---
-        # Only run baseline mining if the report doesn't already exist.
-        metrics_file = config.OUTPUTS_PATH / f"repo_metrics_{target_repo.name}.json"
-
-        try:
-            if not metrics_file.exists():
-                print(f"\n--- 📊 Generating Baseline: Repository Mining ---")
-                RepoMetrics(target_repo).run_report()
-            else:
-                # The internal run_report() logic handles the "Skipping" message
-                # and loads data without re-mining the entire Git history.
-                RepoMetrics(target_repo).run_report()
-        except Exception as e:
-            print(f"⚠️ Verification Warning: {e}")
+            # The internal run_report() logic handles the "Skipping" message
+            # and loads data without re-mining the entire Git history.
+            RepoMetrics(target_repo).run_report()
+    except Exception as e:
+        print(f"⚠️ Verification Warning: {e}")
 
     # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
@@ -192,7 +192,7 @@ def main():
             sys.exit(1)
 
     # Phase 0: Metadata Mining (Git Lineage)
-    # Required for: 'history' (visualizing lineage) AND 'heuristics' (time-travel logic)
+    # Required for: 'history' (visualizing lineage)
     if args.stage in ["all", "meta"]:
         commands.append(RunToolCommand(MetadataAdapter(target_repo)))
 
@@ -212,29 +212,29 @@ def main():
             commands.append(RunToolCommand(adapter))
 
     # Phase 4: Heuristic Analysis
-    if args.stage in ["heuristics", "all"]:
-        # Use Public API for encapsulation
-        available_strategies = set(HeuristicFactory.get_available_strategies())
-
-        # Map User Input -> Factory Names
-        strategy_map = {
-            "A": ["Complexity"],
-            "B": ["AST_Proximity"],
-            "C": ["Criticality"],
-            "all": ["Complexity", "AST_Proximity", "Criticality"]
-        }
-
-        requested = strategy_map.get(args.heuristic, [])
-        valid_strategies = [s for s in requested if s in available_strategies]
-
-        if valid_strategies:
-            print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
-            commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
-
-        elif args.stage == "heuristics":
-            # Fail Fast if user explicitly asked for heuristics but none exist
-            print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
-            sys.exit(1)
+    # if args.stage in ["heuristics", "all"]:
+    #     # Use Public API for encapsulation
+    #     available_strategies = set(HeuristicFactory.get_available_strategies())
+    #
+    #     # Map User Input -> Factory Names
+    #     strategy_map = {
+    #         "A": ["Complexity"],
+    #         "B": ["AST_Proximity"],
+    #         "C": ["Criticality"],
+    #         "all": ["Complexity", "AST_Proximity", "Criticality"]
+    #     }
+    #
+    #     requested = strategy_map.get(args.heuristic, [])
+    #     valid_strategies = [s for s in requested if s in available_strategies]
+    #
+    #     if valid_strategies:
+    #         print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
+    #         commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
+    #
+    #     elif args.stage == "heuristics":
+    #         # Fail Fast if user explicitly asked for heuristics but none exist
+    #         print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
+    #         sys.exit(1)
 
     # --- 5. Execution Loop (Circuit Breaker Pattern) ---
     execution_results = {}
@@ -245,11 +245,11 @@ def main():
 
         # Dependency Guard: The Heuristic Engine is a CONSUMER.
         # It must fail if the upstream pipeline is unhealthy.
-        if isinstance(command, RunHeuristicsCommand):
-            if not pipeline_healthy:
-                print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")
-                execution_results[tool_name] = False
-                continue  # Skips to execute() call below
+        # if isinstance(command, RunHeuristicsCommand):
+        #     if not pipeline_healthy:
+        #         print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")
+        #         execution_results[tool_name] = False
+        #         continue  # Skips to execute() call below
 
         # Execute the tool
         success = command.execute()
