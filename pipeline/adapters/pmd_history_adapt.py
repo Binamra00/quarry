@@ -34,9 +34,16 @@ class PMDHistoryAdapter(IAdapter):
         self.batch_size = batch_size
         self.state_manager = BatchStateManager(target_repo_path.name, "pmd_history")
         self.checkpoint_interval_seconds = 300
+        # Sampling State: Stores the set of interesting SHAs
+        self.sampling_filter = None
 
         # Output to a single JSONL file instead of a directory
         self.jsonl_output_path = config.OUTPUTS_PATH / f"pmd_history_{self.target_repo_path.name}.jsonl"
+
+    def set_sampling_filter(self, sampled_shas: set):
+        """[OVERRIDE] Configure the adapter to skip uninteresting commits."""
+        self.sampling_filter = sampled_shas
+        print(f"   🎯 Adapter Strategy Update: Filtering for {len(self.sampling_filter)} specific commits.")
 
     def get_tool_name(self) -> str:
         return f"PMD History (Stateful Batch: {self.batch_size})"
@@ -48,8 +55,14 @@ class PMDHistoryAdapter(IAdapter):
         """
         Retrieves the next batch of commits to process.
         """
+        if self.sampling_filter:
+            # We sort to ensure chronological processing if tags follow a naming convention
+            all_targets = sorted(list(self.sampling_filter))
+            next_start = self.state_manager.get_next_start_index()
+            return all_targets[next_start: next_start + self.batch_size]
+
         # 1. Get full history
-        cmd = ["git", "rev-list", "HEAD", "--reverse", "--", "*.java"]
+        cmd = ["git", "rev-list", "HEAD", "--reverse"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
@@ -72,7 +85,7 @@ class PMDHistoryAdapter(IAdapter):
         return all_commits[next_start: next_start + self.batch_size]
 
     def _get_total_commit_count(self) -> int:
-        cmd = ["git", "rev-list", "--count", "HEAD", "--", "*.java"]
+        cmd = ["git", "rev-list", "--count", "HEAD"]
         success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
         # [FIX] Ensure output is not empty/whitespace before converting to int
         return int(output.strip()) if success and output and output.strip() else 0
@@ -95,13 +108,18 @@ class PMDHistoryAdapter(IAdapter):
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
 
-        # 1. Verification
-        total_commits = self._get_total_commit_count()
+        # [FIX] Set the total work based on strategy
+        if self.sampling_filter:
+            total_commits = len(self.sampling_filter)
+        else:
+            total_commits = self._get_total_commit_count()
 
-        # Handle empty repository case
         if total_commits == 0:
-            print("❌ No Java commits found to analyze.")
+            # Added a clear error message here for better UX
+            print("❌ No commits found to analyze.")
             return False
+
+        # [REMOVED REDUNDANT VERIFICATION LINE]
 
         batch = self._get_commit_batch()
 
@@ -111,13 +129,13 @@ class PMDHistoryAdapter(IAdapter):
 
         print(f"   📊 Batch Scope: {len(batch)} commits")
 
-        # Detect current branch to restore later
-        success, current_branch = adapter_subprocess.run_command(
-            ["git", "symbolic-ref", "--short", "HEAD"],
+        # Robustly save the starting state (supports detached HEAD for version-pinned runs)
+        success, start_state = adapter_subprocess.run_command(
+            ["git", "rev-parse", "HEAD"],
             cwd=str(self.target_repo_path),
             verbose=False
         )
-        current_branch = current_branch.strip() if success else "main"
+        start_state = start_state.strip() if success else "main"
 
         log_path = self.get_output_path()
         last_checkpoint_time = time.time()
@@ -134,13 +152,16 @@ class PMDHistoryAdapter(IAdapter):
         # Calculate start index ONCE before loop to prevent drift
         batch_start_index = self.state_manager.get_next_start_index()
 
-        with open(log_path, "a") as log_file:
+        with open(log_path, "a",encoding="utf-8") as log_file:
             try:
                 for i, commit_hash in enumerate(batch):
                     global_index = batch_start_index + i
 
-                    # 1. UI Update
-                    ui_strategy.update_progress(i + 1, len(batch), prefix=f"   ⏳ Batch [{commit_hash[:7]}]")
+                    ui_strategy.update_progress(
+                        global_index + 1,
+                        total_commits,
+                        prefix=f"   🔄 Processing [{commit_hash[:7]}]"
+                    )
 
                     # 2. Check if already processed (Idempotency)
                     if self.state_manager.is_commit_processed(commit_hash):
@@ -149,9 +170,15 @@ class PMDHistoryAdapter(IAdapter):
                         # No new JSONL record is written for them to preserve append-only history.
                         continue
 
-                    # 3. Time Travel
+                    # 3. Time Travel & Clean
+                    # FIRST: Destroy any untracked files/directories from the previous era
+                    clean_cmd = ["git", "clean", "-fdx"]
+                    adapter_subprocess.run_command(clean_cmd, cwd=str(self.target_repo_path), verbose=False)
+
+                    # THEN: Checkout the new target state
                     checkout_cmd = ["git", "checkout", "-f", commit_hash]
-                    checkout_success, _ = adapter_subprocess.run_command(checkout_cmd, cwd=str(self.target_repo_path),
+                    checkout_success, _ = adapter_subprocess.run_command(checkout_cmd,
+                                                                         cwd=str(self.target_repo_path),
                                                                          verbose=False)
 
                     if not checkout_success:
@@ -166,7 +193,7 @@ class PMDHistoryAdapter(IAdapter):
                                 "status": "checkout_failed",
                                 "violations": []
                             }
-                            with open(self.jsonl_output_path, "a") as jsonl_file:
+                            with open(self.jsonl_output_path, "a",encoding="utf-8") as jsonl_file:
                                 jsonl_file.write(json.dumps(status_record) + "\n")
                         except Exception as e:
                             log_file.write(f"[WARN] Failed to write checkout_failed record to JSONL: {e}\n")
@@ -185,12 +212,14 @@ class PMDHistoryAdapter(IAdapter):
                         "-R", str(ruleset_path),
                         "-f", "json",
                         "-r", str(temp_json_path),
-                        "--no-cache"
+                        "--no-cache",
+                        "--no-progress"
                     ]
 
                     # [FIX] Removed redundant 'run_status = pending' initialization
                     # Initialize violation data container
                     violation_data = []
+                    run_status = "pending"
 
                     try:
                         pmd_success, pmd_out = adapter_subprocess.run_command(
@@ -201,9 +230,11 @@ class PMDHistoryAdapter(IAdapter):
                         )
 
                         # 5. Capture Data
-                        if pmd_success and temp_json_path.exists() and temp_json_path.stat().st_size > 0:
+                        # [FIX] We removed 'pmd_success' from this check.
+                        # If the file exists and has content, we process it regardless of exit code/console noise.
+                        if temp_json_path.exists() and temp_json_path.stat().st_size > 0:
                             try:
-                                with open(temp_json_path, 'r') as temp_file:
+                                with open(temp_json_path, 'r', encoding='utf-8') as temp_file:  # Added utf-8 safety
                                     raw_json = json.load(temp_file)
                                     violation_data = raw_json.get("files", [])
 
@@ -224,9 +255,10 @@ class PMDHistoryAdapter(IAdapter):
                                 log_file.write(f"[WARN] Corrupt PMD output for {commit_hash}\n")
                                 run_status = "corrupt_output"
                         else:
+                            # [FIX] We only check pmd_success if the file is MISSING.
                             if not pmd_success:
                                 # Determine failure type
-                                if isinstance(pmd_out, str) and pmd_out.strip() == "TIMEOUT":
+                                if isinstance(pmd_out, str) and "TIMEOUT" in str(pmd_out):
                                     run_status = "timeout"
                                 else:
                                     run_status = "crash"
@@ -238,8 +270,7 @@ class PMDHistoryAdapter(IAdapter):
                                 log_file.write(f"[FAILURE] PMD {run_status} on {commit_hash}. Output: {output_str}\n")
                             else:
                                 # Success but no file (empty result / no violations)
-                                run_status = "success"
-                                success_count += 1
+                                run_status = "missing_output"
 
                     finally:
                         # Guaranteed cleanup
@@ -249,16 +280,24 @@ class PMDHistoryAdapter(IAdapter):
                             except OSError as e:
                                 log_file.write(f"[WARN] Could not delete temp file: {e}\n")
 
+                    # [NEW FIX]: Resolve the true Commit SHA
+                    # If commit_hash was an Annotated Tag, this forces Git to peel it back to the code commit.
+                    resolve_cmd = ["git", "rev-parse", f"{commit_hash}^{{commit}}"]
+                    res_success, true_sha = adapter_subprocess.run_command(resolve_cmd,
+                                                                           cwd=str(self.target_repo_path),
+                                                                           verbose=False)
+                    resolved_commit_hash = true_sha.strip() if res_success and true_sha else commit_hash
+
                     # 6. Stream to JSONL (Atomic Append)
                     record = {
-                        "sha": commit_hash,
+                        "sha": resolved_commit_hash,  # Use the mathematically resolved SHA here!
                         "timestamp": int(time.time()),
                         "status": run_status,
                         "violations": violation_data
                     }
 
                     try:
-                        with open(self.jsonl_output_path, "a") as jsonl_file:
+                        with open(self.jsonl_output_path, "a",encoding="utf-8") as jsonl_file:
                             jsonl_file.write(json.dumps(record) + "\n")
                     except Exception as e:
                         log_file.write(f"[CRITICAL] Could not write to JSONL: {e}\n")
@@ -283,9 +322,9 @@ class PMDHistoryAdapter(IAdapter):
 
             finally:
                 ui_strategy.clear_line()
-                print(f"   🔙 Restoring branch: {current_branch}...")
+                print(f"   🔙 Restoring workspace state...")
                 adapter_subprocess.run_command(
-                    ["git", "checkout", "-f", current_branch],
+                    ["git", "checkout", "-f", start_state],
                     cwd=str(self.target_repo_path),
                     verbose=False
                 )

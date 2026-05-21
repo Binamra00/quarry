@@ -1,7 +1,8 @@
 import json
-import statistics
 import sys
 from pathlib import Path
+from typing import Dict, Any
+
 from pipeline import config
 from pipeline.metrics.temp_mets import BaseMetrics
 from pipeline.metrics.formulas import StandardStaticLogic, IStaticAnalysisLogic
@@ -12,153 +13,158 @@ class PMDMetrics(BaseMetrics):
     def __init__(self, target_repo_path: Path):
         super().__init__(target_repo_path)
         self.logic: IStaticAnalysisLogic = StandardStaticLogic()
+        self.PULSE_SIZE_LINES = 5000
 
     def get_tool_name(self) -> str:
-        return "PMD Metrics"
+        return "PMD Metrics (Pulse Stream)"
 
     def get_output_path(self) -> Path:
         project_name = self.target_repo_path.name
         return config.OUTPUTS_PATH / f"pmd_metrics_{project_name}.json"
 
-    def load_data(self):
+    def load_data(self) -> Dict[str, Any]:
         """
-        Loads PMD data from the new JSONL Stream (Phase 3.2)
-        Falls back to legacy directory globbing if stream is missing.
+        [Template Pattern Implementation]
+        Instead of loading the massive file (which breaks memory), this prepares
+        the 'Context' required for the calculation step.
         """
         project_name = self.target_repo_path.name
 
-        # [NEW] Primary Source: The JSONL History Stream
+        # 1. Prepare Paths
         jsonl_path = config.OUTPUTS_PATH / f"pmd_history_{project_name}.jsonl"
+        repo_metrics_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
 
-        # Legacy/Auxiliary paths
-        repo_path = config.OUTPUTS_PATH / f"repo_metrics_{project_name}.json"
-        raw_batch_dir = config.OUTPUTS_PATH / "pmd_raw" / project_name
+        # 2. Check Existence (Fail fast if no data exists)
+        if not jsonl_path.exists():
+            print(f"   ❌ History Stream not found: {jsonl_path}")
+            return None  # Template will abort cleanly
 
-        aggregated_data = {"files": []}
-        found_data = False
-        processed_commits = 0
-
-        # ---------------------------------------------------------
-        # STRATEGY 1: Stream Loading (New Architecture)
-        # ---------------------------------------------------------
-        if jsonl_path.exists():
-            print(f"   📊 Found JSONL history stream: {jsonl_path.name}. Aggregating...")
-            try:
-                with open(jsonl_path, 'r') as f:
-                    for line_num, line in enumerate(f):
-                        line = line.strip()
-                        # [FIX] PEP 8: Avoid compound statements
-                        if not line:
-                            continue
-
-                        try:
-                            record = json.loads(line)
-
-                            # [LOGIC] Only aggregate successful runs
-                            # If 'status' is missing (legacy data), assume success
-                            status = record.get("status", "success")
-
-                            if status == "success":
-                                # Map the 'violations' field from JSONL to the 'files' list
-                                # expected by the calculation logic.
-                                file_violations = record.get("violations", [])
-                                if file_violations:
-                                    aggregated_data["files"].extend(file_violations)
-
-                                # [FIX] Increment for ALL successful commits, even if 0 violations
-                                processed_commits += 1
-
-                        except json.JSONDecodeError:
-                            print(f"   ⚠️ Skipping corrupt line {line_num + 1} in JSONL", file=sys.stderr)
-
-                found_data = True
-                print(f"   ✅ Aggregated valid data from {processed_commits} historical commits.")
-
-            except Exception as e:
-                print(f"   ❌ Error reading JSONL stream: {e}", file=sys.stderr)
-
-        # ---------------------------------------------------------
-        # STRATEGY 2: Legacy Batch Files (Fallback)
-        # ---------------------------------------------------------
-        if not found_data and raw_batch_dir.exists():
-            batch_files = list(raw_batch_dir.glob("pmd_out_*.json"))
-            if batch_files:
-                print(f"   ⚠️ JSONL missing. Falling back to {len(batch_files)} legacy batch files...")
-                for bf in batch_files:
-                    try:
-                        with open(bf, 'r') as f:
-                            data = json.load(f)
-                            if "files" in data:
-                                aggregated_data["files"].extend(data["files"])
-                    except (json.JSONDecodeError, OSError) as e:
-                        print(f"   ⚠️ Data Loss: Skipping corrupt batch file {bf.name} -> {e}", file=sys.stderr)
-                found_data = True
-
-        if not found_data:
-            print(f"   ❌ No PMD data found (Checked JSONL stream and Legacy directory).")
-            return None
-
-        # ---------------------------------------------------------
-        # Metadata Loading
-        # ---------------------------------------------------------
+        # 3. Load Metadata (Lightweight)
         file_count = 1
-        if repo_path.exists():
+        if repo_metrics_path.exists():
             try:
-                with open(repo_path, 'r') as f:
+                with open(repo_metrics_path, 'r') as f:
                     repo_data = json.load(f)
                     file_count = repo_data.get("content", {}).get("java_file_count", 1)
             except json.JSONDecodeError:
-                print(f"   ⚠️ Warning: repo_metrics.json is corrupt. Defaulting file count to 1.", file=sys.stderr)
+                print(f"   ⚠️ Warning: repo_metrics.json corrupt. Defaulting to 1.", file=sys.stderr)
 
-        return (aggregated_data, file_count)
+        # 4. Return Context Object (Always Truthy)
+        return {
+            "stream_path": jsonl_path,
+            "file_count": file_count
+        }
 
-    def calculate(self, data) -> dict:
-        """Pure Business Logic."""
-        pmd_data, file_count = data
-        files = pmd_data.get("files", [])
+    def calculate(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        [Template Pattern Implementation]
+        Receives the context from load_data() and performs the O(1) Streaming Calculation.
+        """
+        jsonl_path = context["stream_path"]
+        file_count = context["file_count"]
+
+        print(f"   📊 Starting Pulse-Stream analysis of {jsonl_path.name}...")
+
+        # --- Initialize Logic ---
+        stats = {
+            "total_smells": 0,
+            "complexity_sum": 0,
+            "complexity_count": 0,
+            "hotspots_map": {},
+            "commits_processed": 0
+        }
 
         pmd_conf = config.HEURISTICS.get("pmd", {})
         COMPLEXITY_RULE_NAME = pmd_conf.get("complexity_rule", "CyclomaticComplexity")
         HOTSPOT_LIMIT = pmd_conf.get("hotspot_limit", 5)
 
-        total_smells = 0
-        complexity_scores = []
-        hotspots_map = {}
+        # --- Pulse Loop (The I/O Engine) ---
+        file_offset = 0
+        has_more_data = True
+        pulse_count = 0
 
-        for f in files:
-            violations = f.get("violations", [])
-            count = len(violations)
-            total_smells += count
+        while has_more_data:
+            lines_in_pulse = 0
 
-            fname = Path(f["filename"]).name
-            hotspots_map[fname] = hotspots_map.get(fname, 0) + count
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                f.seek(file_offset)
 
-            for v in violations:
-                if v.get("rule") == COMPLEXITY_RULE_NAME:
-                    desc = v.get("description", "")
+                while lines_in_pulse < self.PULSE_SIZE_LINES:
+                    line = f.readline()
+                    if not line:
+                        has_more_data = False
+                        break
+
+                    lines_in_pulse += 1
+                    if not line.strip(): continue
+
                     try:
-                        score = int(desc.split("complexity of")[-1].strip(" ."))
-                        complexity_scores.append(score)
-                    except (ValueError, IndexError, AttributeError):
-                        pass
+                        record = json.loads(line)
+                        if record.get("status", "success") != "success":
+                            continue
 
-        density = self.logic.calculate_density(total_smells, file_count)
-        avg_comp = self.logic.calculate_complexity_aggregation(complexity_scores)
-        top_hotspots = self.logic.identify_hotspots(hotspots_map, HOTSPOT_LIMIT)
+                        stats["commits_processed"] += 1
+                        self._process_violations(record.get("violations", []), stats, COMPLEXITY_RULE_NAME)
+
+                    except json.JSONDecodeError:
+                        continue
+
+                file_offset = f.tell()
+
+            pulse_count += 1
+            if pulse_count % 20 == 0:
+                print(f"      ... Processed {stats['commits_processed']} commits ...")
+
+        # --- Aggregation ---
+        avg_comp = 0
+        if stats["complexity_count"] > 0:
+            avg_comp = stats["complexity_sum"] / stats["complexity_count"]
+
+        # Hotspot identification
+        sorted_hotspots = sorted(stats["hotspots_map"].items(), key=lambda x: x[1], reverse=True)[:HOTSPOT_LIMIT]
+        top_hotspots = dict(sorted_hotspots)
+
+        density = 0
+        if file_count > 0:
+            density = stats["total_smells"] / file_count
 
         return {
             "density": {
-                "total_smells": total_smells,
+                "total_smells": stats["total_smells"],
                 "per_file": round(density, 2),
-                "strategy": self.logic.__class__.__name__
+                "strategy": "PulseStreaming"
             },
             "complexity": {
                 "metric_used": COMPLEXITY_RULE_NAME,
                 "avg_score": round(avg_comp, 1),
-                "strategy": self.logic.__class__.__name__
+                "strategy": "PulseStreaming"
             },
             "hotspots": top_hotspots
         }
+
+    def _process_violations(self, files_list, stats, comp_rule):
+        """Helper to update running counters."""
+        for f in files_list:
+            violations = f.get("violations", [])
+            count = len(violations)
+
+            stats["total_smells"] += count
+
+            fname = Path(f["filename"]).name
+            stats["hotspots_map"][fname] = stats["hotspots_map"].get(fname, 0) + count
+
+            for v in violations:
+                if "metric_value" in v and v.get("rule") == comp_rule:
+                    stats["complexity_sum"] += v["metric_value"]
+                    stats["complexity_count"] += 1
+                elif v.get("rule") == comp_rule:
+                    desc = v.get("description", "")
+                    try:
+                        score = int(desc.split("complexity of")[-1].strip(" ."))
+                        stats["complexity_sum"] += score
+                        stats["complexity_count"] += 1
+                    except (ValueError, IndexError, AttributeError):
+                        pass
 
     def print_report(self, metrics: dict):
         d = metrics["density"]

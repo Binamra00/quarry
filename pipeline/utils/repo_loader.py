@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
 from pipeline.utils import adapter_subprocess
+from pipeline.utils.git_manager import GitManager
 
 
 class RepositoryLoader:
@@ -25,31 +26,50 @@ class RepositoryLoader:
     )
 
     @staticmethod
-    def ensure_local_copy(repo_argument: str) -> Path:
+    def ensure_local_copy(repo_argument: str, version: str = None) -> Path:
         """
-        Ensures the repository exists in the workspace.
+        Ensures the repository exists in the workspace and is on the correct version.
 
         Args:
             repo_argument (str): Either a Git URL or a local folder name.
+            version (str, optional): A Git Tag or Commit Hash to checkout.
 
         Returns:
             Path: The absolute path to the local repository.
-
-        Raises:
-            ValueError: If the argument is empty, unsafe (starts with '-'),
-                        or contains path traversal characters.
-            RuntimeError: If cloning a remote repository fails.
-            FileNotFoundError: If the requested local folder does not exist.
         """
         if not repo_argument or not repo_argument.strip():
             raise ValueError("❌ Repository argument cannot be empty.")
 
-        # 1. Strategy: Is it a URL?
+        # 1. Strategy: Resolve Path (Remote Clone or Local Lookup)
         if RepositoryLoader._is_git_url(repo_argument):
-            return RepositoryLoader._handle_remote_clone(repo_argument)
+            target_path = RepositoryLoader._handle_remote_clone(repo_argument)
+        else:
+            target_path = RepositoryLoader._handle_local_lookup(repo_argument)
 
-        # 2. Strategy: Is it a local folder name?
-        return RepositoryLoader._handle_local_lookup(repo_argument)
+        # 2. Version Management: Checkout specific tag/commit if requested
+        if version:
+            RepositoryLoader._checkout_version(target_path, version)
+
+        return target_path
+
+    @staticmethod
+    def _checkout_version(target_path: Path, version: str):
+        """
+        Forces the repository to a specific version (Tag, Branch, or Commit).
+        """
+        print(f"   🔄 Pinning repository to version: {version}...")
+
+        # 1. Fetch tags to ensure we see 'jena-3.1.0'
+        adapter_subprocess.run_command(["git", "-C", str(target_path), "fetch", "--tags"])
+
+        # 2. Force checkout the target version
+        checkout_cmd = ["git", "-C", str(target_path), "checkout", "-f", version]
+        success, output = adapter_subprocess.run_command(checkout_cmd, verbose=True)
+
+        if not success:
+            raise RuntimeError(f"❌ Failed to checkout version '{version}':\n{output}")
+
+        print(f"   ✅ Successfully checked out {version}")
 
     @staticmethod
     def _is_git_url(s: str) -> bool:
@@ -107,18 +127,12 @@ class RepositoryLoader:
             print(f"   🔍 Repo '{repo_name}' found locally. Skipping clone.")
             return target_path
 
-        print(f"   ☁️  Cloning remote repository: {url}")
-        print(f"       Destination: {target_path.name}")
-
-        # Security: Use '--' to separate flags from positional arguments
-        cmd = ["git", "clone", "--", url, str(target_path)]
-
-        success, output = adapter_subprocess.run_command(cmd, verbose=True)
+        # Let the GitManager handle the clone and stream the live progress bar
+        success = GitManager.clone_with_progress(url, target_path)
 
         if not success:
-            raise RuntimeError(f"❌ Failed to clone repository: {url}\nGit Output: {output}")
+            raise RuntimeError(f"❌ Failed to clone repository: {url}")
 
-        print(f"   ✅ Clone successful.")
         return target_path
 
     @staticmethod

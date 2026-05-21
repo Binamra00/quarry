@@ -1,5 +1,5 @@
 import json
-import subprocess
+from pipeline.utils import adapter_subprocess
 from pathlib import Path
 from pipeline import config
 from pipeline.adapters.i_adapters import IAdapter
@@ -24,19 +24,22 @@ class MetadataAdapter(IAdapter):
 
         try:
             # 1. Run Git Log
-            # -C runs the command inside the repo directory
-            # Format: "%H %P" -> "CommitHash ParentHash"
-            cmd = ["git", "-C", str(self.target_repo_path), "log", "--format=%H %P"]
+            # Format: "%H %P %ct" -> "CommitHash ParentHash UnixTimestamp"
+            cmd = ["git", "log", "--all", "--format=%H %P %ct"]
 
-            # Capture output directly
-            result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+            # Capture output using the universal adapter
+            success, output_str = adapter_subprocess.run_command(
+                cmd,
+                cwd=str(self.target_repo_path),
+                verbose=False
+            )
 
-            if result.returncode != 0:
-                print(f"❌ Git Error: {result.stderr}")
+            if not success:
+                print(f"❌ Git Error: {output_str}")
                 return False
 
             # 2. Parse and Save to JSONL
-            lines = result.stdout.strip().split("\n")
+            lines = output_str.strip().split("\n")
             count = 0
 
             with open(output_path, "w", encoding="utf-8") as f:
@@ -47,12 +50,15 @@ class MetadataAdapter(IAdapter):
                         continue
 
                     commit_sha = parts[0]
-                    # Take the first parent (simplifying merge commits)
-                    parent_sha = parts[1] if len(parts) > 1 else None
+                    # Use negative indexing to get the timestamp (it's always the last part)
+                    timestamp = parts[-1] if len(parts) > 1 else None
+                    # Parent is the middle part if it exists (handles 3 parts: SHA Parent Timestamp)
+                    parent_sha = parts[1] if len(parts) > 2 else None
 
                     record = {
                         "commit_sha": commit_sha,
-                        "parent_sha": parent_sha
+                        "parent_sha": parent_sha,
+                        "timestamp": timestamp
                     }
                     f.write(json.dumps(record) + "\n")
                     count += 1
