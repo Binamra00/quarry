@@ -61,7 +61,8 @@ class ASTProximityStrategy(IHeuristicStrategy):
                     "start_line": "start_current",
                     "end_line": "end_current",
                     "priority": "priority_current",
-                    "message": "message_current"
+                    "message": "message_current",
+                    "pmd_complexity_score": "score_current"
                 }),
                 left_on=["commit_sha", "right_side_path"],  # Explicitly use Right (Current) Path
                 right_on=["commit_sha", "file_path"],
@@ -75,7 +76,8 @@ class ASTProximityStrategy(IHeuristicStrategy):
                     "start_line": "start_parent",
                     "end_line": "end_parent",
                     "priority": "priority_parent",
-                    "message": "message_parent"
+                    "message": "message_parent",
+                    "pmd_complexity_score": "score_parent"
                 }),
                 left_on=["ref_parent_sha", "left_side_path"],  # Explicitly use Left (Parent) Path
                 right_on=["pmd_parent_sha", "file_path"],
@@ -102,7 +104,7 @@ class ASTProximityStrategy(IHeuristicStrategy):
                 ).fill_null(False).alias("right_smell")  # Is it there now? (Current)
             ])
 
-            # 5. Score & Causality (Derived from Booleans)
+            # 5. Score & Causality (Derived from Booleans & Revealed Preference)
             .with_columns([
                 # Score: 1.0 if it overlaps on EITHER side
                 pl.when(pl.col("left_smell") | pl.col("right_smell"))
@@ -111,12 +113,28 @@ class ASTProximityStrategy(IHeuristicStrategy):
                 .alias("score_AST_Proximity"),
 
                 # Causality: Explicit Logic
-                pl.when(pl.col("left_smell") & ~pl.col("right_smell"))
+                pl.when(
+                    # Case A: Complete Fix (Smell vanished)
+                    pl.col("left_smell") & ~pl.col("right_smell")
+                )
                 .then(pl.lit("Fixed"))
+
+                # [NEW] Case B: Amelioration (Smell exists, but score dropped)
+                # e.g. Complexity went from 15 -> 7
+                .when(
+                    pl.col("left_smell") & pl.col("right_smell") &
+                    (pl.col("score_current") < pl.col("score_parent"))
+                )
+                .then(pl.lit("Ameliorated"))
+
+                # Case C: Persistence (Smell exists, score same or worse)
                 .when(pl.col("left_smell") & pl.col("right_smell"))
                 .then(pl.lit("Persistent"))
+
+                # Case D: Regression (New smell appeared)
                 .when(~pl.col("left_smell") & pl.col("right_smell"))
-                .then(pl.lit("Introduction"))  # [Bonus] Now we track regressions!
+                .then(pl.lit("Introduction"))
+
                 .otherwise(pl.lit("None"))
                 .alias("causality_type")
             ])
@@ -127,20 +145,26 @@ class ASTProximityStrategy(IHeuristicStrategy):
                 pl.coalesce(["start_current", "start_parent"]).alias("pmd_smell_start_line"),
                 pl.coalesce(["end_current", "end_parent"]).alias("pmd_smell_end_line"),
                 pl.coalesce(["priority_current", "priority_parent"]).alias("pmd_priority_score"),
-                pl.coalesce(["message_current", "message_parent"]).alias("message")
+                pl.coalesce(["message_current", "message_parent"]).alias("message"),
+                # [NEW] Aliases for Paper/Plotting
+                pl.col("score_current").alias("current_pmd_score"),
+                pl.col("score_parent").alias("previous_pmd_score"),
+                pl.col("commit_sha").alias("sha1")
             ])
         )
 
-        # 7. Cleanup: Robust Drop (Defensive Coding)
+        # 7. Final Projection (Defensive Drop)
+        # [REVERTED STRATEGY]: We use 'exclude' instead of 'select'.
+        # Why?
+        # 1. Tests need internal cols like 'score_AST_Proximity' and 'left_smell'.
+        # 2. Pipeline needs to preserve columns from previous heuristics (Good Pipe).
         cols_to_remove = {
             "rule_current", "start_current", "end_current", "priority_current", "message_current",
             "rule_parent", "start_parent", "end_parent", "priority_parent", "message_parent",
-            "ref_parent_sha",
-            "pmd_parent_sha",
-            "repository", "type", "file_path"
+            "ref_parent_sha", "pmd_parent_sha",
+            "repository", "type", "file_path",
+            # Remove raw score cols since we aliased them in Step 6
+            "score_current", "score_parent"
         }
 
-        # [FIX] Use select(pl.exclude()) pattern.
-        # This is safe because if a column in the set doesn't exist, pl.exclude simply ignores it.
-        # It avoids the need to check the schema entirely (fixing the PerformanceWarning too).
         return final_df.select(pl.exclude(cols_to_remove))

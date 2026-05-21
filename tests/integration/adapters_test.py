@@ -115,6 +115,95 @@ class TestPMDAdapterIntegration:
         assert cmd_arg[0] == "git" and cmd_arg[1] == "checkout", "Must attempt git checkout in finally block"
         assert cmd_arg[3] == "main", "Must restore to the captured branch (main)"
 
+    @patch("pipeline.adapters.pmd_history_adapt.BatchStateManager")
+    @patch("pipeline.utils.adapter_subprocess.run_command")
+    @patch("pipeline.adapters.pmd_history_adapt.uuid")  # Patch UUID to predict temp filename
+    def test_pmd_enrichment_logic(self, mock_uuid, mock_run_command, mock_state_manager):
+        """
+        Test 5: Enrichment Verification.
+        Verifies that 'metric_value' is extracted from the temp file
+        and correctly injected into the final JSONL output.
+        """
+        # 1. Setup Mocks
+        instance_mock = mock_state_manager.return_value
+        instance_mock.get_next_start_index.return_value = 0
+        instance_mock.is_commit_processed.return_value = False
+
+        # Force a predictable UUID so we can match the temp filename
+        mock_uuid.uuid4.return_value.hex = "12345678"
+
+        adapter = PMDHistoryAdapter(Path("dummy_repo"))
+        adapter._get_total_commit_count = MagicMock(return_value=1)
+        adapter._get_commit_batch = MagicMock(return_value=["sha1"])
+
+        # Mock sequence of commands:
+        # 1. Get Branch -> 2. Checkout -> 3. Run PMD -> 4. Restore Branch
+        mock_run_command.side_effect = [
+            (True, "main"),
+            (True, ""),
+            (True, ""),
+            (True, "")
+        ]
+
+        # 2. Mock File System I/O
+        # The raw JSON that PMD 'writes' to the temp file
+        raw_pmd_output = json.dumps({
+            "files": [{
+                "violations": [
+                    {
+                        "rule": "CyclomaticComplexity",
+                        "message": "The method 'calculate' has a cyclomatic complexity of 15."
+                    },
+                    {
+                        "rule": "NcssCount",
+                        "message": "The method 'calculate' has an NCSS line count of 50."
+                    }
+                ]
+            }]
+        })
+
+        # Handles for verifying writes/reads
+        mock_jsonl_handle = MagicMock()
+        mock_temp_handle = mock_open(read_data=raw_pmd_output).return_value
+
+        def open_side_effect(filename, mode='r', **kwargs):
+            fname = str(filename)
+            # Intercept reading the temporary PMD file
+            if "pmd_" in fname and ".json" in fname and "r" in mode:
+                return mock_temp_handle
+            # Intercept appending to the final JSONL log
+            if ".jsonl" in fname and "a" in mode:
+                m = MagicMock()
+                m.__enter__.return_value = mock_jsonl_handle
+                return m
+            # Default for log files, etc.
+            return MagicMock()
+
+        # Apply patches
+        with patch("builtins.open", side_effect=open_side_effect):
+            # We must also patch Path.exists/stat to pass the file validation checks
+            with patch("pathlib.Path.exists", return_value=True), \
+                    patch("pathlib.Path.stat", MagicMock(return_value=MagicMock(st_size=100))):
+                # EXECUTE
+                adapter.execute()
+
+        # 3. Assertions
+        # Verify that we wrote to the JSONL file
+        assert mock_jsonl_handle.write.called, "Adapter failed to write to JSONL output"
+
+        # Capture what was written
+        args, _ = mock_jsonl_handle.write.call_args
+        written_json_str = args[0]
+        written_record = json.loads(written_json_str)
+
+        # Verify the enrichment
+        violations = written_record['violations'][0]['violations']
+
+        # Check CC injection
+        assert violations[0]['metric_value'] == 15, "Failed to inject CC score of 15"
+        # Check NCSS injection
+        assert violations[1]['metric_value'] == 50, "Failed to inject NCSS score of 50"
+
 
 class TestRefmAdapterIntegration:
 
@@ -275,3 +364,4 @@ class TestRefmAdapterIntegration:
 
         assert len(commits) == 2
         assert "" not in commits
+

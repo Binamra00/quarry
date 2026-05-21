@@ -45,7 +45,8 @@ class HeuristicSchemas:
                         "priority": pl.Int64,
                         "beginline": pl.Int64,
                         "endline": pl.Int64,
-                        "description": pl.Utf8
+                        "description": pl.Utf8,
+                        "metric_value": pl.Int64
                     })
                 )
             })
@@ -117,9 +118,9 @@ class DTOLoader:
             .filter(pl.col("file_path").is_not_null())
             .rename({
                 "rule": "rule_name", "beginline": "start_line",
-                "endline": "end_line", "description": "message"
+                "endline": "end_line", "description": "message", "metric_value": "pmd_complexity_score"
             })
-            .select(["commit_sha", "file_path", "rule_name", "priority", "start_line", "end_line", "message"])
+            .select(["commit_sha", "file_path", "rule_name", "priority", "start_line", "end_line", "message", "pmd_complexity_score"])
         )
 
     @staticmethod
