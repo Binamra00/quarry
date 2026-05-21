@@ -42,8 +42,9 @@ if not WORKSPACE_ROOT.exists():
 TOOLS_PATH = WORKSPACE_ROOT / "tools"
 REPOS_PATH = WORKSPACE_ROOT / "repos"
 OUTPUTS_PATH = WORKSPACE_ROOT / "outputs"
+VERSIONS_PATH = WORKSPACE_ROOT / "versions"
 
-for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH]:
+for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH, VERSIONS_PATH]:
     path.mkdir(exist_ok=True)
 
 # --- 4. TOOL CONFIGURATION ---
@@ -89,29 +90,28 @@ TOY_PROJECT_PATH_ESCAPED = escape_path(TOY_PROJECT_PATH)
 WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 
 # --- 9. HEURISTICS ---
-HEURISTICS_PATH = REPO_ROOT / "pipeline" / "heuristic_seeds.json"
-HEURISTICS = {}
-
-if HEURISTICS_PATH.exists():
-    try:
-        with open(HEURISTICS_PATH, 'r') as f:
-            HEURISTICS = json.load(f)
-        print(f"⚙️  Heuristics loaded from {HEURISTICS_PATH.name}")
-    except Exception as e:
-        print(f"⚠️ Error loading heuristics: {e}")
-else:
-    print("⚠️ Heuristics file not found. Using internal defaults.")
-    HEURISTICS = {
-        "refactoring": {"churn_sensitivity": 20, "purity_target_percent": 80.0, "density_target_percent": 40.0},
-        "repo_mining": {
-            "fix_keywords": ['fix', 'bug', 'issue'],
-            "refactor_keywords": ['refactor', 'cleanup']
-        }
-    }
+# HEURISTICS_PATH = REPO_ROOT / "pipeline" / "heuristic_seeds.json"
+# HEURISTICS = {}
+#
+# if HEURISTICS_PATH.exists():
+#     try:
+#         with open(HEURISTICS_PATH, 'r') as f:
+#             HEURISTICS = json.load(f)
+#         print(f"⚙️  Heuristics loaded from {HEURISTICS_PATH.name}")
+#     except Exception as e:
+#         print(f"⚠️ Error loading heuristics: {e}")
+# else:
+#     print("⚠️ Heuristics file not found. Using internal defaults.")
+#     HEURISTICS = {
+#         "refactoring": {"churn_sensitivity": 20, "purity_target_percent": 80.0, "density_target_percent": 40.0},
+#         "repo_mining": {
+#             "fix_keywords": ['fix', 'bug', 'issue'],
+#             "refactor_keywords": ['refactor', 'cleanup']
+#         }
+#     }
 
 # --- 10. CONSTANTS ---
-# Added 'heuristics' to the list
-VALID_STAGES = ["all", "history", "static", "refm", "pmd", "pmd_history", "heuristics", "analyze"]
+VALID_STAGES = ["all", "meta", "refm", "pmd", "pmd_history"]
 
 # --- 11. I/O RESILIENCE CONFIGURATION ---
 IO_MAX_RETRIES = 5
