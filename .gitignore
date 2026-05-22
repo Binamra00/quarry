@@ -11,7 +11,7 @@ venv library root/
 temp_generate_plots.
 pipeline/temp_test.py
 sampling/
-analyzer/
+pipeline/analyzer/
 analysis/
 docs/
 pipeline/heuristics/
