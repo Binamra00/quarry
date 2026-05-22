@@ -185,28 +185,83 @@ class CkAdapter(IAdapter):
                     run_status = "pending"
 
                     with tempfile.TemporaryDirectory() as temp_dir:
+
+                        # [FIX 1]: CK Path Concatenation Bug
+                        # We must force a trailing slash so CK doesn't write outside the temp folder.
+                        ck_out_dir = str(temp_dir).replace('\\', '/')
+                        if not ck_out_dir.endswith('/'):
+                            ck_out_dir += '/'
+
+                        # [FIX 2]: Normalize repo path for Eclipse JDT on Windows
+                        repo_dir_str = str(self.target_repo_path).replace('\\', '/')
+
                         # CK CLI Arguments: <project_dir> <use_jars> <max_at_once> <variables_and_fields> <output_dir>
+                        # Use lowercase 'false'/'true' to perfectly match Java Boolean parsing
                         ck_cmd = [
                             "java", "-jar", str(config.CK_PATH),
-                            str(self.target_repo_path),
-                            "false", "0", "true", str(temp_dir)
+                            repo_dir_str,
+                            "false", "0", "true", ck_out_dir
                         ]
 
                         try:
                             ck_success, ck_out = adapter_subprocess.run_command(
                                 ck_cmd,
+                                cwd=str(self.target_repo_path),
                                 allowed_exit_codes=[0],
                                 verbose=False,
                                 timeout=600
                             )
+                            # log_file.write(
+                            #     f"[DEBUG] CK exit={ck_success} sha={commit_hash[:7]} output={str(ck_out)[:500]}\n")
+                            # log_file.write(f"[DEBUG] Temp dir files: {list(Path(temp_dir).glob('*'))}\n")
+                            # log_file.write(f"[DEBUG] Repo csv files: {list(self.target_repo_path.glob('*.csv'))}\n")
+                            # log_file.write(f"[WARN] CK reported success but produced no CSV for {commit_hash}\n")
 
                             # 5. Capture Data
-                            class_csv = Path(temp_dir) / "class.csv"
-                            method_csv = Path(temp_dir) / "method.csv"
+                            temp_dir_path = Path(temp_dir)
+
+                            # Preferred location (what we asked CK to use)
+                            class_csv = temp_dir_path / "class.csv"
+                            method_csv = temp_dir_path / "method.csv"
+
+                            # Fallback: CK sometimes writes in CWD (repo dir) even when it prints "Metrics extracted!!!"
+                            if not class_csv.exists() or class_csv.stat().st_size == 0:
+                                class_csv = self.target_repo_path / "class.csv"
+                                method_csv = self.target_repo_path / "method.csv"
 
                             if class_csv.exists() and class_csv.stat().st_size > 0:
                                 classes_data = self._parse_csv_to_dicts(class_csv)
                                 methods_data = self._parse_csv_to_dicts(method_csv)
+
+                                # --- FIX: Normalize Absolute Paths to Portable Relative Paths ---
+                                def clean_path(abs_path_str: str) -> str:
+                                    try:
+                                        # Safely resolve the path CK gave us
+                                        p = Path(abs_path_str).resolve()
+                                        # Strip out the 'E:\...\workspace_data\repos\toy_project' part
+                                        rel_path = p.relative_to(self.target_repo_path.resolve())
+                                        # Re-attach 'toy_project/' and force universal forward slashes
+                                        return f"{self.target_repo_path.name}/{rel_path}".replace('\\', '/')
+                                    except ValueError:
+                                        return abs_path_str  # Fallback if path manipulation fails
+
+                                # Apply the cleanup to both data structures
+                                for cls in classes_data:
+                                    if "file" in cls:
+                                        cls["file"] = clean_path(cls["file"])
+
+                                for method in methods_data:
+                                    if "file" in method:
+                                        method["file"] = clean_path(method["file"])
+                                # --------------------------------------------------------------
+
+                                # --- CLEANUP (only if CK wrote CSVs into the repo directory) ---
+                                try:
+                                    if class_csv.parent.resolve() == self.target_repo_path.resolve():
+                                        class_csv.unlink(missing_ok=True)
+                                        method_csv.unlink(missing_ok=True)
+                                except Exception as e:
+                                    log_file.write(f"[WARN] Failed to cleanup CK CSVs: {e}\n")
 
                                 # Group methods by class name for fast O(1) lookup
                                 methods_by_class = {}
@@ -225,7 +280,30 @@ class CkAdapter(IAdapter):
                                 success_count += 1
                                 run_status = "success"
                             else:
-                                if not ck_success:
+                                if ck_success:
+                                    run_status = "missing_output"
+                                    # [DIAGNOSTIC BLOCK]: Why did CK succeed but produce no output?
+                                    try:
+                                        # Recursively count Java files in the repo at this commit
+                                        java_files = list(self.target_repo_path.rglob('*.java'))
+
+                                        log_file.write(
+                                            f"[DEBUG] CK exit={ck_success} sha={commit_hash[:7]} output={str(ck_out)[:500]}\n")
+                                        log_file.write(f"[DEBUG] Temp dir files: {list(temp_dir_path.glob('*'))}\n")
+                                        log_file.write(
+                                            f"[DEBUG] Repo csv files: {list(self.target_repo_path.glob('*.csv'))}\n")
+
+                                        if not java_files:
+                                            log_file.write(
+                                                f"[WARN] CK produced no CSV for {commit_hash}. Reason: 0 '.java' files exist in this commit.\n")
+                                        else:
+                                            log_file.write(
+                                                f"[WARN] CK produced no CSV for {commit_hash}. Anomaly: Found {len(java_files)} '.java' files, but CK did not parse them.\n")
+                                    except Exception as e:
+                                        log_file.write(
+                                            f"[WARN] Failed to evaluate missing CSV reason for {commit_hash}: {e}\n")
+                                else:
+                                    # CK actually crashed or timed out
                                     if isinstance(ck_out, str) and "TIMEOUT" in str(ck_out):
                                         run_status = "timeout"
                                     else:
@@ -236,8 +314,6 @@ class CkAdapter(IAdapter):
                                         output_str = output_str[:200] + "... [output truncated]"
                                     log_file.write(
                                         f"[FAILURE] CK {run_status} on {commit_hash}. Output: {output_str}\n")
-                                else:
-                                    run_status = "missing_output"
 
                         except Exception as e:
                             log_file.write(f"[CRITICAL] Unexpected error during CK run: {e}\n")
@@ -292,5 +368,10 @@ class CkAdapter(IAdapter):
                 )
                 self.state_manager.flush()
 
-        print(f"✅ Batch Complete. Processed {success_count} new commits.")
+        # [OUT-DENTED 4 SPACES]: Now outside the 'with open()' block
+        # --- UX: Detailed Batch Summary ---
+        total_processed_so_far = batch_start_index + len(batch)
+        remaining = max(0, total_commits - total_processed_so_far)
+        print(f"✅ Batch Complete. Scanned {total_processed_so_far}/{total_commits} | Remaining: {remaining}")
+
         return True

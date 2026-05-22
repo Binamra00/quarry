@@ -65,7 +65,7 @@ def main():
         sys.exit(1)
     if args.batch != 50 and args.stage not in ["all", "pmd_history", "ck"]:
         print(f"\n❌ CLI CONFLICT: The '--batch' flag manages memory for historical runs.")
-        print(f"   It is only valid when running the 'pmd_history' stage (or 'all').")
+        print(f"   It is only valid when running the 'pmd_history' oo 'ck' stage (or 'all').")
         sys.exit(1)
 
 
@@ -187,17 +187,15 @@ def main():
 
     # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
     # Run these unless we are in isolated heuristic mode
-    if args.stage in ["all", "refm", "pmd", "pmd_history"]:
+    if args.stage in ["all", "refm", "pmd", "pmd_history", "ck"]:
         mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch)
 
         for adapter in mining_adapters:
-
             # [CLEAN] Polymorphic call.
             # If the adapter supports it, it configures itself.
             # If not, it safely ignores the call.
             if sampled_shas:
                 adapter.set_sampling_filter(sampled_shas)
-
             commands.append(RunToolCommand(adapter))
 
     # Phase 4: Heuristic Analysis

@@ -55,7 +55,7 @@ CK_URL = os.getenv(
     "CK_URL",
     f"https://repo1.maven.org/maven2/com/github/mauricioaniche/ck/{CK_VERSION}/{CK_JAR_NAME}"
 )
-CK_SHA256 = os.getenv("CK_SHA256")
+CK_SHA256 = os.getenv("CK_SHA256", "")
 CK_PATH = TOOLS_PATH / "ck" / CK_JAR_NAME
 
 # 4B. PMD Tool (Legacy/Alternative)
@@ -64,7 +64,7 @@ PMD_URL = os.getenv(
     "PMD_URL",
     f"https://github.com/pmd/pmd/releases/download/pmd_releases%2F{PMD_VERSION}/pmd-dist-{PMD_VERSION}-bin.zip"
 )
-PMD_SHA256 = os.getenv("PMD_SHA256")
+PMD_SHA256 = os.getenv("PMD_SHA256", "")
 
 if os.name == 'nt':
     PMD_EXEC = "pmd.bat"
@@ -78,7 +78,7 @@ RM_URL = os.getenv(
     "RM_URL",
     f"https://github.com/tsantalis/RefactoringMiner/releases/download/{RM_VERSION}/RefactoringMiner-{RM_VERSION}.zip"
 )
-RM_SHA256 = os.getenv("RM_SHA256")
+RM_SHA256 = os.getenv("RM_SHA256", "")
 RM_ENTRY_POINT_CLASS = "org.refactoringminer.RefactoringMiner"
 
 if os.name == 'nt':

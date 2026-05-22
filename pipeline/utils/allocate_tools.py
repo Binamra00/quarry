@@ -227,7 +227,7 @@ def provision():
         # CK is a Java JAR and doesn't need chmod +x like the PMD bash script does
         if config.STRUCTURAL_TOOL == "pmd":
             if os.name != "nt":
-                make_executable(config.RM_PATH)
+                make_executable(config.PMD_PATH)
 
         print("--- Toolchain Ready ---\n")
     else:
