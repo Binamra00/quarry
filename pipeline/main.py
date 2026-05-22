@@ -14,13 +14,9 @@ from pipeline.factories.adapter_fact import ToolFactory
 from pipeline.commands.i_commands import IPipelineCommand
 from pipeline.commands.adapter_cmd import RunToolCommand
 
-# [NEW] Phase 4 Imports
-# from pipeline.commands.heuristic_cmd import RunHeuristicsCommand
-# from pipeline.heuristics.strategies_factory import HeuristicFactory
-# [NEW] Import the Metadata Adapter
 from pipeline.adapters.metadata_adapt import MetadataAdapter
 # Add this with your other imports
-from pipeline.utils.pmd_inflection_sampler import Sampler
+from pipeline.utils.snapshot_sampler import Sampler
 
 
 def main():
@@ -38,7 +34,7 @@ def main():
                         help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Sets the max boundary for historical miners. Avoid for 'meta'.")
 
     parser.add_argument("--stage",
-                        metavar="[all, meta, refm, pmd, pmd_history]",
+                        metavar="[all, meta, refm, pmd, pmd_history, ck, ledger]",
                         choices=config.VALID_STAGES,
                         default="all",
                         help="Pipeline stage to execute. Default is 'all'.")
@@ -55,13 +51,6 @@ def main():
                         default=50,
                         help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only). Set to 0 for unlimited (default: 50).")
 
-    # [NEW] Granular control over heuristics
-    # parser.add_argument("--heuristic",
-    #                     metavar="[all, A, B, C]",
-    #                     choices=["all", "A", "B", "C"],
-    #                     default="all",
-    #                     help="Heuristic strategy to apply. Choices: A (Complexity), B (AST_Proximity), C (Criticality). Default is 'all'.")
-
     args = parser.parse_args()
 
     # --- 0. ARGUMENT VALIDATION (GUARDRAILS) ---
@@ -70,11 +59,11 @@ def main():
         print(f"   (The 'meta' and 'refm' adapters currently require full unpinned history).")
         print(f"   👉 To run history up to a specific version, use: --stage pmd_history")
         sys.exit(1)
-    if args.sample and args.stage not in ["all", "pmd_history"]:
+    if args.sample and args.stage not in ["all", "pmd_history", "ck"]:
         print(f"\n❌ CLI CONFLICT: The '--sample' flag applies Stratified Sampling.")
-        print(f"   It is only valid when running the 'pmd_history' stage (or 'all').")
+        print(f"   It is only valid when running the 'pmd_history' or 'ck' stage.")
         sys.exit(1)
-    if args.batch != 50 and args.stage not in ["all", "pmd_history"]:
+    if args.batch != 50 and args.stage not in ["all", "pmd_history", "ck"]:
         print(f"\n❌ CLI CONFLICT: The '--batch' flag manages memory for historical runs.")
         print(f"   It is only valid when running the 'pmd_history' stage (or 'all').")
         sys.exit(1)
@@ -278,11 +267,16 @@ def main():
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (RefM): {e}")
 
-    if args.stage in ["all", "pmd", "pmd_history"]:
+    # Only run PMD Metrics if PMD is the active structural tool
+    if args.stage in ["all", "pmd", "pmd_history"] and config.STRUCTURAL_TOOL == "pmd":
         try:
             PMDMetrics(target_repo).run_report()
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (PMD): {e}")
+
+        # Future placeholder:
+        # if args.stage in ["all", "ck"] and config.STRUCTURAL_TOOL == "ck":
+        #     CKMetrics(target_repo).run_report()
 
     # [FIX] Removed unreachable 'if all()' check.
     # Since we passed the 'if not pipeline_healthy' check above, success is guaranteed.

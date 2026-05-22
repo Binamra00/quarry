@@ -162,16 +162,57 @@ def make_executable(tool_path: Path):
         report(f"⚠️ Binary not found for permission fix: {tool_path}")
 
 
+def download_single_file(url: str, target_folder_name: str, file_name: str, expected_hash: str) -> bool:
+    """Securely downloads a single file (like a .jar) without zip extraction."""
+    dest_dir = config.TOOLS_PATH / target_folder_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    final_path = dest_dir / file_name
+
+    if final_path.exists():
+        report(f"✅ Found version: {target_folder_name}/{file_name}. Skipping download.")
+        return True
+
+    report(f"⬇️ Downloading {file_name} from {url}...")
+    try:
+        urllib.request.urlretrieve(url, final_path)
+    except Exception as e:
+        report(f"❌ Download failed: {e}")
+        return False
+
+    if not verify_checksum(final_path, expected_hash):
+        report(f"⛔ Aborting installation of '{file_name}' due to security risk.")
+        final_path.unlink(missing_ok=True)
+        return False
+
+    report(f"✅ Installed: {final_path.name}")
+    return True
+
+
 def provision():
     print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
     print(f"Target Directory: {config.TOOLS_PATH}")
+    print(f"Structural Engine: {config.STRUCTURAL_TOOL.upper()}")
 
-    success_pmd = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
+    # 1. Always download RefactoringMiner
     success_rm = download_and_extract(config.RM_URL, config.RM_VERSION, config.RM_SHA256)
 
-    if success_pmd and success_rm:
-        make_executable(config.PMD_PATH)
+    # 2. Conditionally download the structural tool
+    success_struct = False
+    if config.STRUCTURAL_TOOL == "ck":
+        success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
+    elif config.STRUCTURAL_TOOL == "pmd":
+        success_struct = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
+    else:
+        report(f"❌ Unknown STRUCTURAL_TOOL specified: {config.STRUCTURAL_TOOL}")
+
+    # 3. Apply execution permissions
+    if success_rm and success_struct:
         make_executable(config.RM_PATH)
+
+        # CK is a Java JAR and doesn't need chmod +x like the PMD bash script does
+        if config.STRUCTURAL_TOOL == "pmd":
+            make_executable(config.PMD_PATH)
+
         print("--- Toolchain Ready ---\n")
     else:
         raise RuntimeError("Toolchain provisioning failed due to download or security errors.")
