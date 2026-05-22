@@ -74,9 +74,8 @@ class PMDMetrics(BaseMetrics):
             "commits_processed": 0
         }
 
-        pmd_conf = config.HEURISTICS.get("pmd", {})
-        COMPLEXITY_RULE_NAME = pmd_conf.get("complexity_rule", "CyclomaticComplexity")
-        HOTSPOT_LIMIT = pmd_conf.get("hotspot_limit", 5)
+        COMPLEXITY_RULE_NAME = "CyclomaticComplexity"
+        HOTSPOT_LIMIT = 5
 
         # --- Pulse Loop (The I/O Engine) ---
         file_offset = 0

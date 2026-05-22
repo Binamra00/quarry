@@ -10,6 +10,13 @@ from typing import Set
 from pipeline import config
 
 
+def prettify_tool_name(path: Path) -> str:
+    """Cleans up folder/file names for better logging (e.g., 'RefactoringMiner-3.1.3' -> 'RefactoringMiner')"""
+    name = path.name
+    # Strip versions or common suffixes
+    return name.split('-')[0].split('.')[0]
+
+
 def report(msg: str):
     print(f"   [Toolchain] {msg}")
 
@@ -194,24 +201,33 @@ def provision():
     print(f"Structural Engine: {config.STRUCTURAL_TOOL.upper()}")
 
     # 1. Always download RefactoringMiner
-    success_rm = download_and_extract(config.RM_URL, config.RM_VERSION, config.RM_SHA256)
+    rm_folder_name = f"RefactoringMiner-{config.RM_VERSION}"
+    success_rm = download_and_extract(config.RM_URL, rm_folder_name, config.RM_SHA256)
+    if success_rm:
+        report(f"✅ Provisioned: {prettify_tool_name(Path(rm_folder_name))}")
 
     # 2. Conditionally download the structural tool
     success_struct = False
     if config.STRUCTURAL_TOOL == "ck":
         success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
+        if success_struct:
+            report(f"✅ Provisioned: CK Metrics Engine")
     elif config.STRUCTURAL_TOOL == "pmd":
         success_struct = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
+        if success_struct:
+            report(f"✅ Provisioned: {prettify_tool_name(Path(config.PMD_VERSION))}")
     else:
         report(f"❌ Unknown STRUCTURAL_TOOL specified: {config.STRUCTURAL_TOOL}")
 
     # 3. Apply execution permissions
     if success_rm and success_struct:
-        make_executable(config.RM_PATH)
+        if os.name != "nt":
+            make_executable(config.RM_PATH)
 
         # CK is a Java JAR and doesn't need chmod +x like the PMD bash script does
         if config.STRUCTURAL_TOOL == "pmd":
-            make_executable(config.PMD_PATH)
+            if os.name != "nt":
+                make_executable(config.RM_PATH)
 
         print("--- Toolchain Ready ---\n")
     else:

@@ -82,7 +82,7 @@ class RefmMetrics(BaseMetrics):
             "locations_map": {}  # For hotspots
         }
 
-        HOTSPOT_LIMIT = config.HEURISTICS.get("refactoring", {}).get("hotspot_limit", 5)
+        HOTSPOT_LIMIT = 5  # Top N locations to track
 
         # --- Stream Processing ---
         with open(jsonl_path, 'r', encoding='utf-8') as f:

@@ -70,9 +70,8 @@ class RepoMetrics(BaseMetrics):
         pair_coupling = Counter()
         churn_map = {}
 
-        repo_conf = config.HEURISTICS.get("repo_mining", {})
-        FIX_KEYWORDS = repo_conf.get("fix_keywords", [])
-        REFACTOR_KEYWORDS = repo_conf.get("refactor_keywords", [])
+        FIX_KEYWORDS = ["fix", "bug", "issue"]
+        REFACTOR_KEYWORDS = ["refactor", "cleanup"]
 
         if not FIX_KEYWORDS:
             print("   ⚠️ Warning: No 'fix_keywords' found in heuristic config.")
