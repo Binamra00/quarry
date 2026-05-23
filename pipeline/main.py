@@ -63,9 +63,9 @@ def main():
         print(f"\n❌ CLI CONFLICT: The '--sample' flag applies Stratified Sampling.")
         print(f"   It is only valid when running the 'pmd_history' or 'ck' stage.")
         sys.exit(1)
-    if args.batch != 50 and args.stage not in ["all", "pmd_history", "ck"]:
+    if args.batch != 50 and args.stage not in ["all", "pmd_history", "ck", "ledger"]:
         print(f"\n❌ CLI CONFLICT: The '--batch' flag manages memory for historical runs.")
-        print(f"   It is only valid when running the 'pmd_history' oo 'ck' stage (or 'all').")
+        print(f"   It is only valid when running the 'pmd_history', 'ck', or 'ledger' stage (or 'all').")
         sys.exit(1)
 
 
@@ -187,7 +187,7 @@ def main():
 
     # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
     # Run these unless we are in isolated heuristic mode
-    if args.stage in ["all", "refm", "pmd", "pmd_history", "ck"]:
+    if args.stage in ["all", "refm", "pmd", "pmd_history", "ck", "ledger"]:
         mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch)
 
         for adapter in mining_adapters:

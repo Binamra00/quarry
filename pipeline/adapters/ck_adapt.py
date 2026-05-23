@@ -31,48 +31,56 @@ class CkAdapter(IAdapter):
         self.jsonl_output_path = config.OUTPUTS_PATH / f"ck_metrics_{self.target_repo_path.name}.jsonl"
 
     def set_sampling_filter(self, sampled_shas: set):
-        """[OVERRIDE] Configure the adapter to skip uninteresting commits."""
+        """[OVERRIDE] Configure the adapter to skip uninteresting commits and isolate data."""
         self.sampling_filter = sampled_shas
+
+        # [FIX] Isolate the data streams so full-runs and sampled-runs don't contaminate each other
+        sampled_prefix = "ck_sampled"
+
+        # 1. Reroute the JSONL data stream
+        self.jsonl_output_path = config.OUTPUTS_PATH / f"{sampled_prefix}_metrics_{self.target_repo_path.name}.jsonl"
+
+        # 2. Re-initialize a brand new State Manager pointing to a different memory file
+        self.state_manager = BatchStateManager(self.target_repo_path.name, sampled_prefix)
+
         print(f"   🎯 Adapter Strategy Update: Filtering for {len(self.sampling_filter)} specific commits.")
+        print(f"   📂 Redirecting data stream to: {self.jsonl_output_path.name}")
 
     def get_tool_name(self) -> str:
-        return f"CK Metrics (Stateful Batch: {self.batch_size})"
+        mode = "Sampled " if self.sampling_filter else ""
+        return f"CK Metrics ({mode}Stateful Batch: {self.batch_size})"
 
     def get_output_path(self) -> Path:
-        return config.OUTPUTS_PATH / f"ck_execution_{self.target_repo_path.name}.log"
+        mode = "sampled_" if self.sampling_filter else ""
+        return config.OUTPUTS_PATH / f"ck_execution_{mode}{self.target_repo_path.name}.log"
 
     def _get_commit_batch(self) -> List[str]:
-        """
-        Retrieves the next batch of commits to process.
-        """
-        if self.sampling_filter:
-            # We sort to ensure chronological processing if tags follow a naming convention
-            all_targets = sorted(list(self.sampling_filter))
-            next_start = self.state_manager.get_next_start_index()
-            return all_targets[next_start: next_start + self.batch_size]
-
-        # 1. Get full history
+        """Retrieves the next chronological batch of commits."""
+        # Always get the full chronological history first
         cmd = ["git", "rev-list", "HEAD", "--reverse"]
         success, output = adapter_subprocess.run_command(
-            cmd,
-            cwd=str(self.target_repo_path),
-            verbose=False
+            cmd, cwd=str(self.target_repo_path), verbose=False
         )
 
-        # Robust check for empty/whitespace-only output
         if not success or not output or not output.strip():
             return []
 
-        all_commits = output.strip().split('\n')
-        total_commits = len(all_commits)
+        all_commits_ordered = output.strip().split('\n')
 
-        # 2. Ask State Manager for the next slice
+        # If sampling, preserve chronological order by filtering the ordered list
+        if self.sampling_filter:
+            ordered_targets = [sha for sha in all_commits_ordered if sha in self.sampling_filter]
+            next_start = self.state_manager.get_next_start_index()
+            if next_start >= len(ordered_targets):
+                return []
+            return ordered_targets[next_start: next_start + self.batch_size]
+
+        # Standard full-history batching
+        total_commits = len(all_commits_ordered)
         next_start = self.state_manager.get_next_start_index()
-
         if next_start >= total_commits:
             return []
-
-        return all_commits[next_start: next_start + self.batch_size]
+        return all_commits_ordered[next_start: next_start + self.batch_size]
 
     def _get_total_commit_count(self) -> int:
         cmd = ["git", "rev-list", "--count", "HEAD"]
@@ -85,14 +93,11 @@ class CkAdapter(IAdapter):
             return []
 
         data = []
-        try:
-            # utf-8-sig safely handles potential Byte Order Marks (BOM)
-            with open(csv_path, mode='r', encoding='utf-8-sig') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    data.append(row)
-        except Exception:
-            pass
+        # [FIX] Do not swallow exceptions. Let them bubble up so run_status="crash"
+        with open(csv_path, mode='r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append(row)
         return data
 
     def execute(self) -> bool:
@@ -321,15 +326,22 @@ class CkAdapter(IAdapter):
 
                     # Resolve the true Commit SHA
                     resolve_cmd = ["git", "rev-parse", f"{commit_hash}^{{commit}}"]
-                    res_success, true_sha = adapter_subprocess.run_command(resolve_cmd,
-                                                                           cwd=str(self.target_repo_path),
-                                                                           verbose=False)
+                    res_success, true_sha = adapter_subprocess.run_command(
+                        resolve_cmd, cwd=str(self.target_repo_path), verbose=False
+                    )
                     resolved_commit_hash = true_sha.strip() if res_success and true_sha else commit_hash
+
+                    # [FIX] Resolve actual commit timestamp (Epoch %ct) for temporal math
+                    ts_cmd = ["git", "log", "-1", "--format=%ct", resolved_commit_hash]
+                    ts_success, ts_output = adapter_subprocess.run_command(
+                        ts_cmd, cwd=str(self.target_repo_path), verbose=False
+                    )
+                    commit_ts = int(ts_output.strip()) if ts_success and ts_output.strip() else int(time.time())
 
                     # 6. Stream to JSONL (Atomic Append)
                     record = {
                         "sha": resolved_commit_hash,
-                        "timestamp": int(time.time()),
+                        "timestamp": commit_ts, # [FIX] Using actual Git timestamp
                         "status": run_status,
                         "metrics": merged_classes
                     }
@@ -373,5 +385,9 @@ class CkAdapter(IAdapter):
         total_processed_so_far = batch_start_index + len(batch)
         remaining = max(0, total_commits - total_processed_so_far)
         print(f"✅ Batch Complete. Scanned {total_processed_so_far}/{total_commits} | Remaining: {remaining}")
+
+        # Only print the new metrics line if we actually did work
+        if success_count > 0:
+            print(f"   📈 Extracted new metrics for {success_count} commits.")
 
         return True

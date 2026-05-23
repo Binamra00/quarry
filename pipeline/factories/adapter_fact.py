@@ -43,6 +43,6 @@ class ToolFactory:
         # 4. Evolutionary Ledger (New)
         if stage in ["ledger", "all"]:
             from pipeline.adapters.ledger_adapt import LedgerAdapter
-            adapters.append(LedgerAdapter(target_repo_path))
+            adapters.append(LedgerAdapter(target_repo_path, batch_size))
 
         return adapters
