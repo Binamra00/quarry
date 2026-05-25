@@ -34,7 +34,7 @@ class LedgerAdapter(IAdapter):
             re.IGNORECASE
         )
 
-        self.jsonl_output_path = config.OUTPUTS_PATH / f"history_ledger_{self.target_repo_path.name}.jsonl"
+        self.jsonl_output_path = config.OUTPUTS_PATH / f"ledger_history_{self.target_repo_path.name}.jsonl"
 
     def get_tool_name(self) -> str:
         return f"Evolutionary Ledger (Stateful Batch: {self.batch_size})"
@@ -128,13 +128,13 @@ class LedgerAdapter(IAdapter):
                                 continue
 
                             clean_rel_path = str(raw_path).replace('\\', '/')
-                            universal_path = f"{self.target_repo_path.name}/{clean_rel_path}"
+                            universal_path = clean_rel_path
 
                             # [FIX] Capture the old path securely if this is a RENAME event
                             old_universal_path = None
                             if mod.old_path and mod.change_type.name == "RENAME":
                                 old_clean_rel = str(mod.old_path).replace('\\', '/')
-                                old_universal_path = f"{self.target_repo_path.name}/{old_clean_rel}"
+                                old_universal_path = old_clean_rel
 
                             record["modifications"].append({
                                 "file": universal_path,

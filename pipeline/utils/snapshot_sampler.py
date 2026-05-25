@@ -57,7 +57,13 @@ class Sampler:
         # Execute Git command to list all tags and their underlying commit SHAs
         # %(*objectname) gets the true commit for annotated tags.
         # %(objectname) gets the commit for lightweight tags.
-        cmd = ["git", "for-each-ref", "--format=%(refname:short)|%(*objectname)|%(objectname)", "refs/tags"]
+        # [REVIEW FIX]: Added --sort=version:refname to ensure deterministic Last-Write-Wins logic
+        cmd = [
+            "git", "for-each-ref",
+            "--sort=version:refname",
+            "--format=%(refname:short)|%(*objectname)|%(objectname)",
+            "refs/tags"
+        ]
 
         try:
             result = subprocess.run(cmd, cwd=str(self.target_repo), capture_output=True, text=True, check=True)
@@ -82,6 +88,7 @@ class Sampler:
 
             if match:
                 clean_version = match.group(1)
+                # Because of --sort=version:refname, the true GA tag will overwrite the RC tag here
                 version_to_sha[clean_version] = commit_sha
 
             # Also map the literal tag name just in case
@@ -90,8 +97,8 @@ class Sampler:
         # Match our target list against the discovered Git tags
         matched_versions = []
         for v in self.target_versions:
-            # Special case for 3.11 vs 3.11.0 discrepancies
-            search_versions = [v, f"{v}.0", v.replace(".0", "")]
+            # [REVIEW FIX]: Deduplicate search variants (e.g., prevents ["3.11", "3.11.0", "3.11"])
+            search_versions = list(dict.fromkeys([v, f"{v}.0", v.replace(".0", "")]))
 
             found = False
             for sv in search_versions:

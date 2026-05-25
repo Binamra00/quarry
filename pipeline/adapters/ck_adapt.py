@@ -2,7 +2,6 @@ import csv
 import json
 import time
 import tempfile
-import uuid
 from pathlib import Path
 from typing import List, Dict
 
@@ -56,8 +55,17 @@ class CkAdapter(IAdapter):
 
     def _get_commit_batch(self) -> List[str]:
         """Retrieves the next chronological batch of commits."""
-        # Always get the full chronological history first
-        cmd = ["git", "rev-list", "HEAD", "--reverse"]
+
+        # [FIX] If we are sampling specific tags, they might be on older release
+        # branches not reachable from the current HEAD (e.g., v1.x vs v3.x).
+        # We must use '--all' to ensure we capture and sort every requested SHA.
+        if self.sampling_filter:
+            cmd = ["git", "rev-list", "--all", "--reverse"]
+        else:
+            # For standard contiguous mining, we stick to HEAD to avoid
+            # double-counting abandoned pull requests and orphan branches.
+            cmd = ["git", "rev-list", "HEAD", "--reverse"]
+
         success, output = adapter_subprocess.run_command(
             cmd, cwd=str(self.target_repo_path), verbose=False
         )
@@ -99,6 +107,18 @@ class CkAdapter(IAdapter):
             for row in reader:
                 data.append(row)
         return data
+
+    def _normalize_ck_path(self, abs_path_str: str) -> str:
+        """[REVIEW FIX]: Normalizes CK absolute paths to pure relative paths."""
+        try:
+            # Safely resolve the path CK gave us
+            p = Path(abs_path_str).resolve()
+            # Strip out the absolute workspace path, leaving ONLY the repo-relative path
+            rel_path = p.relative_to(self.target_repo_path.resolve())
+            # Return pure relative path (e.g., src/main/java/...) with forward slashes
+            return str(rel_path).replace('\\', '/')
+        except ValueError:
+            return abs_path_str  # Fallback if path manipulation fails
 
     def execute(self) -> bool:
         print(f"--- 🕰️ Starting {self.get_tool_name()} ---")
@@ -173,7 +193,7 @@ class CkAdapter(IAdapter):
                         try:
                             status_record = {
                                 "sha": commit_hash,
-                                "timestamp": int(time.time()),
+                                "timestamp": 0,
                                 "status": "checkout_failed",
                                 "metrics": []
                             }
@@ -238,35 +258,19 @@ class CkAdapter(IAdapter):
                                 classes_data = self._parse_csv_to_dicts(class_csv)
                                 methods_data = self._parse_csv_to_dicts(method_csv)
 
-                                # --- FIX: Normalize Absolute Paths to Portable Relative Paths ---
-                                def clean_path(abs_path_str: str) -> str:
-                                    try:
-                                        # Safely resolve the path CK gave us
-                                        p = Path(abs_path_str).resolve()
-                                        # Strip out the 'E:\...\workspace_data\repos\toy_project' part
-                                        rel_path = p.relative_to(self.target_repo_path.resolve())
-                                        # Re-attach 'toy_project/' and force universal forward slashes
-                                        return f"{self.target_repo_path.name}/{rel_path}".replace('\\', '/')
-                                    except ValueError:
-                                        return abs_path_str  # Fallback if path manipulation fails
-
-                                # Apply the cleanup to both data structures
+                                # [REVIEW FIX]: Apply path normalization via class method
                                 for cls in classes_data:
                                     if "file" in cls:
-                                        cls["file"] = clean_path(cls["file"])
+                                        cls["file"] = self._normalize_ck_path(cls["file"])
 
                                 for method in methods_data:
                                     if "file" in method:
-                                        method["file"] = clean_path(method["file"])
-                                # --------------------------------------------------------------
+                                        method["file"] = self._normalize_ck_path(method["file"])
 
-                                # --- CLEANUP (only if CK wrote CSVs into the repo directory) ---
-                                try:
-                                    if class_csv.parent.resolve() == self.target_repo_path.resolve():
-                                        class_csv.unlink(missing_ok=True)
-                                        method_csv.unlink(missing_ok=True)
-                                except Exception as e:
-                                    log_file.write(f"[WARN] Failed to cleanup CK CSVs: {e}\n")
+                                # [REVIEW FIX]: Explicitly clean up fallback CSVs if CK wrote them to the repo root
+                                if class_csv.parent.resolve() == self.target_repo_path.resolve():
+                                    class_csv.unlink(missing_ok=True)
+                                    method_csv.unlink(missing_ok=True)
 
                                 # Group methods by class name for fast O(1) lookup
                                 methods_by_class = {}
