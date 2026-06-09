@@ -119,8 +119,6 @@ class PMDHistoryAdapter(IAdapter):
             print("❌ No commits found to analyze.")
             return False
 
-        # [REMOVED REDUNDANT VERIFICATION LINE]
-
         batch = self._get_commit_batch()
 
         if not batch:
@@ -280,7 +278,7 @@ class PMDHistoryAdapter(IAdapter):
                             except OSError as e:
                                 log_file.write(f"[WARN] Could not delete temp file: {e}\n")
 
-                    # [NEW FIX]: Resolve the true Commit SHA
+                    # [FIX]: Resolve the true Commit SHA
                     # If commit_hash was an Annotated Tag, this forces Git to peel it back to the code commit.
                     resolve_cmd = ["git", "rev-parse", f"{commit_hash}^{{commit}}"]
                     res_success, true_sha = adapter_subprocess.run_command(resolve_cmd,

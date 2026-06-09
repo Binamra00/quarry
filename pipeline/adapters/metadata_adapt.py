@@ -45,7 +45,7 @@ class MetadataAdapter(IAdapter):
             with open(output_path, "w", encoding="utf-8") as f:
                 for line in lines:
                     parts = line.split()
-                    # [FIX] PEP 8: Statement moved to a new line for better readability
+
                     if not parts:
                         continue
 

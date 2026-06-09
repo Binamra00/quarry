@@ -7,7 +7,7 @@ from pipeline.adapters.i_adapters import IAdapter
 
 class PMDAdapter(IAdapter):
     """
-    Adapter for PMD Static Analyzer v7.18.0.
+    Adapter for PMD Static Analyzer.
     Strategy: Snapshot Analysis using Custom Ruleset.
     """
 
