@@ -120,7 +120,7 @@ class LedgerAdapter(IAdapter):
                         "modifications": []
                     }
 
-                    # 3. Extract File-Level Churn (Java files only)
+                    # 3. Extract File-Level and Method-Level Churn (Java files only)
                     for mod in commit.modified_files:
                         if mod.filename.endswith('.java'):
                             raw_path = mod.new_path or mod.old_path
@@ -136,13 +136,29 @@ class LedgerAdapter(IAdapter):
                                 old_clean_rel = str(mod.old_path).replace('\\', '/')
                                 old_universal_path = old_clean_rel
 
-                            record["modifications"].append({
+                            mod_record = {
                                 "file": universal_path,
-                                "old_file": old_universal_path, # [FIX] Added old_file
+                                "old_file": old_universal_path,
                                 "lines_added": mod.added_lines,
                                 "lines_deleted": mod.deleted_lines,
-                                "change_type": mod.change_type.name
-                            })
+                                "change_type": mod.change_type.name,
+                                "changed_methods": [] # [NEW] Array for method-level tracking
+                            }
+
+                            # [NEW] Extract specific methods modified in this diff
+                            try:
+                                # PyDriller compares the before/after AST to find changed methods
+                                for m in mod.changed_methods:
+                                    mod_record["changed_methods"].append({
+                                        "name": m.name,          # e.g., "calculateTotal"
+                                        "long_name": m.long_name # e.g., "calculateTotal(int, float)"
+                                    })
+                            except Exception:
+                                # PyDriller AST parsing can occasionally fail on malformed historical code.
+                                # Catch silently to preserve the file-level metrics.
+                                pass
+
+                            record["modifications"].append(mod_record)
 
                     # 4. Stream to JSONL
                     try:

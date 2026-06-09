@@ -54,18 +54,22 @@ class RefactoringMinerAdapter(IAdapter):
 
         return output_path
 
-    def _get_all_commits(self) -> List[str]:
-        # Change 'HEAD' to '--all' to capture every branch and tag in the repo
-        cmd = ["git", "rev-list", "--all", "--reverse", "--", "*.java"]
+    def _get_all_commits(self) -> List[tuple[str, int]]:
+        # Use git log to format output precisely: Hash|Timestamp
+        cmd = ["git", "log", "--all", "--reverse", "--format=%H|%ct", "--", "*.java"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
             verbose=False
         )
+        commits = []
         if success and output:
-            # Returns every commit in the history that touched a Java file
-            return [sha for sha in output.strip().split('\n') if sha.strip()]
-        return []
+            for line in output.strip().split('\n'):
+                if line.strip():
+                    parts = line.split('|')
+                    if len(parts) == 2:
+                        commits.append((parts[0].strip(), int(parts[1].strip())))
+        return commits
 
     def _get_processed_shas(self) -> Set[str]:
         """
@@ -140,7 +144,9 @@ class RefactoringMinerAdapter(IAdapter):
             return False
 
         processed_shas = self._get_processed_shas()
-        remaining_commits = [sha for sha in all_commits if sha not in processed_shas]
+
+        # Unpack the tuple to check the SHA against the processed set
+        remaining_commits = [(sha, time) for sha, time in all_commits if sha not in processed_shas]
 
         if not remaining_commits:
             print(f"✅ Analysis already complete ({len(processed_shas)} commits).")
@@ -165,16 +171,19 @@ class RefactoringMinerAdapter(IAdapter):
                 open(log_path, "a", encoding="utf-8") as log_file:
 
             try:
-                for i, commit_hash in enumerate(remaining_commits):
+                # Unpack commit_hash AND commit_time here
+                for i, (commit_hash, commit_time) in enumerate(remaining_commits):
                     ui_strategy.update_progress(i + 1, len(remaining_commits),
                                                 prefix=f"   ⛏️  Mining [{commit_hash[:7]}]")
 
                     unique_id = uuid.uuid4().hex[:8]
                     temp_json_file = Path(tempfile.gettempdir()) / f"rm_{commit_hash}_{unique_id}.json"
 
+                    # INJECT TIMESTAMP HERE
                     record = {
                         "repository": str(self.target_repo_path),
                         "sha1": commit_hash,
+                        "timestamp": commit_time,
                         "refactorings": []
                     }
 
