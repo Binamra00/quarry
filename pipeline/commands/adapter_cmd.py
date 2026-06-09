@@ -9,7 +9,7 @@ class RunToolCommand(IPipelineCommand):
     """
 
     def __init__(self, adapter: IAdapter):
-        # We store the Receiver (Adapter) as a protected field
+        # Store the Receiver (Adapter) as a protected field
         self._adapter = adapter
 
     def execute(self) -> bool:

@@ -12,7 +12,7 @@ class GitManager:
         print(f"       Destination: {dest_dir.name}\n")
 
         # The '--progress' flag forces Git to output its loading bar.
-        # We also keep your excellent credential deadlock protections!
+        # Keep excellent credential deadlock protections.
         cmd = [
             "git",
             "-c", "core.terminalprompt=false",
