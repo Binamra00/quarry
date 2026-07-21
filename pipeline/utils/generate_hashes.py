@@ -40,7 +40,6 @@ def main():
 
     calculate_remote_hash(config.CK_URL, "CK")
     calculate_remote_hash(config.RM_URL, "RM")
-    calculate_remote_hash(config.PMD_URL, "PMD")
 
     print("\n⚠️  SECURITY REMINDER: Only run this script if you trust the current state of the remote URLs.")
 

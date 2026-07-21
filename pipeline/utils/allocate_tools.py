@@ -207,28 +207,17 @@ def provision():
         report(f"✅ Provisioned: {prettify_tool_name(Path(rm_folder_name))}")
 
     # 2. Conditionally download the structural tool
-    success_struct = False
-    if config.STRUCTURAL_TOOL == "ck":
-        success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
-        if success_struct:
-            report(f"✅ Provisioned: CK Metrics Engine")
-    elif config.STRUCTURAL_TOOL == "pmd":
-        success_struct = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
-        if success_struct:
-            report(f"✅ Provisioned: {prettify_tool_name(Path(config.PMD_VERSION))}")
-    else:
-        report(f"❌ Unknown STRUCTURAL_TOOL specified: {config.STRUCTURAL_TOOL}")
+    # CK is the structural tool (PMD removed).
+    success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
+    if success_struct:
+        report(f"✅ Provisioned: CK Metrics Engine")
 
     # 3. Apply execution permissions
     if success_rm and success_struct:
         if os.name != "nt":
             make_executable(config.RM_PATH)
 
-        # CK is a Java JAR and doesn't need chmod +x like the PMD bash script does
-        if config.STRUCTURAL_TOOL == "pmd":
-            if os.name != "nt":
-                make_executable(config.PMD_PATH)
-
+        # CK is a Java JAR -- no chmod needed.
         print("--- Toolchain Ready ---\n")
     else:
         raise RuntimeError("Toolchain provisioning failed due to download or security errors.")

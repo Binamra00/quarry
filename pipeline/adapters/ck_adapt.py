@@ -29,9 +29,13 @@ class CkAdapter(IAdapter):
         # Output to a single JSONL file instead of a directory
         self.jsonl_output_path = config.OUTPUTS_PATH / f"ck_metrics_{self.target_repo_path.name}.jsonl"
 
+        # Cache for ordered sampled commits to avoid repeated sorting
+        self._ordered_sample_cache = None
+
     def set_sampling_filter(self, sampled_shas: set):
         """[OVERRIDE] Configure the adapter to skip uninteresting commits and isolate data."""
         self.sampling_filter = sampled_shas
+        self._ordered_sample_cache = None
 
         # [FIX] Isolate the data streams so full-runs and sampled-runs don't contaminate each other
         sampled_prefix = "ck_sampled"
@@ -54,39 +58,41 @@ class CkAdapter(IAdapter):
         return config.OUTPUTS_PATH / f"ck_execution_{mode}{self.target_repo_path.name}.log"
 
     def _get_commit_batch(self) -> List[str]:
-        """Retrieves the next chronological batch of commits."""
-
-        # [FIX] If we are sampling specific tags, they might be on older release
-        # branches not reachable from the current HEAD (e.g., v1.x vs v3.x).
-        # We must use '--all' to ensure we capture and sort every requested SHA.
+        # SAMPLED runs: order the REQUESTED shas by each commit's own committer
+        # date, read directly from the object. Independent of ref reachability,
+        # so a release/tag commit that exists in the ODB but is not enumerated
+        # by `git rev-list --all` is never dropped. Guarantees
+        # len(ordered_targets) == len(sampling_filter) so completion fires.
         if self.sampling_filter:
-            cmd = ["git", "rev-list", "--all", "--reverse"]
-        else:
-            # For standard contiguous mining, we stick to HEAD to avoid
-            # double-counting abandoned pull requests and orphan branches.
-            cmd = ["git", "rev-list", "HEAD", "--reverse"]
-
-        success, output = adapter_subprocess.run_command(
-            cmd, cwd=str(self.target_repo_path), verbose=False
-        )
-
-        if not success or not output or not output.strip():
-            return []
-
-        all_commits_ordered = output.strip().split('\n')
-
-        # If sampling, preserve chronological order by filtering the ordered list
-        if self.sampling_filter:
-            ordered_targets = [sha for sha in all_commits_ordered if sha in self.sampling_filter]
+            if self._ordered_sample_cache is None:
+                dated = []
+                for sha in self.sampling_filter:
+                    ok, out = adapter_subprocess.run_command(
+                        ["git", "show", "-s", "--format=%ct", sha],
+                        cwd=str(self.target_repo_path), verbose=False)
+                    ts = 0
+                    if ok and out and out.strip():
+                        for tok in reversed(out.strip().split()):
+                            if tok.isdigit():
+                                ts = int(tok);
+                                break
+                    dated.append((ts, sha))
+                dated.sort(key=lambda x: x[0])
+                self._ordered_sample_cache = [sha for _, sha in dated]
+            ordered_targets = self._ordered_sample_cache
             next_start = self.state_manager.get_next_start_index()
             if next_start >= len(ordered_targets):
                 return []
             return ordered_targets[next_start: next_start + self.batch_size]
 
-        # Standard full-history batching
-        total_commits = len(all_commits_ordered)
+        # FULL-HISTORY (non-sampled) runs: unchanged
+        cmd = ["git", "rev-list", "HEAD", "--reverse"]
+        success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
+        if not success or not output or not output.strip():
+            return []
+        all_commits_ordered = output.strip().split('\n')
         next_start = self.state_manager.get_next_start_index()
-        if next_start >= total_commits:
+        if next_start >= len(all_commits_ordered):
             return []
         return all_commits_ordered[next_start: next_start + self.batch_size]
 

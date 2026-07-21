@@ -55,30 +55,16 @@ CK_URL = os.getenv(
     "CK_URL",
     f"https://repo1.maven.org/maven2/com/github/mauricioaniche/ck/{CK_VERSION}/{CK_JAR_NAME}"
 )
-CK_SHA256 = os.getenv("CK_SHA256", "")
+CK_SHA256 = os.getenv("CK_SHA256")
 CK_PATH = TOOLS_PATH / "ck" / CK_JAR_NAME
 
-# 4B. PMD Tool (Legacy/Alternative)
-PMD_VERSION = os.getenv("PMD_VERSION", "7.24.0")
-PMD_URL = os.getenv(
-    "PMD_URL",
-    f"https://github.com/pmd/pmd/releases/download/pmd_releases%2F{PMD_VERSION}/pmd-dist-{PMD_VERSION}-bin.zip"
-)
-PMD_SHA256 = os.getenv("PMD_SHA256", "")
-
-if os.name == 'nt':
-    PMD_EXEC = "pmd.bat"
-else:
-    PMD_EXEC = "pmd"
-PMD_PATH = TOOLS_PATH / f"pmd-bin-{PMD_VERSION}" / "bin" / PMD_EXEC
-
-# 4C. RefactoringMiner Tool
+# 4B. RefactoringMiner Tool
 RM_VERSION = os.getenv("RM_VERSION", "3.1.3")
 RM_URL = os.getenv(
     "RM_URL",
     f"https://github.com/tsantalis/RefactoringMiner/releases/download/{RM_VERSION}/RefactoringMiner-{RM_VERSION}.zip"
 )
-RM_SHA256 = os.getenv("RM_SHA256", "")
+RM_SHA256 = os.getenv("RM_SHA256")
 RM_ENTRY_POINT_CLASS = "org.refactoringminer.RefactoringMiner"
 
 if os.name == 'nt':
@@ -87,22 +73,59 @@ else:
     RM_EXEC = "RefactoringMiner"
 RM_PATH = TOOLS_PATH / f"RefactoringMiner-{RM_VERSION}" / "bin" / RM_EXEC
 
+# --- 4D. EXECUTION LIMITS (large-repo safety for the full snapshot-grid run) ---
+CK_TIMEOUT = int(os.getenv("CK_TIMEOUT", "3600"))     # seconds per snapshot
+JAVA_XMX = os.getenv("JAVA_XMX", "4g")              # CK heap; QuestDB needs headroom
+
 # --- 5. TARGET REPOSITORIES & INTERNAL ASSETS ---
 RULES_DIR = REPO_ROOT / "pipeline" / "rulesets"
-PMD_RULESET_PATH = RULES_DIR / "pmd_rules_00.xml"
+
+# --- 5B. RELEASE GRID ARTIFACTS ---
+# Produced by rel_tag_mining_v3.ipynb, consumed by the mining adapters.
+#
+# These are GRID artifacts, not tool outputs. They describe which snapshots exist and which
+# commits define them, so they live in VERSIONS_PATH together. OUTPUTS_PATH is reserved for
+# what the adapters themselves write (JSONL, logs, batch state).
+#
+# The admission thresholds, cutoff and trigger window are NOT duplicated here on purpose:
+# the notebook is the single source of truth and records them inside each manifest under
+# "admission_thresholds". Read them from the manifest rather than re-declaring them, or the
+# two will silently drift apart.
+GRID_PATH = VERSIONS_PATH
+
+
+def universe_file(repo_name: str) -> Path:
+    """
+    HEAD + the admitted near-mainline snapshot SHAs that the mining adapters must walk.
+
+    Both LedgerAdapter and RefactoringMinerAdapter resolve their commit universe through
+    this one function. Walking HEAD alone makes RefactoringMiner report zero refactorings
+    for every off-mainline snapshot; walking --all pollutes with abandoned pull requests.
+    """
+    return GRID_PATH / f"adapter_universe_{repo_name}.json"
+
+
+def rel_hist_file(repo_name: str) -> Path:
+    """The frozen snapshot grid: the observation points for the study."""
+    return GRID_PATH / f"rel_hist_{repo_name}.json"
+
+
+def release_manifest_file(repo_name: str) -> Path:
+    """Full mining record: admission thresholds, rejected tags, SHA aliases, grid rule."""
+    return GRID_PATH / f"{repo_name}_release_manifest.json"
 
 # --- 6. UTILITIES ---
 def escape_path(path_obj):
     return str(path_obj).replace(" ", "\\\\ ")
 
 CK_PATH_ESCAPED = escape_path(CK_PATH)
-PMD_PATH_ESCAPED = escape_path(PMD_PATH)
 RM_PATH_ESCAPED = escape_path(RM_PATH)
 WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 
 # --- 7. CONSTANTS ---
-# Fully supports both the old PMD workflow and the new CK/History workflow
-VALID_STAGES = ["all", "meta", "refm", "pmd", "pmd_history", "ck", "ledger"]
+# One miner per run. No "all" -- each stage is invoked standalone. CK is the structural tool
+# (PMD removed). "report" is a read-only universe verification over mined outputs.
+VALID_STAGES = ["meta", "ledger", "refm", "ck", "report"]
 
 # --- 8. I/O RESILIENCE CONFIGURATION ---
 IO_MAX_RETRIES = int(os.getenv("IO_MAX_RETRIES", "5"))

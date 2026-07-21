@@ -5,10 +5,9 @@ from typing import List
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import allocate_tools
-from pipeline.utils.repo_loader import RepositoryLoader
-from pipeline.metrics.repo_mets import RepoMetrics
+from pipeline.acquisition import RepositoryLoader
+from pipeline.metrics.report_mets import ReportMetrics
 from pipeline.metrics.refm_mets import RefmMetrics
-from pipeline.metrics.pmd_mets import PMDMetrics
 
 from pipeline.factories.adapter_fact import ToolFactory
 from pipeline.commands.i_commands import IPipelineCommand
@@ -16,7 +15,7 @@ from pipeline.commands.adapter_cmd import RunToolCommand
 
 from pipeline.adapters.metadata_adapt import MetadataAdapter
 # Add this with your other imports
-from pipeline.utils.snapshot_sampler import Sampler
+from pipeline.scope import Sampler
 
 
 def main():
@@ -29,43 +28,101 @@ def main():
                         help="Target Repository. Can be a local folder name OR a GitHub URL.")
 
     parser.add_argument("--version",
-                        metavar="",
+                        metavar="[tag_or_sha]",
                         default=None,
-                        help="Target Git Tag or Commit Hash (e.g., jena-3.1.0). Sets the max boundary for historical miners. Avoid for 'meta'.")
+                        help="Mine a SINGLE checked-out version (git tag or commit). Valid for "
+                             "meta, ledger, refm, ck. Mutually exclusive with --universe and --sample.")
 
     parser.add_argument("--stage",
-                        metavar="[all, meta, refm, pmd, pmd_history, ck, ledger]",
+                        metavar="[meta, ledger, refm, ck, report]",
                         choices=config.VALID_STAGES,
-                        default="all",
-                        help="Pipeline stage to execute. Default is 'all'.")
+                        required=True,
+                        help="Pipeline stage to execute (required). One miner per run; there is "
+                             "no 'all'. Run stages individually: meta -> ledger/refm/ck -> report.")
 
     parser.add_argument("--sample",
-                        metavar="[file_name.json]",
+                        metavar="[rel_hist_<repo>.json]",
                         type=str,
                         default=None,
-                        help="Filename in workspace_data/versions/ containing target tags for sampling (Applies to 'pmd_history' stage only).")
+                        help="Restrict CK to the snapshots listed in this rel_hist manifest. CK is "
+                             "the heaviest miner, so it runs only at the snapshots the trigger "
+                             "analysis prioritizes. Valid for the 'ck' stage only.")
 
     parser.add_argument("--batch",
-                        metavar="",
+                        metavar="[N]",
                         type=int,
                         default=50,
-                        help="Number of commits to process per chunk to manage memory on large repos (Applies to 'pmd_history' stage only). Set to 0 for unlimited (default: 50).")
+                        help="Commits per chunk for memory safety on large repos. Valid for ledger, "
+                             "refm, ck. 0 = unlimited (default: 50).")
+
+    parser.add_argument("--universe",
+                        metavar="[adapter_universe_<repo>.json]",
+                        type=str,
+                        default=None,
+                        help="Restrict the Ledger/RefactoringMiner walk to a pinned study grid "
+                             "(HEAD + dangling snapshot commits). Omit to mine the FULL repository "
+                             "(--all), matching metadata. Valid for 'ledger' and 'refm' only. "
+                             "Mutually exclusive with --version.")
 
     args = parser.parse_args()
 
-    # --- 0. ARGUMENT VALIDATION (GUARDRAILS) ---
-    if args.version and args.stage in ["all", "meta"]:
-        print(f"\n❌ CLI CONFLICT: The '--version' flag currently conflicts with '{args.stage}'.")
-        print(f"   (The 'meta' and 'refm' adapters currently require full unpinned history).")
-        print(f"   👉 To run history up to a specific version, use: --stage pmd_history")
+    # --- 0. ARGUMENT VALIDATION (FLAG MATRIX) ---
+    # Flags belong to the miner whose job they match. One miner per run, so each guard is a
+    # simple membership test -- no routing, no "all" exceptions.
+    #
+    #            --version  --batch  --universe  --sample
+    #   meta         ✓         ✗         ✗          ✗
+    #   ledger       ✓         ✓         ✓          ✗
+    #   refm         ✓         ✓         ✓          ✗
+    #   ck           ✓         ✓         ✗          ✓
+    #   report       ✗         ✗         ✗          ✗   (read-only)
+    def _reject(flag, allowed):
+        print(f"\n❌ CLI CONFLICT: '{flag}' is not valid for stage '{args.stage}'.")
+        print(f"   '{flag}' is only valid for: {', '.join(allowed)}.")
         sys.exit(1)
-    if args.sample and args.stage not in ["all", "pmd_history", "ck"]:
-        print(f"\n❌ CLI CONFLICT: The '--sample' flag applies Stratified Sampling.")
-        print(f"   It is only valid when running the 'pmd_history' or 'ck' stage.")
+
+    # G1  --universe: ledger / refm only
+    if args.universe and args.stage not in ["ledger", "refm"]:
+        _reject("--universe", ["ledger", "refm"])
+    # G2  --sample: ck only
+    if args.sample and args.stage != "ck":
+        _reject("--sample", ["ck"])
+    # G5  --batch: ledger / refm / ck (meta is a single --all pass; report reads)
+    if args.batch != 50 and args.stage not in ["ledger", "refm", "ck"]:
+        _reject("--batch", ["ledger", "refm", "ck"])
+    # --version: every miner, never report
+    if args.version and args.stage == "report":
+        _reject("--version", ["meta", "ledger", "refm", "ck"])
+
+    # G3  --version XOR --universe (both scope the ledger/refm walk)
+    if args.version and args.universe:
+        print("\n❌ CLI CONFLICT: --version and --universe are mutually exclusive.")
+        print("   --version pins the walk to ONE commit; --universe walks the grid. Pick one.")
         sys.exit(1)
-    if args.batch != 50 and args.stage not in ["all", "pmd_history", "ck", "ledger"]:
-        print(f"\n❌ CLI CONFLICT: The '--batch' flag manages memory for historical runs.")
-        print(f"   It is only valid when running the 'pmd_history', 'ck', or 'ledger' stage (or 'all').")
+    # G4  --version XOR --sample (single point vs multi-snapshot CK run)
+    if args.version and args.sample:
+        print("\n❌ CLI CONFLICT: --version and --sample are mutually exclusive.")
+        print("   --version mines ONE commit; --sample mines a set of snapshots. Pick one.")
+        sys.exit(1)
+
+    # existence pre-check for file-valued flags
+    from pathlib import Path as _P
+    def _find(fname):
+        p = _P(fname)
+        if p.parent != _P("."):
+            return p if p.exists() else None
+        for base in (config.GRID_PATH, config.OUTPUTS_PATH, config.VERSIONS_PATH):
+            if (base / p.name).exists():
+                return base / p.name
+        return None
+    if args.universe and _find(args.universe) is None:
+        print(f"\n❌ --universe file not found: {args.universe}")
+        print(f"   Looked in {config.GRID_PATH}, {config.OUTPUTS_PATH}.")
+        print(f"   Omit --universe to mine the full repository (--all).")
+        sys.exit(1)
+    if args.sample and _find(args.sample) is None:
+        print(f"\n❌ --sample file not found: {args.sample}")
+        print(f"   Looked in {config.VERSIONS_PATH}.")
         sys.exit(1)
 
 
@@ -95,6 +152,7 @@ def main():
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
     print(f"🎯 Batch Size: {args.batch}")
+    print(f"🎯 Commit Universe: {'PINNED (' + args.universe + ')' if args.universe else 'FULL (--all, matches metadata)'}")
     if args.version:
         print("\n--- 🔖 Repo Revision (Trace) ---")
         adapter_subprocess.run_command(["git", "describe", "--tags", "--always"], cwd=str(target_repo))
@@ -104,67 +162,21 @@ def main():
     # if args.stage not in ["heuristics"]:
     print("\n--- Step 1: Repository Verification ---")
 
-    # NEW: Ensure the local clone knows about ALL remote branches/tags
-    # This prevents the "missing release branch" issue.
-    print("   Fetching all remote references...")
-    adapter_subprocess.run_command(["git", "fetch", "--all", "--tags"], cwd=str(target_repo))
-
-    default_branch = "main"
-
-    print(f"   🔍 Detecting default branch for '{target_repo.name}'...")
-    success, output = adapter_subprocess.run_command(
-        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-        cwd=str(target_repo)
-    )
-
-    if success and output:
-        try:
-            detected_branch = output.strip().split('/')[-1]
-            if detected_branch:
-                default_branch = detected_branch
-                print(f"   ✅ Detected Remote HEAD: {default_branch}")
-        except (IndexError, AttributeError):
-            # [FIX] If the symbolic-ref output is malformed or unexpected, ignore it and
-            # fall back to the default branch detection logic below.
-            pass
-    else:
-        s, _ = adapter_subprocess.run_command(
-            ["git", "rev-parse", "--verify", "master"],
-            cwd=str(target_repo)
-        )
-        if s:
-            default_branch = "master"
-            print(f"   ⚠️ Remote HEAD not found. Falling back to local '{default_branch}'.")
-
-    checkout_success = True
+    # Fetch AND fast-forward the local branch onto origin. The previous version here ran
+    # `git fetch --all --tags` then `git checkout -f <branch>`, which looks correct and is not:
+    # fetch moves refs/remotes/origin/*, never refs/heads/*, so the checkout landed on a LOCAL
+    # branch that could be months behind. The objects were present but HEAD pointed into the
+    # past, and every adapter walking HEAD mined a truncated history without erroring.
+    default_branch = RepositoryLoader.sync_to_remote(target_repo, pinned_version=args.version)
 
     if args.version:
-        print(f"   📌 Version pin active ({args.version}); skipping default-branch checkout.")
         # Force checkout the specific version/tag to ensure the workspace matches the study target
         adapter_subprocess.run_command(["git", "checkout", "-f", args.version], cwd=str(target_repo))
-    else:
-        print(f"   🔄 Ensuring '{target_repo.name}' is on '{default_branch}'...")
-        checkout_success, _ = adapter_subprocess.run_command(
-            ["git", "checkout", "-f", default_branch],
-            cwd=str(target_repo)
-        )
-        if not checkout_success:
-            print(f"   ⚠️ Warning: Could not checkout '{default_branch}'. Proceeding anyway.")
 
-    # --- [FIX] Smart Baseline Guardrail ---
-    # Only run baseline mining if the report doesn't already exist.
-    metrics_file = config.OUTPUTS_PATH / f"repo_metrics_{target_repo.name}.json"
-
-    try:
-        if not metrics_file.exists():
-            print(f"\n--- 📊 Generating Baseline: Repository Mining ---")
-            RepoMetrics(target_repo).run_report()
-        else:
-            # The internal run_report() logic handles the "Skipping" message
-            # and loads data without re-mining the entire Git history.
-            RepoMetrics(target_repo).run_report()
-    except Exception as e:
-        print(f"⚠️ Verification Warning: {e}")
+    # NOTE: the old Phase-0 "Repository Mining" baseline was removed here. It re-walked the
+    # entire git history on every run to print a summary -- a second, redundant mine on top of
+    # the metadata/ledger adapters. The universe summary is now a READ-ONLY post-mining stage
+    # ("report", see below and --stage report) that reads what the adapters produced.
 
     # --- 4. Command Configuration ---
     commands: List[IPipelineCommand] = []
@@ -182,13 +194,16 @@ def main():
 
     # Phase 0: Metadata Mining (Git Lineage)
     # Required for: 'history' (visualizing lineage)
-    if args.stage in ["all", "meta"]:
+    if args.stage == "meta":
         commands.append(RunToolCommand(MetadataAdapter(target_repo)))
 
-    # Phase 1-3: Standard Mining Tools (RefMiner, PMD)
-    # Run these unless we are in isolated heuristic mode
-    if args.stage in ["all", "refm", "pmd", "pmd_history", "ck", "ledger"]:
-        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch)
+    # Universe Report (read-only). Its own stage, run after mining.
+    run_report_stage = args.stage == "report"
+
+    # Mining stage: exactly one of refm / ck / ledger.
+    if args.stage in ["refm", "ck", "ledger"]:
+        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch,
+                                                      universe_path=args.universe)
 
         for adapter in mining_adapters:
             # [CLEAN] Polymorphic call.
@@ -245,9 +260,8 @@ def main():
         if not success:
             print(f"⚠️ {tool_name} failed or was interrupted. Marking pipeline as UNHEALTHY.")
             pipeline_healthy = False
-            # [CRITICAL]: We DO NOT exit here. We continue the loop so
-            # other independent miners (like PMD) can still run and save state,
-            # even though the pipeline will ultimately exit with an error status.
+            # [CRITICAL]: We DO NOT exit here -- an adapter may run multiple commands
+            # and we let independent ones save state before the run exits with error.
 
     # --- 6. Finalization ---
     # We exit with error if ANY tool failed, ensuring CI/CD knows this run was partial.
@@ -259,22 +273,17 @@ def main():
     # Only run Metrics if the pipeline was completely healthy
     print("\n--- 🏁 Pipeline Completion Report ---\n")
 
-    if args.stage in ["all", "refm"]:
+    if run_report_stage:
+        try:
+            ReportMetrics(target_repo).run_report()
+        except Exception as e:
+            print(f"⚠️ Universe Report Error: {e}")
+
+    if args.stage == "refm":
         try:
             RefmMetrics(target_repo).run_report()
         except Exception as e:
             print(f"⚠️ Metrics Calc Error (RefM): {e}")
-
-    # Only run PMD Metrics if PMD is the active structural tool
-    if args.stage in ["all", "pmd", "pmd_history"] and config.STRUCTURAL_TOOL == "pmd":
-        try:
-            PMDMetrics(target_repo).run_report()
-        except Exception as e:
-            print(f"⚠️ Metrics Calc Error (PMD): {e}")
-
-        # Future placeholder:
-        # if args.stage in ["all", "ck"] and config.STRUCTURAL_TOOL == "ck":
-        #     CKMetrics(target_repo).run_report()
 
     # [FIX] Removed unreachable 'if all()' check.
     # Since we passed the 'if not pipeline_healthy' check above, success is guaranteed.

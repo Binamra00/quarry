@@ -9,18 +9,14 @@ from typing import List, Dict
 
 class IRefactoringAnalysisLogic(ABC):
     """
-    Strategy Interface for calculating Refactoring metrics in a Streaming Architecture.
+    Strategy Interface for RefactoringMiner metrics.
+
+    Scope note: this interface previously also declared commit-purity scoring, which
+    depended on a per-commit churn map produced by an earlier full-history mining pass.
+    That pass was removed when repository description became a read-only report, so the
+    purity methods had no data source and no consumer and were dropped. The surviving
+    responsibility is hotspot identification.
     """
-
-    @abstractmethod
-    def calculate_commit_purity(self, refactorings: List[dict], total_churn: int) -> float:
-        """Returns a purity score (0.0 to 1.0) for a single commit."""
-        pass
-
-    @abstractmethod
-    def calculate_purity_aggregation(self, purity_scores: List[float]) -> float:
-        """Aggregates individual commit scores into a repository-wide average (0-100)."""
-        pass
 
     @abstractmethod
     def identify_hotspots(self, locations_map: Dict[str, int], limit: int) -> Dict[str, int]:
@@ -30,30 +26,9 @@ class IRefactoringAnalysisLogic(ABC):
 
 class StandardRefactoringLogic(IRefactoringAnalysisLogic):
     """
-    Standard implementation for RefactoringMiner metrics.
+    Standard implementation for RefactoringMiner metrics: ranks the most frequently
+    refactored files by occurrence count.
     """
-
-    def __init__(self, churn_sensitivity: int = 20):
-        self.churn_sensitivity = churn_sensitivity
-
-    def calculate_commit_purity(self, refactorings: List[dict], total_churn: int) -> float:
-        if not refactorings:
-            return None
-
-        # Heuristic: Each refactoring 'explains' some churn (e.g., 20 lines).
-        explained_churn = len(refactorings) * self.churn_sensitivity
-
-        if total_churn <= 0:
-            return 1.0  # Pure refactoring (renames often have 0 line churn)
-
-        ratio = explained_churn / total_churn
-        return min(ratio, 1.0)  # Cap at 1.0
-
-    def calculate_purity_aggregation(self, purity_scores: List[float]) -> float:
-        if not purity_scores:
-            return 0.0
-        # Return average purity percentage (0-100)
-        return (sum(purity_scores) / len(purity_scores)) * 100
 
     def identify_hotspots(self, locations_map: Dict[str, int], limit: int) -> Dict[str, int]:
         # Sort by frequency (descending) and take top N
@@ -105,33 +80,6 @@ class StandardStaticLogic(IStaticAnalysisLogic):
         if not scores:
             return 0.0
         return statistics.mean(scores)
-
-    def identify_hotspots(self, file_map: Dict[str, int], limit: int) -> Dict[str, int]:
-        return dict(sorted(file_map.items(), key=lambda x: x[1], reverse=True)[:limit])
-
-
-class WeightedStaticLogic(IStaticAnalysisLogic):
-    """
-    Alternative weighting model for static analysis metrics.
-
-    This implementation applies a non-linear density calculation and uses the
-    median for complexity aggregation to reduce the influence of outliers and
-    very large or very small files. It can be used in place of
-    ``StandardStaticLogic`` when you want a more robust aggregation of
-    complexity scores.
-
-    Note: This strategy is experimental.
-    """
-
-    def calculate_density(self, total_smells: int, file_count: int) -> float:
-        if file_count == 0:
-            return 0.0
-        return total_smells / (file_count ** 0.5)
-
-    def calculate_complexity_aggregation(self, scores: List[int]) -> float:
-        if not scores:
-            return 0.0
-        return statistics.median(scores)
 
     def identify_hotspots(self, file_map: Dict[str, int], limit: int) -> Dict[str, int]:
         return dict(sorted(file_map.items(), key=lambda x: x[1], reverse=True)[:limit])

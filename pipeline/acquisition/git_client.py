@@ -2,7 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-class GitManager:
+class GitClient:
     @staticmethod
     def clone_with_progress(repo_url: str, dest_dir: Path) -> bool:
         """

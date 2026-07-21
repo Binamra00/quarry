@@ -5,44 +5,38 @@ from pipeline import config
 from pipeline.adapters.i_adapters import IAdapter
 from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
 
-# Notice we DO NOT import CK, PMD, or History adapters here at the top!
+# CK and Ledger adapters are lazy-loaded inside create_adapters (heavy imports).
 
 class ToolFactory:
     """
     Factory Method Pattern with Lazy Loading.
+
+    One miner per run -- there is no "all" stage. Each call builds exactly the adapter
+    for the requested stage. universe_path scopes the history walkers (ledger, refm);
+    CK sampling is applied separately by the caller via set_sampling_filter().
     """
 
     @staticmethod
-    def create_adapters(stage: str, target_repo_path: Path, batch_size: int = None) -> List[IAdapter]:
+    def create_adapters(stage: str, target_repo_path: Path, batch_size: int = None,
+                        universe_path: str = None) -> List[IAdapter]:
         adapters = []
         stage = stage.lower()
 
         if batch_size is None or batch_size <= 0:
             batch_size = sys.maxsize
 
-        # 1. History Mining Tools (RefactoringMiner)
-        if stage in ["refm", "all"]:
-            adapters.append(RefactoringMinerAdapter(target_repo_path))
+        # RefactoringMiner -- history walker; universe_path scopes the walk.
+        if stage == "refm":
+            adapters.append(RefactoringMinerAdapter(target_repo_path, universe_path=universe_path))
 
-        # 2. PMD Strategy (Legacy/Alternative)
-        # Runs if explicitly requested, OR if "all" is called and PMD is the active tool
-        if stage in ["pmd_history", "pmd"] or (stage == "all" and config.STRUCTURAL_TOOL == "pmd"):
-            if stage == "pmd":
-                from pipeline.adapters.pmd_adapt import PMDAdapter
-                adapters.append(PMDAdapter(target_repo_path))
-            else:
-                from pipeline.adapters.pmd_history_adapt import PMDHistoryAdapter
-                adapters.append(PMDHistoryAdapter(target_repo_path, batch_size))
-
-        # 3. CK Structural Taxonomy (New)
-        # Runs if explicitly requested, OR if "all" is called and CK is the active tool
-        if stage == "ck" or (stage == "all" and config.STRUCTURAL_TOOL == "ck"):
+        # CK -- structural metrics; sampling is applied by the caller (set_sampling_filter).
+        elif stage == "ck":
             from pipeline.adapters.ck_adapt import CkAdapter
             adapters.append(CkAdapter(target_repo_path, batch_size))
 
-        # 4. Evolutionary Ledger (New)
-        if stage in ["ledger", "all"]:
+        # Evolutionary Ledger -- history walker; universe_path scopes the walk.
+        elif stage == "ledger":
             from pipeline.adapters.ledger_adapt import LedgerAdapter
-            adapters.append(LedgerAdapter(target_repo_path, batch_size))
+            adapters.append(LedgerAdapter(target_repo_path, batch_size, universe_path=universe_path))
 
         return adapters

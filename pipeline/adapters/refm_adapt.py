@@ -8,6 +8,7 @@ from typing import List, Set
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
+from pipeline.scope import CommitUniverse
 from pipeline.adapters.i_adapters import IAdapter
 
 
@@ -22,7 +23,7 @@ class RefactoringMinerAdapter(IAdapter):
     where N is the total number of records.
     """
 
-    def __init__(self, target_repo_path: Path, batch_size: int = None):
+    def __init__(self, target_repo_path: Path, batch_size: int = None, universe_path: str = None):
         super().__init__(target_repo_path)
         # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
         if batch_size is not None:
@@ -30,6 +31,12 @@ class RefactoringMinerAdapter(IAdapter):
                 "⚠️  RefactoringMinerAdapter: 'batch_size' is ignored in streaming mode; "
                 "the adapter processes commits one by one."
             )
+
+        # Commit universe. universe_path=None -> mines --all (matches the metadata source of
+        # truth); a universe file -> the pinned study grid. Shared with LedgerAdapter through the
+        # same class, so an explicit run cannot have the two miners walk different sets -- which is
+        # what made this adapter's commit count exceed the ledger's before.
+        self.universe = CommitUniverse(target_repo_path.name, universe_path=universe_path)
 
     def get_tool_name(self) -> str:
         return "RefactoringMiner (History Mining)"
@@ -56,7 +63,17 @@ class RefactoringMinerAdapter(IAdapter):
 
     def _get_all_commits(self) -> List[tuple[str, int]]:
         # Use git log to format output precisely: Hash|Timestamp
-        cmd = ["git", "log", "--all", "--reverse", "--format=%H|%ct", "--", "*.java"]
+        #
+        # The revisions come from CommitUniverse and depend on the run mode:
+        #   FULL (no --universe)     -> --all: the whole repository, matching the metadata source
+        #                               of truth. The adapter is "dumb" and mines everything.
+        #   EXPLICIT (--universe f)  -> pinned grid HEAD + dangling snapshot commits. Bounded to
+        #                               the study's observation universe, and identical to the
+        #                               ledger's set because both resolve it through the same class.
+        # Note the "*.java" pathspec: even in FULL mode this counts only commits that touch Java
+        # files, so the refm commit count is a subset of metadata's (which counts all commits).
+        cmd = ["git", "log", *self.universe.rev_list_args(),
+               "--reverse", "--format=%H|%ct", "--", "*.java"]
         success, output = adapter_subprocess.run_command(
             cmd,
             cwd=str(self.target_repo_path),
@@ -130,6 +147,13 @@ class RefactoringMinerAdapter(IAdapter):
 
     def execute(self) -> bool:
         print(f"--- ⚡ Starting {self.get_tool_name()} [Streaming Mode] ---")
+        print(f"   🌐 {self.universe.describe()}")
+
+        try:
+            self.universe.verify_against(self.target_repo_path)
+        except RuntimeError as e:
+            print(e)
+            return False
 
         try:
             lib_dir = self._get_lib_path()
