@@ -3,12 +3,13 @@ import tempfile
 import uuid
 import shutil
 from pathlib import Path
-from typing import List, Set
+from typing import List
 
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
 from pipeline.scope import CommitUniverse
+from pipeline.state.output_state import OutputDerivedState
 from pipeline.adapters.i_adapters import IAdapter
 
 
@@ -25,12 +26,10 @@ class RefactoringMinerAdapter(IAdapter):
 
     def __init__(self, target_repo_path: Path, batch_size: int = None, universe_path: str = None):
         super().__init__(target_repo_path)
-        # batch_size is accepted for compatibility with ToolFactory but unused in streaming mode.
-        if batch_size is not None:
-            print(
-                "⚠️  RefactoringMinerAdapter: 'batch_size' is ignored in streaming mode; "
-                "the adapter processes commits one by one."
-            )
+        # A run limit, matching --batch everywhere else: stop after this many NEW commits and
+        # exit cleanly. Previously accepted and then ignored, which made the CLI advertise a
+        # flag the adapter discarded.
+        self.batch_size = batch_size if (batch_size and batch_size > 0) else None
 
         # Commit universe. universe_path=None -> mines --all (matches the metadata source of
         # truth); a universe file -> the pinned study grid. Shared with LedgerAdapter through the
@@ -88,41 +87,6 @@ class RefactoringMinerAdapter(IAdapter):
                         commits.append((parts[0].strip(), int(parts[1].strip())))
         return commits
 
-    def _get_processed_shas(self) -> Set[str]:
-        """
-        Scans the existing JSONL file line-by-line to find already processed commits.
-        Memory Usage: O(M) where M is the number of commits (storing SHAs only).
-        """
-        output_path = self.get_output_path()
-        processed = set()
-
-        if not output_path.exists():
-            return processed
-
-        print(f"   🔍 Scanning existing log: {output_path.name}...")
-        try:
-            with open(output_path, 'r', encoding='utf-8') as f:
-                for line_number, line in enumerate(f, start=1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        if "sha1" in record:
-                            processed.add(record["sha1"])
-                    except json.JSONDecodeError as e:
-                        # Log corrupt line to help diagnosis
-                        print(f"   ⚠️ Warning: Skipping corrupt line {line_number} in existing log: {e}")
-                        continue
-
-        # Catch only OSError (IOError is an alias in Python 3)
-        # Fail-fast to prevent re-processing 50k commits due to a transient read error
-        except OSError as e:
-            print(f"   ❌ Error reading existing log: {e}")
-            raise
-
-        return processed
-
     def _get_lib_path(self) -> Path:
         """
         Robustly resolves the 'lib' directory containing JAR dependencies.
@@ -167,17 +131,21 @@ class RefactoringMinerAdapter(IAdapter):
             print("❌ Error: No commits found.")
             return False
 
-        processed_shas = self._get_processed_shas()
+        # Progress from the output, via the same class the ledger and CK use.
+        state = OutputDerivedState(self.get_output_path(), "sha1", label="refm")
 
-        # Unpack the tuple to check the SHA against the processed set
-        remaining_commits = [(sha, time) for sha, time in all_commits if sha not in processed_shas]
+        remaining_commits = [(sha, ts) for sha, ts in all_commits if not state.is_processed(sha)]
 
         if not remaining_commits:
-            print(f"✅ Analysis already complete ({len(processed_shas)} commits).")
+            print(f"✅ Analysis already complete ({len(state)} commits).")
             return True
 
-        print(
-            f"   🔄 Resuming: Found {len(processed_shas)} existing. Processing {len(remaining_commits)} new commits...")
+        if self.batch_size:
+            remaining_commits = remaining_commits[:self.batch_size]
+
+        print(f"   🔄 Resuming: {len(state)} already recorded. "
+              f"Processing {len(remaining_commits)} commits this run"
+              f"{f' (--batch limit {self.batch_size})' if self.batch_size else ''}...")
 
         log_path = self.get_log_path()
         new_commits_count = 0
@@ -272,4 +240,7 @@ class RefactoringMinerAdapter(IAdapter):
                 return False
 
         print(f"✅ Success. Streamed {new_commits_count} commits to {self.get_output_path().name}")
+        if self.batch_size and new_commits_count >= self.batch_size:
+            print(f"   ⏹️  Stopped at the --batch limit of {self.batch_size}. "
+                  f"Re-run to continue; the output records what is done.")
         return True

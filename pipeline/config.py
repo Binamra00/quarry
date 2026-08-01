@@ -125,7 +125,24 @@ WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 # --- 7. CONSTANTS ---
 # One miner per run. No "all" -- each stage is invoked standalone. CK is the structural tool
 # (PMD removed). "report" is a read-only universe verification over mined outputs.
-VALID_STAGES = ["meta", "ledger", "refm", "ck", "report"]
+VALID_STAGES = ["meta", "ledger", "refm", "ck", "channel", "report"]
+
+# --- 7B. TRIGGER CHANNEL PLATFORMS ---
+# A channel is one source of developer discourse. The git platform reads the local clone; the
+# github platform needs an API token, which lives in .env and is never committed or logged.
+CHANNEL_PLATFORMS = {
+    "git":    ["commits"],
+    "github": ["issues", "prs", "pr_reviews", "comments"],
+}
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_API = os.getenv("GITHUB_API", "https://api.github.com")
+
+
+def channel_file(platform: str, channel: str, repo_name: str) -> Path:
+    """Mined channel records: one file per repo per channel."""
+    return OUTPUTS_PATH / f"channel_{platform}_{channel}_{repo_name}.jsonl"
+
 
 # --- 8. I/O RESILIENCE CONFIGURATION ---
 IO_MAX_RETRIES = int(os.getenv("IO_MAX_RETRIES", "5"))

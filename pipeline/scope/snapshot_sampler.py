@@ -10,11 +10,13 @@ class Sampler:
     """
     Release-Level (Tag-Level) Sampling for longitudinal MSR studies.
 
-    V3 BEHAVIOR (rel_hit manifests):
-      Consumes pre-resolved (tag, sha) entries produced by the universal
-      release-tag miner (998 GA rule, SHA-deduped, divergence-aware grid).
-      SHAs are taken directly from the manifest — no re-resolution — and
-      verified to exist as commits in the target repo.
+    REL_HIST BEHAVIOR (v3 and v4 manifests):
+      Consumes pre-resolved (tag, snapshot_sha) entries produced by the release-tag
+      mining notebook. SHAs are taken directly from the manifest — no re-resolution —
+      and verified to exist as commits in the target repo.
+
+      v4 names the field `snapshot_sha`; v3 named it `sha`. Both are accepted and
+      normalised on load (see _load).
 
     LEGACY BEHAVIOR (V1 flat version lists):
       Falls back to regex tag resolution for old-format inputs so the
@@ -45,14 +47,25 @@ class Sampler:
         except json.JSONDecodeError:
             raise RuntimeError(f"❌ {self.version_file} is not valid JSON.")
 
-        # --- V3: rel_hit manifest with pre-resolved entries ---
+        # --- rel_hist manifest with pre-resolved entries ---
         if isinstance(data, dict) and "entries" in data:
             self.entries = data["entries"]
             if not self.entries:
                 raise ValueError(f"❌ {self.version_file}: 'entries' is empty.")
+
+            # Field name normalisation across manifest versions.
+            #
+            # v4 emits `snapshot_sha`, and the rename was deliberate: an off-mainline release
+            # merged back into HEAD pins its snapshot to the MAIN-LINE commit, so the snapshot
+            # SHA and the tag SHA differ. A bare `sha` could not say which one it meant. Older
+            # manifests still use `sha`, so both are accepted and normalised to `sha` here --
+            # downstream code then has exactly one field to read.
             for e in self.entries:
-                if not e.get("sha") or not e.get("tag"):
-                    raise ValueError(f"❌ {self.version_file}: entry missing tag/sha: {e}")
+                sha = e.get("snapshot_sha") or e.get("sha")
+                if not sha or not e.get("tag"):
+                    raise ValueError(
+                        f"❌ {self.version_file}: entry missing tag or snapshot_sha: {e}")
+                e["sha"] = sha
             return "rel_hit"
 
         # --- Legacy: flat list or {"versions": [...]} of version numbers ---

@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import patch
-from pipeline.utils.batch_state import BatchStateManager
-from pipeline import config
+from pipeline.state.batch_state import BatchStateManager
 
 
 class TestBatchStateManager:

@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -7,7 +6,7 @@ from typing import Dict, List
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-from pipeline.utils.batch_state import BatchStateManager
+from pipeline.state.output_state import OutputDerivedState
 from pipeline.scope import CommitUniverse
 from pipeline.adapters.i_adapters import IAdapter
 
@@ -21,12 +20,26 @@ class LedgerAdapter(IAdapter):
     """
     Stateful Adapter for Evolutionary Ledger Mining (using PyDriller).
     Strategy: 'Graph Traversal Batching' with JSONL Streaming.
+
+    SCOPE: behaviour only. For each commit this records WHO changed WHAT, WHEN, and HOW MUCH --
+    author, timestamp, files touched, line churn, methods changed. Keyed by SHA, it is the
+    file-level lookup that every trigger channel resolves through:
+
+        channel record -> ref -> commit SHA -> ledger -> files, churn, methods
+
+    It holds NO trigger logic. A former `is_bug_fix` field applied a keyword regex to the commit
+    message and was removed: recognising a trigger is the detector's job, and the commit message
+    is text belonging to the commit CHANNEL, which mines it in its own pass. Mixing detection
+    into the ledger coupled two concerns and hard-coded a single trigger into a component that
+    must stay trigger-agnostic.
+
+    Note: JSONL mined before this change carries a vestigial `is_bug_fix` key. Nothing reads it,
+    so no re-mining is required; it disappears on any future re-mine.
     """
 
     def __init__(self, target_repo_path: Path, batch_size: int = 50, universe_path: str = None):
         super().__init__(target_repo_path)
         self.batch_size = batch_size
-        self.state_manager = BatchStateManager(target_repo_path.name, "ledger")
         self.checkpoint_interval_seconds = 300
 
         # Commit universe. If universe_path is None the adapter is "dumb": it mines --all
@@ -36,13 +49,13 @@ class LedgerAdapter(IAdapter):
         self.universe = CommitUniverse(target_repo_path.name, universe_path=universe_path)
         self._all_commits = None   # lazily populated by _get_all_commits()
 
-        # Heuristic to detect bug fixes based on commit messages
-        self.bug_pattern = re.compile(
-            r'\b(bug|fix|issue|error|resolve|patch|defect|crash)\b',
-            re.IGNORECASE
-        )
-
         self.jsonl_output_path = config.OUTPUTS_PATH / f"ledger_history_{self.target_repo_path.name}.jsonl"
+
+        # Progress comes from the output itself, not a parallel state file. A commit appears in
+        # the JSONL if and only if it was mined, so the two cannot disagree -- which removes the
+        # window where a hard kill between the record write and the state flush caused a commit
+        # to be mined twice.
+        self.state = OutputDerivedState(self.jsonl_output_path, "sha", label="ledger")
 
     def get_tool_name(self) -> str:
         return f"Evolutionary Ledger (Stateful Batch: {self.batch_size})"
@@ -81,8 +94,7 @@ class LedgerAdapter(IAdapter):
         against already-written SHAs. A universe that GROWS is absorbed automatically: the new
         commits simply appear in the unprocessed set. Nothing to reconcile, nothing to reset.
         """
-        return [c for c in self._get_all_commits()
-                if not self.state_manager.is_commit_processed(c)][:self.batch_size]
+        return self.state.unprocessed(self._get_all_commits())[:self.batch_size]
 
     def _sha_index_map(self) -> Dict[str, int]:
         """
@@ -97,35 +109,22 @@ class LedgerAdapter(IAdapter):
 
     def _report_universe_drift(self) -> None:
         """
-        SHA-keyed batching absorbs universe GROWTH on its own -- new commits appear in the
-        unprocessed set and get mined. There is no index to shift, so this no longer needs to
-        block the run (it did when batching was index-based).
+        Report records that are no longer in the universe.
 
-        SHRINKAGE is the one case still worth reporting: if the grid was re-mined and snapshots
-        dropped out, the JSONL keeps records for commits no longer in the universe. Those are
-        stale rather than corrupt -- anything joining on the release grid ignores them -- but
-        carrying them silently is worse than saying so.
+        Universe GROWTH needs no handling: new commits simply appear in the unprocessed set and
+        get mined. SHRINKAGE is worth saying out loud -- if the grid was re-mined and snapshots
+        dropped out, the JSONL keeps records for commits the universe no longer contains. They
+        are stale rather than corrupt, and anything joining on the release grid ignores them,
+        but carrying them silently is worse than reporting them.
         """
-        current = self.universe.fingerprint()
-        recorded = self.state_manager.state.get("universe_fingerprint")
-
-        if recorded != current:
-            if recorded is not None:
-                print(f"   \u2139\ufe0f  Universe changed ({recorded} -> {current}); "
-                      f"SHA-keyed batching absorbs this, no reset needed.")
-            self.state_manager.state["universe_fingerprint"] = current
-            self.state_manager.flush()
-
-        stale = self.state_manager.processed_set - set(self._get_all_commits())
+        stale = self.state.stale(self._get_all_commits())
         if stale:
             print(
-                f"\n\u26a0\ufe0f  {len(stale)} commit(s) in the batch state are no longer in the "
-                f"universe.\n"
-                f"   The grid was most likely re-mined and snapshots dropped out, so\n"
-                f"   {self.jsonl_output_path.name} holds stale records for them.\n"
+                f"\n\u26a0\ufe0f  {len(stale)} commit(s) recorded in {self.jsonl_output_path.name} "
+                f"are no longer in the universe.\n"
+                f"   The grid was most likely re-mined and snapshots dropped out.\n"
                 f"   Harmless if downstream joins on the release grid. To be exact, delete\n"
-                f"   {self.state_manager.state_file.name} and {self.jsonl_output_path.name}, "
-                f"then re-run."
+                f"   {self.jsonl_output_path.name} and re-run."
             )
 
     def execute(self) -> bool:
@@ -197,17 +196,17 @@ class LedgerAdapter(IAdapter):
                     )
 
                     # 1. Check Idempotency
-                    if self.state_manager.is_commit_processed(commit_hash):
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                    if self.state.is_processed(commit_hash):
                         continue
 
                     # 2. Extract Socio-Technical Metadata
+                    # Behaviour only -- no trigger detection. The commit MESSAGE is not stored
+                    # here; it is text, and the commit channel mines it separately.
                     record = {
                         "sha": commit_hash,
                         "timestamp": int(commit.committer_date.timestamp()),
                         "author_name": commit.author.name,
                         "author_email": commit.author.email, # [FIX] Added email for precise identity resolution
-                        "is_bug_fix": bool(self.bug_pattern.search(commit.msg)),
                         "modifications": []
                     }
 
@@ -259,30 +258,23 @@ class LedgerAdapter(IAdapter):
                     except Exception as e:
                         log_file.write(f"[CRITICAL] Could not write ledger to JSONL: {e}\n")
 
-                    # 5. Update State
-                    current_time = time.time()
-                    should_flush = (current_time - last_checkpoint_time >= self.checkpoint_interval_seconds) or (
-                                i == len(batch) - 1)
-
-                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
-
-                    if should_flush:
-                        last_checkpoint_time = current_time
+                    # 5. Note it done for the rest of this run. The JSONL write above is what
+                    #    makes it durable; there is no second record to keep in sync.
+                    self.state.mark_processed(commit_hash)
 
             except KeyboardInterrupt:
-                print("\n⚠️  Interrupt detected! Saving progress...")
-                self.state_manager.flush()
+                # Nothing to save: every commit already written to the JSONL is already recorded
+                # progress. That is the point of deriving state from the output.
+                print("\n⚠️  Interrupt detected. Records already written are kept.")
                 return False
 
             except Exception as e:
                 print(f"\n❌ [CRITICAL] PyDriller Crash: {e}")
                 log_file.write(f"[CRITICAL] PyDriller Crash: {e}\n")
-                self.state_manager.flush()
                 return False
 
             finally:
                 ui_strategy.clear_line()
-                self.state_manager.flush()
 
         # Fail loudly rather than write wrong indices: global_index assumes traverse_commits()
         # yields exactly the batch, in the same order.
@@ -297,7 +289,7 @@ class LedgerAdapter(IAdapter):
 
         # --- UX: Detailed Batch Summary ---
         # counted from the processed set rather than an index arithmetic guess
-        total_processed_so_far = len(self.state_manager.processed_set)
+        total_processed_so_far = len(self.state)
         remaining = max(0, total_commits - total_processed_so_far)
         print(f"✅ Batch Complete. Scanned {total_processed_so_far}/{total_commits} | Remaining: {remaining}")
 

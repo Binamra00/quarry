@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
 from pipeline.utils import adapter_subprocess
-from pipeline.acquisition.git_client import GitClient
+from pipeline.platforms.git_client import GitClient
 
 
 class RepositoryLoader:

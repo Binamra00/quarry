@@ -8,7 +8,7 @@ from typing import List, Dict
 from pipeline import config
 from pipeline.utils import adapter_subprocess
 from pipeline.utils import ui_strategy
-from pipeline.utils.batch_state import BatchStateManager
+from pipeline.state.output_state import OutputDerivedState
 from pipeline.adapters.i_adapters import IAdapter
 
 
@@ -21,7 +21,6 @@ class CkAdapter(IAdapter):
     def __init__(self, target_repo_path: Path, batch_size: int = 50):
         super().__init__(target_repo_path)
         self.batch_size = batch_size
-        self.state_manager = BatchStateManager(target_repo_path.name, "ck")
         self.checkpoint_interval_seconds = 300
         # Sampling State: Stores the set of interesting SHAs
         self.sampling_filter = None
@@ -29,13 +28,13 @@ class CkAdapter(IAdapter):
         # Output to a single JSONL file instead of a directory
         self.jsonl_output_path = config.OUTPUTS_PATH / f"ck_metrics_{self.target_repo_path.name}.jsonl"
 
-        # Cache for ordered sampled commits to avoid repeated sorting
-        self._ordered_sample_cache = None
+        # Progress is read back from the output, so this must follow the path it reads.
+        # set_sampling_filter() reroutes the output and rebuilds this against the new file.
+        self.state = OutputDerivedState(self.jsonl_output_path, "sha", label="ck")
 
     def set_sampling_filter(self, sampled_shas: set):
         """[OVERRIDE] Configure the adapter to skip uninteresting commits and isolate data."""
         self.sampling_filter = sampled_shas
-        self._ordered_sample_cache = None
 
         # [FIX] Isolate the data streams so full-runs and sampled-runs don't contaminate each other
         sampled_prefix = "ck_sampled"
@@ -44,7 +43,8 @@ class CkAdapter(IAdapter):
         self.jsonl_output_path = config.OUTPUTS_PATH / f"{sampled_prefix}_metrics_{self.target_repo_path.name}.jsonl"
 
         # 2. Re-initialize a brand new State Manager pointing to a different memory file
-        self.state_manager = BatchStateManager(self.target_repo_path.name, sampled_prefix)
+        # A sampled run writes to a different file, so progress is re-read from that one.
+        self.state = OutputDerivedState(self.jsonl_output_path, "sha", label=sampled_prefix)
 
         print(f"   🎯 Adapter Strategy Update: Filtering for {len(self.sampling_filter)} specific commits.")
         print(f"   📂 Redirecting data stream to: {self.jsonl_output_path.name}")
@@ -57,44 +57,43 @@ class CkAdapter(IAdapter):
         mode = "sampled_" if self.sampling_filter else ""
         return config.OUTPUTS_PATH / f"ck_execution_{mode}{self.target_repo_path.name}.log"
 
-    def _get_commit_batch(self) -> List[str]:
-        # SAMPLED runs: order the REQUESTED shas by each commit's own committer
-        # date, read directly from the object. Independent of ref reachability,
-        # so a release/tag commit that exists in the ODB but is not enumerated
-        # by `git rev-list --all` is never dropped. Guarantees
-        # len(ordered_targets) == len(sampling_filter) so completion fires.
-        if self.sampling_filter:
-            if self._ordered_sample_cache is None:
-                dated = []
-                for sha in self.sampling_filter:
-                    ok, out = adapter_subprocess.run_command(
-                        ["git", "show", "-s", "--format=%ct", sha],
-                        cwd=str(self.target_repo_path), verbose=False)
-                    ts = 0
-                    if ok and out and out.strip():
-                        for tok in reversed(out.strip().split()):
-                            if tok.isdigit():
-                                ts = int(tok);
-                                break
-                    dated.append((ts, sha))
-                dated.sort(key=lambda x: x[0])
-                self._ordered_sample_cache = [sha for _, sha in dated]
-            ordered_targets = self._ordered_sample_cache
-            next_start = self.state_manager.get_next_start_index()
-            if next_start >= len(ordered_targets):
-                return []
-            return ordered_targets[next_start: next_start + self.batch_size]
+    def _get_ordered_targets(self) -> List[str]:
+        """Every snapshot this run should cover, in chronological order."""
 
-        # FULL-HISTORY (non-sampled) runs: unchanged
-        cmd = ["git", "rev-list", "HEAD", "--reverse"]
-        success, output = adapter_subprocess.run_command(cmd, cwd=str(self.target_repo_path), verbose=False)
+        # [FIX] If we are sampling specific tags, they might be on older release
+        # branches not reachable from the current HEAD (e.g., v1.x vs v3.x).
+        # We must use '--all' to ensure we capture and sort every requested SHA.
+        if self.sampling_filter:
+            cmd = ["git", "rev-list", "--all", "--reverse"]
+        else:
+            # For standard contiguous mining, we stick to HEAD to avoid
+            # double-counting abandoned pull requests and orphan branches.
+            cmd = ["git", "rev-list", "HEAD", "--reverse"]
+
+        success, output = adapter_subprocess.run_command(
+            cmd, cwd=str(self.target_repo_path), verbose=False
+        )
+
         if not success or not output or not output.strip():
             return []
+
         all_commits_ordered = output.strip().split('\n')
-        next_start = self.state_manager.get_next_start_index()
-        if next_start >= len(all_commits_ordered):
-            return []
-        return all_commits_ordered[next_start: next_start + self.batch_size]
+
+        if self.sampling_filter:
+            return [sha for sha in all_commits_ordered if sha in self.sampling_filter]
+        return all_commits_ordered
+
+    def _get_commit_batch(self) -> List[str]:
+        """
+        The next snapshots to process, selected BY SHA rather than by index.
+
+        An index assumes the ordered list is identical to the one the previous run saw.
+        Re-mining the release grid or changing the sample changes that list, and every position
+        after the change then maps onto the wrong snapshot -- silently, since a shifted index is
+        still a valid index. A SHA is intrinsic to the commit, so a list that grows or reorders
+        is absorbed with nothing to reconcile.
+        """
+        return self.state.unprocessed(self._get_ordered_targets())[:self.batch_size]
 
     def _get_total_commit_count(self) -> int:
         cmd = ["git", "rev-list", "--count", "HEAD"]
@@ -162,13 +161,15 @@ class CkAdapter(IAdapter):
         last_checkpoint_time = time.time()
         success_count = 0
 
-        # Calculate start index ONCE before loop to prevent drift
-        batch_start_index = self.state_manager.get_next_start_index()
+        # Position within the whole target list, for progress only -- never for selection.
+        idx_map = {sha: n for n, sha in enumerate(self._get_ordered_targets())}
 
         with open(log_path, "a", encoding="utf-8") as log_file:
             try:
                 for i, commit_hash in enumerate(batch):
-                    global_index = batch_start_index + i
+                    # True position, not an offset: batches may be non-contiguous where earlier
+                    # snapshots are already recorded.
+                    global_index = idx_map.get(commit_hash, i)
 
                     ui_strategy.update_progress(
                         global_index + 1,
@@ -177,8 +178,7 @@ class CkAdapter(IAdapter):
                     )
 
                     # 2. Check if already processed (Idempotency)
-                    if self.state_manager.is_commit_processed(commit_hash):
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                    if self.state.is_processed(commit_hash):
                         continue
 
                     # 3. Time Travel & Clean
@@ -208,7 +208,7 @@ class CkAdapter(IAdapter):
                         except Exception as e:
                             log_file.write(f"[WARN] Failed to write checkout_failed record to JSONL: {e}\n")
 
-                        self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=False)
+                        self.state.mark_processed(commit_hash)
                         continue
 
                     # 4. Run CK (Isolated Temp Directory)
@@ -363,21 +363,14 @@ class CkAdapter(IAdapter):
                         log_file.write(f"[CRITICAL] Could not write to JSONL: {e}\n")
 
                     # 7. Update State
-                    current_time = time.time()
-                    should_flush = (current_time - last_checkpoint_time >= self.checkpoint_interval_seconds) or (
-                            i == len(batch) - 1)
-
-                    self.state_manager.save_progress(commit_hash, global_index, total_commits, flush=should_flush)
-
-                    if should_flush:
-                        last_checkpoint_time = current_time
+                    # The JSONL record above is what makes this durable; this only stops the
+                    # same run from processing the snapshot twice.
+                    self.state.mark_processed(commit_hash)
 
             except KeyboardInterrupt:
-                print("\n⚠️  Interrupt detected! Saving progress...")
-                try:
-                    self.state_manager.flush()
-                except Exception as e:
-                    log_file.write(f"[CRITICAL] Flush failed on interrupt: {e}\n")
+                # Nothing to save: every snapshot already written to the JSONL is already
+                # recorded progress.
+                print("\n⚠️  Interrupt detected. Records already written are kept.")
                 return False
 
             finally:
@@ -388,11 +381,10 @@ class CkAdapter(IAdapter):
                     cwd=str(self.target_repo_path),
                     verbose=False
                 )
-                self.state_manager.flush()
 
         # [OUT-DENTED 4 SPACES]: Now outside the 'with open()' block
         # --- UX: Detailed Batch Summary ---
-        total_processed_so_far = batch_start_index + len(batch)
+        total_processed_so_far = len(self.state)
         remaining = max(0, total_commits - total_processed_so_far)
         print(f"✅ Batch Complete. Scanned {total_processed_so_far}/{total_commits} | Remaining: {remaining}")
 

@@ -52,17 +52,41 @@ def main():
                         metavar="[N]",
                         type=int,
                         default=50,
-                        help="Commits per chunk for memory safety on large repos. Valid for ledger, "
-                             "refm, ck. 0 = unlimited (default: 50).")
+                        help="Stop after N records this run, then exit cleanly; state is saved and "
+                             "the next invocation resumes. Valid for ledger, refm, ck, channel. "
+                             "Most useful for API-backed channels, where it validates a source "
+                             "against a few hundred real records without spending an hour of "
+                             "quota. 0 = unlimited (default: 50).")
+
+    parser.add_argument("--full",
+                        action="store_true",
+                        help="Mine the FULL repository (--all) instead of a pinned universe. "
+                             "Mutually exclusive with --universe; one of the two is REQUIRED for "
+                             "every stage that walks commits. See the warning printed when used.")
+
+    parser.add_argument("--platform",
+                        metavar="[git, github]",
+                        type=str,
+                        default=None,
+                        help="Trigger channel platform. Required for the 'channel' stage. "
+                             "git reads the local clone; github needs GITHUB_TOKEN in .env.")
+
+    parser.add_argument("--channel",
+                        metavar="[commits, issues, prs, ...]",
+                        type=str,
+                        default=None,
+                        help="Comma-separated channels to mine, e.g. --channel issues,prs. "
+                             "Required for the 'channel' stage. Each channel is mined into its "
+                             "own file with its own resumable state.")
 
     parser.add_argument("--universe",
                         metavar="[adapter_universe_<repo>.json]",
                         type=str,
                         default=None,
-                        help="Restrict the Ledger/RefactoringMiner walk to a pinned study grid "
-                             "(HEAD + dangling snapshot commits). Omit to mine the FULL repository "
-                             "(--all), matching metadata. Valid for 'ledger' and 'refm' only. "
-                             "Mutually exclusive with --version.")
+                        help="Pin a commit walk to the study grid (head_sha + dangling snapshot "
+                             "commits) instead of --all. Valid for 'ledger', 'refm', and the git "
+                             "commit channel -- every miner that walks commits. Omit to mine the "
+                             "FULL repository, matching metadata. Mutually exclusive with --version.")
 
     args = parser.parse_args()
 
@@ -82,17 +106,92 @@ def main():
         sys.exit(1)
 
     # G1  --universe: ledger / refm only
-    if args.universe and args.stage not in ["ledger", "refm"]:
-        _reject("--universe", ["ledger", "refm"])
+    if args.universe and args.stage not in ["ledger", "refm", "channel"]:
+        _reject("--universe", ["ledger", "refm", "channel (git platform)"])
     # G2  --sample: ck only
     if args.sample and args.stage != "ck":
         _reject("--sample", ["ck"])
     # G5  --batch: ledger / refm / ck (meta is a single --all pass; report reads)
-    if args.batch != 50 and args.stage not in ["ledger", "refm", "ck"]:
-        _reject("--batch", ["ledger", "refm", "ck"])
+    if args.batch != 50 and args.stage not in ["ledger", "refm", "ck", "channel"]:
+        _reject("--batch", ["ledger", "refm", "ck", "channel"])
     # --version: every miner, never report
     if args.version and args.stage == "report":
         _reject("--version", ["meta", "ledger", "refm", "ck"])
+
+    # --- every commit-walking stage must choose its universe explicitly ---
+    # ledger, refm and the git commit channel all walk commits, and all three must walk the
+    # SAME commits for their outputs to join. Leaving that implicit is how a run silently
+    # produces records that can never link, so neither option defaults.
+    COMMIT_WALKERS = ["ledger", "refm"]
+    walks_commits = args.stage in COMMIT_WALKERS or (
+        args.stage == "channel" and (args.platform or "").lower() == "git")
+
+    if args.universe and args.full:
+        print("\n❌ --universe and --full are mutually exclusive. Choose one.")
+        sys.exit(1)
+
+    if walks_commits and not args.universe and not args.full:
+        print(f"\n❌ '{args.stage}' walks commits, so it must be told WHICH commits.")
+        print(f"   --universe <file>  mine the pinned study grid (what every other miner used)")
+        print(f"   --full             mine the whole repository (--all)")
+        print(f"\n   There is no default: an unstated universe is how outputs silently stop")
+        print(f"   joining. Pass one.")
+        sys.exit(1)
+
+    if args.full and not walks_commits:
+        _reject("--full", ["ledger", "refm", "channel (git platform)"])
+
+    if args.full:
+        print("\n" + "=" * 74)
+        print("⚠️  FULL MODE -- READ THIS BEFORE RELYING ON THE OUTPUT")
+        print("=" * 74)
+        print("   The walk is --all: every commit this clone can reach, right now.")
+        print()
+        print("   THERE IS NO FREEZE. The clone is synced from origin on every run, so a run")
+        print("   today and a run tomorrow walk different histories. Nothing pins them.")
+        print()
+        print("   THE UNIVERSES WILL NOT ALIGN. Any miner run with --universe walked the pinned")
+        print("   grid. Records produced here that fall outside it cannot join those outputs --")
+        print("   they are not dropped with an error, they simply never match.")
+        print()
+        print("   FOR FORECASTING OR PREDICTION THIS IS UNSAFE. Downstream joins assume every")
+        print("   miner saw the same commits. Mixed universes inflate prevalence denominators")
+        print("   and silently lose events at the join, with no failure to alert you.")
+        print()
+        print("   Use --full only to verify against metadata (ledger == metadata) or to explore.")
+        print("   For anything the study depends on, use --universe.")
+        print("=" * 74)
+
+    # --- channel stage: platform and channel are required, and must be known ---
+    if args.stage == "channel":
+        if not args.platform:
+            print("\n❌ The 'channel' stage requires --platform "
+                  f"({', '.join(config.CHANNEL_PLATFORMS)}).")
+            sys.exit(1)
+        if not args.channel:
+            print(f"\n❌ The 'channel' stage requires --channel. Available for "
+                  f"'{args.platform}': {', '.join(config.CHANNEL_PLATFORMS.get(args.platform.lower(), []))}")
+            sys.exit(1)
+        known = config.CHANNEL_PLATFORMS.get(args.platform.lower())
+        if known is None:
+            print(f"\n❌ Unknown platform '{args.platform}'. "
+                  f"Available: {', '.join(config.CHANNEL_PLATFORMS)}")
+            sys.exit(1)
+        bad = [c.strip() for c in args.channel.split(",") if c.strip() and c.strip() not in known]
+        if bad:
+            print(f"\n❌ Unknown channel(s) for '{args.platform}': {', '.join(bad)}")
+            print(f"   Available: {', '.join(known)}")
+            sys.exit(1)
+        # --universe pins a set of COMMITS. Issues and comments are not commits, so the flag
+        # cannot bound them at mine time; the pinned universe constrains them at linkage instead.
+        if args.universe and args.platform.lower() != "git":
+            print(f"\n❌ --universe applies only to the git commit channel.")
+            print(f"   Issues, pull requests and comments are not commits, so a commit SHA")
+            print(f"   cannot bound them. The pinned universe still constrains them, but at")
+            print(f"   linkage: a record whose reference falls outside it never joins the ledger.")
+            sys.exit(1)
+    elif args.platform or args.channel:
+        _reject("--platform/--channel", ["channel"])
 
     # G3  --version XOR --universe (both scope the ledger/refm walk)
     if args.version and args.universe:
@@ -151,8 +250,13 @@ def main():
 
     print(f"🎯 Target Repository: {target_repo.name}")
     print(f"🎯 Target Stage: {args.stage.upper()}")
-    print(f"🎯 Batch Size: {args.batch}")
-    print(f"🎯 Commit Universe: {'PINNED (' + args.universe + ')' if args.universe else 'FULL (--all, matches metadata)'}")
+    if args.stage in ["ledger", "refm", "ck", "channel"]:
+        print(f"🎯 Batch Limit: {'unlimited' if args.batch <= 0 else args.batch}")
+    if walks_commits:
+        print(f"🎯 Commit Universe: "
+              f"{'PINNED (' + args.universe + ')' if args.universe else 'FULL (--all) — NOT FROZEN'}")
+    if args.stage == "channel":
+        print(f"🎯 Channels: {args.platform} -> {args.channel}")
     if args.version:
         print("\n--- 🔖 Repo Revision (Trace) ---")
         adapter_subprocess.run_command(["git", "describe", "--tags", "--always"], cwd=str(target_repo))
@@ -200,10 +304,13 @@ def main():
     # Universe Report (read-only). Its own stage, run after mining.
     run_report_stage = args.stage == "report"
 
-    # Mining stage: exactly one of refm / ck / ledger.
-    if args.stage in ["refm", "ck", "ledger"]:
+    # Mining stage: one of refm / ck / ledger, or the channel stage (which may return several
+    # adapters, one per requested channel).
+    if args.stage in ["refm", "ck", "ledger", "channel"]:
         mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch,
-                                                      universe_path=args.universe)
+                                                      universe_path=args.universe,
+                                                      platform=args.platform,
+                                                      channels=args.channel)
 
         for adapter in mining_adapters:
             # [CLEAN] Polymorphic call.
