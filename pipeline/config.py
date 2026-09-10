@@ -1,6 +1,6 @@
 import os
-import sys
 from pathlib import Path
+from typing import List
 
 # --- 0. LOAD DOTENV ---
 try:
@@ -9,41 +9,86 @@ try:
 except ImportError:
     pass
 
-# --- 1. ROBUST PROJECT ROOT DISCOVERY ---
-current_path = Path(__file__).resolve()
-root_candidate = current_path.parent
-while not (root_candidate / ".git").exists():
-    if root_candidate == root_candidate.parent:
-        raise RuntimeError("❌ Could not find Project Root (no .git folder found).")
-    root_candidate = root_candidate.parent
-REPO_ROOT = root_candidate
 
-# --- 2. DYNAMIC WORKSPACE CONFIGURATION ---
-custom_home = os.getenv("SMELL_RANKER_HOME")
+# --- 1. ROOT DISCOVERY ---------------------------------------------------------------
+#
+# WHY THIS NO LONGER RAISES WHEN THERE IS NO .git
+#
+#   Walking up for a .git folder is right for a source checkout and wrong for an installed
+#   package: `pip install quarry-msr` puts this file in site-packages, where no ancestor
+#   directory has a .git and the old code raised RuntimeError at IMPORT time. The tool became
+#   uninstallable the moment it was installed, and the failure appeared as an exception during
+#   `import pipeline` rather than as anything a user could act on.
+#
+#   The fallback is the current working directory, which is where an installed tool should look
+#   for a workspace anyway. QUARRY_HOME overrides both.
 
-print(f"📂 Codebase Root: {REPO_ROOT}")
+def _discover_repo_root() -> Path:
+    candidate = Path(__file__).resolve().parent
+    while candidate != candidate.parent:
+        if (candidate / ".git").exists():
+            return candidate
+        candidate = candidate.parent
+    # Installed rather than checked out. Not an error.
+    return Path.cwd()
 
-if custom_home and custom_home.strip():
-    print(f"⚙️  Custom Config Detected: SMELL_RANKER_HOME={custom_home}")
-    WORKSPACE_ROOT = Path(custom_home)
+
+REPO_ROOT = _discover_repo_root()
+
+
+# --- 2. WORKSPACE ---------------------------------------------------------------------
+#
+# QUARRY_HOME is the current name. SMELL_RANKER_HOME is still honoured so an existing .env and
+# any machine already configured keeps working; it is read second, so the new name wins where
+# both are set.
+
+_env_home = (os.getenv("QUARRY_HOME") or os.getenv("SMELL_RANKER_HOME") or "").strip()
+_LEGACY_HOME_USED = bool(_env_home) and not (os.getenv("QUARRY_HOME") or "").strip()
+
+if _env_home:
+    WORKSPACE_ROOT = Path(_env_home)
 else:
-    print("💻 Detected Local Environment (Default).")
     WORKSPACE_ROOT = REPO_ROOT / "workspace_data"
 
-print(f"📂 Workspace Root: {WORKSPACE_ROOT}")
 
-if not WORKSPACE_ROOT.exists():
-    print(f"   ✨ Creating workspace directory: {WORKSPACE_ROOT}")
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+# --- 3. CORE PATHS --------------------------------------------------------------------
 
-# --- 3. DEFINE CORE PATHS ---
 TOOLS_PATH = WORKSPACE_ROOT / "tools"
 REPOS_PATH = WORKSPACE_ROOT / "repos"
 OUTPUTS_PATH = WORKSPACE_ROOT / "outputs"
 VERSIONS_PATH = WORKSPACE_ROOT / "versions"
 
-for path in [TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH, VERSIONS_PATH]:
-    path.mkdir(exist_ok=True)
+# parents=True: WORKSPACE_ROOT itself may not exist yet when QUARRY_HOME points somewhere new,
+# and mkdir(exist_ok=True) alone fails with FileNotFoundError rather than creating the chain.
+for _path in (WORKSPACE_ROOT, TOOLS_PATH, REPOS_PATH, OUTPUTS_PATH, VERSIONS_PATH):
+    _path.mkdir(parents=True, exist_ok=True)
+
+
+# --- 3B. WHERE THE WORKSPACE IS, AS DATA RATHER THAN AS A SIDE EFFECT ------------------
+
+def describe() -> List[str]:
+    """
+    The workspace banner, returned instead of printed.
+
+    IMPORTING A MODULE SHOULD NOT WRITE TO STDOUT. This block used to print four lines at
+    import time, which meant `--help` opened with them, every rejected command line printed
+    them before its error, every notebook cell that touched config emitted them, and -- because
+    one of them carried an emoji -- a redirected run died inside an import, before argparse had
+    seen a single argument.
+
+    The caller decides when a run is real enough to deserve a banner; RunPlan.announce() does.
+    """
+    lines = [f"📂 Codebase Root: {REPO_ROOT}"]
+    if _env_home:
+        var = "SMELL_RANKER_HOME" if _LEGACY_HOME_USED else "QUARRY_HOME"
+        lines.append(f"⚙️  Custom workspace from {var}")
+        if _LEGACY_HOME_USED:
+            lines.append("   (SMELL_RANKER_HOME is the old name; rename it to QUARRY_HOME)")
+    else:
+        lines.append("💻 Default workspace (no QUARRY_HOME set).")
+    lines.append(f"📂 Workspace Root: {WORKSPACE_ROOT}")
+    return lines
+
 
 # --- 4. TOOL CONFIGURATION (From .env or Defaults) ---
 STRUCTURAL_TOOL = os.getenv("STRUCTURAL_TOOL", "ck").lower().strip()
@@ -78,7 +123,11 @@ CK_TIMEOUT = int(os.getenv("CK_TIMEOUT", "3600"))     # seconds per snapshot
 JAVA_XMX = os.getenv("JAVA_XMX", "4g")              # CK heap; QuestDB needs headroom
 
 # --- 5. TARGET REPOSITORIES & INTERNAL ASSETS ---
-RULES_DIR = REPO_ROOT / "pipeline" / "rulesets"
+#
+# Package-relative, NOT REPO_ROOT-relative. Rulesets ship inside the package, so their location
+# is fixed relative to this file whether the package is a checkout or an installed wheel;
+# deriving it from the project root breaks the moment there is no project root.
+RULES_DIR = Path(__file__).resolve().parent / "rulesets"
 
 # --- 5B. RELEASE GRID ARTIFACTS ---
 # Produced by rel_tag_mining_v3.ipynb, consumed by the mining adapters.
@@ -114,9 +163,11 @@ def release_manifest_file(repo_name: str) -> Path:
     """Full mining record: admission thresholds, rejected tags, SHA aliases, grid rule."""
     return GRID_PATH / f"{repo_name}_release_manifest.json"
 
+
 # --- 6. UTILITIES ---
 def escape_path(path_obj):
     return str(path_obj).replace(" ", "\\\\ ")
+
 
 CK_PATH_ESCAPED = escape_path(CK_PATH)
 RM_PATH_ESCAPED = escape_path(RM_PATH)
@@ -125,6 +176,10 @@ WORKSPACE_ROOT_ESCAPED = escape_path(WORKSPACE_ROOT)
 # --- 7. CONSTANTS ---
 # One miner per run. No "all" -- each stage is invoked standalone. CK is the structural tool
 # (PMD removed). "report" is a read-only universe verification over mined outputs.
+#
+# NOTE: pipeline/cli/spec.py is now the authoritative list -- it declares each stage together
+# with the flags that stage accepts, and the CLI reads its choices from there. This constant is
+# kept for anything still importing it, and must stay in step with STAGES.
 VALID_STAGES = ["meta", "ledger", "refm", "ck", "channel", "report"]
 
 # --- 7B. TRIGGER CHANNEL PLATFORMS ---

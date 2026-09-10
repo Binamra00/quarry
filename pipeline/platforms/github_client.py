@@ -1,3 +1,4 @@
+import http.client
 import json
 import re
 import subprocess
@@ -185,9 +186,27 @@ class GitHubClient:
 
                 raise GitHubAccessError(f"GitHub returned {e.code} for {url}")
 
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            # Everything below is a TRANSPORT failure: the request never produced an HTTP
+            # status, so retrying is the correct response.
+            #
+            # The exception tree here is wider than it looks, and catching URLError alone --
+            # as this did originally -- misses most of it:
+            #
+            #   IncompleteRead        HTTPException   the connection dropped mid-body. Seen on
+            #                                         large responses; a 14,000-item page of
+            #                                         pull requests is over a megabyte.
+            #   ConnectionResetError  OSError         peer closed the socket
+            #   TimeoutError          OSError         no response in time
+            #   URLError              OSError         DNS failure, refused connection
+            #
+            # IncompleteRead descends from HTTPException, NOT from URLError, so it belongs to a
+            # different branch entirely and was never retryable. ConnectionResetError is an
+            # OSError but not a URLError, so it was not caught either. Catching OSError and
+            # HTTPException covers both branches; HTTPError is handled above and returns before
+            # reaching here, so the broader catch does not swallow real HTTP statuses.
+            except (OSError, http.client.HTTPException, json.JSONDecodeError) as e:
                 wait = (2 ** attempt) * 2
-                print(f"\n   ⏳ Network error ({type(e).__name__}); retrying in {wait}s "
+                print(f"\n   ⏳ Transport error ({type(e).__name__}); retrying in {wait}s "
                       f"(attempt {attempt + 1}/{self.MAX_RETRIES})")
                 time.sleep(wait)
                 last_err = e
@@ -213,54 +232,90 @@ class GitHubClient:
               f"{'' if self._token else '  (UNAUTHENTICATED)'}")
         return info
 
-    def paginate(self, endpoint: str, params: Optional[Dict] = None,
-                 start_page: int = 1) -> Iterator[Tuple[int, List[Dict]]]:
+    @staticmethod
+    def _next_link(headers: Dict[str, str]) -> Optional[str]:
         """
-        Walk a listing endpoint, yielding (page_number, items).
+        The rel="next" URL from a Link header, or None if this was the last page.
 
-        The page number is yielded so the caller can record it only after the page's records are
-        safely written -- a page marked done before its contents are persisted would be skipped
-        on resume.
+        Link: <https://api.github.com/...&page=2&after=CURSOR>; rel="next", <...>; rel="last"
+        """
+        link = headers.get("link")
+        if not link:
+            return None
+        for part in link.split(","):
+            segments = part.split(";")
+            if len(segments) >= 2 and 'rel="next"' in segments[1]:
+                return segments[0].strip().strip("<>")
+        return None
 
-        Ordering is forced to created/asc here rather than left to callers, because
-        ChannelStateManager's page-based resumption is only sound under that order.
+    def paginate(self, endpoint: str, params: Optional[Dict] = None,
+                 start_page: int = 1,
+                 start_url: Optional[str] = None
+                 ) -> Iterator[Tuple[int, List[Dict], Optional[str]]]:
+        """
+        Walk a listing endpoint, yielding (page_number, items, next_url).
+
+        FOLLOWS THE LINK HEADER RATHER THAN CONSTRUCTING page=N.
+
+            This is not a style preference. GitHub caps OFFSET pagination on some endpoints:
+            /issues refuses page 101 at per_page=100 with HTTP 422, because that would be the
+            10,001st item. /pulls has no such cap, which is why the same client walked 14,505
+            pull requests and then failed at exactly 10,000 issues.
+
+            The rel="next" URL carries an `after=<cursor>` alongside page=N, and following it
+            verbatim bypasses the offset limit. GitHub's documentation is explicit: "In all
+            cases, you can use the URLs in the link header to fetch additional pages of
+            results."
+
+            Only the FIRST request is constructed here. Every subsequent one is whatever GitHub
+            said comes next.
+
+        RESUMPTION.
+            next_url is yielded so the caller can persist it and resume exactly where it
+            stopped, cursor included. A caller with no stored URL falls back to start_page,
+            which works for any offset below the cap -- so older state files still resume, they
+            simply re-derive the cursor once they get deep enough to need it.
+
+        Ordering is forced to created/asc here rather than left to callers, because page-based
+        resumption is only sound under that order.
         """
         q = dict(params or {})
         q.setdefault("per_page", self.PER_PAGE)
         q["sort"] = "created"
         q["direction"] = "asc"
+        per_page = int(q["per_page"])
 
         page = max(1, int(start_page))
-        while True:
+        if start_url:
+            url = start_url
+        else:
             q["page"] = page
-            url = f"{self.api_base}/repos/{self.owner}/{self.repo}/{endpoint.lstrip('/')}" \
-                  f"?{urllib.parse.urlencode(q)}"
-            items, headers = self._request(url)
+            url = (f"{self.api_base}/repos/{self.owner}/{self.repo}/{endpoint.lstrip('/')}"
+                   f"?{urllib.parse.urlencode(q)}")
 
+        while True:
+            items, headers = self._request(url)
             if not items:
                 return
 
-            yield page, items
+            next_url = self._next_link(headers)
 
-            # Quota check AFTER yielding: the page just fetched is handed over and recorded, so
-            # a resumed run continues from the next page rather than refetching this one.
+            # Yield BEFORE the quota check, so the page just fetched is handed over and recorded;
+            # a resumed run then continues from next_url rather than refetching this page.
+            yield page, items, next_url
+
             remaining = headers.get("x-ratelimit-remaining")
             reset = headers.get("x-ratelimit-reset")
             if remaining is not None and remaining.isdigit() \
                     and int(remaining) <= self.QUOTA_FLOOR and reset:
                 raise GitHubRateLimited(int(reset))
 
-            # Termination. The Link header is GitHub's documented signal and is authoritative
-            # when present: absence of rel="next" means this was the last page, whether or not
-            # it was full. Only when the header is missing entirely do we fall back to the
-            # length heuristic.
-            #
-            # Getting this wrong costs quota rather than correctness -- an over-eager walk just
-            # fetches an empty page and stops -- but on a 200-page channel the requests add up.
-            if "link" in headers:
-                if 'rel="next"' not in headers["link"]:
-                    return
-            elif len(items) < int(q["per_page"]):
+            # No rel="next" means this was the last page. The length check is a fallback for
+            # endpoints that omit the Link header entirely.
+            if not next_url:
+                return
+            if "link" not in headers and len(items) < per_page:
                 return
 
+            url = next_url
             page += 1

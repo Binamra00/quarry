@@ -1,401 +1,48 @@
+"""
+Entry point.
+
+Six steps, no decisions. Everything this used to do -- flag validation, warning banners,
+toolchain provisioning, repository acquisition, sampler resolution, command assembly, the
+execution loop, post-run reporting -- now belongs to a module that can be tested and reused
+without a terminal attached.
+
+    CliParser        argv            -> RunPlan
+    StageValidator   RunPlan         -> RunPlan (validated, paths resolved)
+    Workspace        RunPlan         -> a repository ready to mine
+    PipelineFactory  (plan, repo)    -> the commands that plan implies
+    PipelineRunner   commands        -> an exit code
+
+Driving the pipeline from a notebook means building a RunPlan directly and skipping the first
+step; nothing below it knows the command line exists.
+"""
+
 import sys
-import argparse
-from typing import List
 
-from pipeline import config
-from pipeline.utils import adapter_subprocess
-from pipeline.utils import allocate_tools
-from pipeline.acquisition import RepositoryLoader
-from pipeline.metrics.report_mets import ReportMetrics
-from pipeline.metrics.refm_mets import RefmMetrics
-
-from pipeline.factories.adapter_fact import ToolFactory
-from pipeline.commands.i_commands import IPipelineCommand
-from pipeline.commands.adapter_cmd import RunToolCommand
-
-from pipeline.adapters.metadata_adapt import MetadataAdapter
-# Add this with your other imports
-from pipeline.scope import Sampler
+from pipeline.cli.parser import CliParser
+from pipeline.cli.validate import StageValidator, CliError
+from pipeline.factories.adapter_fact import PipelineFactory
+from pipeline.runtime.runner import PipelineRunner
+from pipeline.runtime.workspace import Workspace, WorkspaceError
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Smell-Ranker Pipeline Orchestrator")
-
-    parser.add_argument("--repo",
-                        metavar="",
-                        # [UX] Default ensures backward compatibility for existing scripts
-                        default="toy_project",
-                        help="Target Repository. Can be a local folder name OR a GitHub URL.")
-
-    parser.add_argument("--version",
-                        metavar="[tag_or_sha]",
-                        default=None,
-                        help="Mine a SINGLE checked-out version (git tag or commit). Valid for "
-                             "meta, ledger, refm, ck. Mutually exclusive with --universe and --sample.")
-
-    parser.add_argument("--stage",
-                        metavar="[meta, ledger, refm, ck, report]",
-                        choices=config.VALID_STAGES,
-                        required=True,
-                        help="Pipeline stage to execute (required). One miner per run; there is "
-                             "no 'all'. Run stages individually: meta -> ledger/refm/ck -> report.")
-
-    parser.add_argument("--sample",
-                        metavar="[rel_hist_<repo>.json]",
-                        type=str,
-                        default=None,
-                        help="Restrict CK to the snapshots listed in this rel_hist manifest. CK is "
-                             "the heaviest miner, so it runs only at the snapshots the trigger "
-                             "analysis prioritizes. Valid for the 'ck' stage only.")
-
-    parser.add_argument("--batch",
-                        metavar="[N]",
-                        type=int,
-                        default=50,
-                        help="Stop after N records this run, then exit cleanly; state is saved and "
-                             "the next invocation resumes. Valid for ledger, refm, ck, channel. "
-                             "Most useful for API-backed channels, where it validates a source "
-                             "against a few hundred real records without spending an hour of "
-                             "quota. 0 = unlimited (default: 50).")
-
-    parser.add_argument("--full",
-                        action="store_true",
-                        help="Mine the FULL repository (--all) instead of a pinned universe. "
-                             "Mutually exclusive with --universe; one of the two is REQUIRED for "
-                             "every stage that walks commits. See the warning printed when used.")
-
-    parser.add_argument("--platform",
-                        metavar="[git, github]",
-                        type=str,
-                        default=None,
-                        help="Trigger channel platform. Required for the 'channel' stage. "
-                             "git reads the local clone; github needs GITHUB_TOKEN in .env.")
-
-    parser.add_argument("--channel",
-                        metavar="[commits, issues, prs, ...]",
-                        type=str,
-                        default=None,
-                        help="Comma-separated channels to mine, e.g. --channel issues,prs. "
-                             "Required for the 'channel' stage. Each channel is mined into its "
-                             "own file with its own resumable state.")
-
-    parser.add_argument("--universe",
-                        metavar="[adapter_universe_<repo>.json]",
-                        type=str,
-                        default=None,
-                        help="Pin a commit walk to the study grid (head_sha + dangling snapshot "
-                             "commits) instead of --all. Valid for 'ledger', 'refm', and the git "
-                             "commit channel -- every miner that walks commits. Omit to mine the "
-                             "FULL repository, matching metadata. Mutually exclusive with --version.")
-
-    args = parser.parse_args()
-
-    # --- 0. ARGUMENT VALIDATION (FLAG MATRIX) ---
-    # Flags belong to the miner whose job they match. One miner per run, so each guard is a
-    # simple membership test -- no routing, no "all" exceptions.
-    #
-    #            --version  --batch  --universe  --sample
-    #   meta         ✓         ✗         ✗          ✗
-    #   ledger       ✓         ✓         ✓          ✗
-    #   refm         ✓         ✓         ✓          ✗
-    #   ck           ✓         ✓         ✗          ✓
-    #   report       ✗         ✗         ✗          ✗   (read-only)
-    def _reject(flag, allowed):
-        print(f"\n❌ CLI CONFLICT: '{flag}' is not valid for stage '{args.stage}'.")
-        print(f"   '{flag}' is only valid for: {', '.join(allowed)}.")
-        sys.exit(1)
-
-    # G1  --universe: ledger / refm only
-    if args.universe and args.stage not in ["ledger", "refm", "channel"]:
-        _reject("--universe", ["ledger", "refm", "channel (git platform)"])
-    # G2  --sample: ck only
-    if args.sample and args.stage != "ck":
-        _reject("--sample", ["ck"])
-    # G5  --batch: ledger / refm / ck (meta is a single --all pass; report reads)
-    if args.batch != 50 and args.stage not in ["ledger", "refm", "ck", "channel"]:
-        _reject("--batch", ["ledger", "refm", "ck", "channel"])
-    # --version: every miner, never report
-    if args.version and args.stage == "report":
-        _reject("--version", ["meta", "ledger", "refm", "ck"])
-
-    # --- every commit-walking stage must choose its universe explicitly ---
-    # ledger, refm and the git commit channel all walk commits, and all three must walk the
-    # SAME commits for their outputs to join. Leaving that implicit is how a run silently
-    # produces records that can never link, so neither option defaults.
-    COMMIT_WALKERS = ["ledger", "refm"]
-    walks_commits = args.stage in COMMIT_WALKERS or (
-        args.stage == "channel" and (args.platform or "").lower() == "git")
-
-    if args.universe and args.full:
-        print("\n❌ --universe and --full are mutually exclusive. Choose one.")
-        sys.exit(1)
-
-    if walks_commits and not args.universe and not args.full:
-        print(f"\n❌ '{args.stage}' walks commits, so it must be told WHICH commits.")
-        print(f"   --universe <file>  mine the pinned study grid (what every other miner used)")
-        print(f"   --full             mine the whole repository (--all)")
-        print(f"\n   There is no default: an unstated universe is how outputs silently stop")
-        print(f"   joining. Pass one.")
-        sys.exit(1)
-
-    if args.full and not walks_commits:
-        _reject("--full", ["ledger", "refm", "channel (git platform)"])
-
-    if args.full:
-        print("\n" + "=" * 74)
-        print("⚠️  FULL MODE -- READ THIS BEFORE RELYING ON THE OUTPUT")
-        print("=" * 74)
-        print("   The walk is --all: every commit this clone can reach, right now.")
-        print()
-        print("   THERE IS NO FREEZE. The clone is synced from origin on every run, so a run")
-        print("   today and a run tomorrow walk different histories. Nothing pins them.")
-        print()
-        print("   THE UNIVERSES WILL NOT ALIGN. Any miner run with --universe walked the pinned")
-        print("   grid. Records produced here that fall outside it cannot join those outputs --")
-        print("   they are not dropped with an error, they simply never match.")
-        print()
-        print("   FOR FORECASTING OR PREDICTION THIS IS UNSAFE. Downstream joins assume every")
-        print("   miner saw the same commits. Mixed universes inflate prevalence denominators")
-        print("   and silently lose events at the join, with no failure to alert you.")
-        print()
-        print("   Use --full only to verify against metadata (ledger == metadata) or to explore.")
-        print("   For anything the study depends on, use --universe.")
-        print("=" * 74)
-
-    # --- channel stage: platform and channel are required, and must be known ---
-    if args.stage == "channel":
-        if not args.platform:
-            print("\n❌ The 'channel' stage requires --platform "
-                  f"({', '.join(config.CHANNEL_PLATFORMS)}).")
-            sys.exit(1)
-        if not args.channel:
-            print(f"\n❌ The 'channel' stage requires --channel. Available for "
-                  f"'{args.platform}': {', '.join(config.CHANNEL_PLATFORMS.get(args.platform.lower(), []))}")
-            sys.exit(1)
-        known = config.CHANNEL_PLATFORMS.get(args.platform.lower())
-        if known is None:
-            print(f"\n❌ Unknown platform '{args.platform}'. "
-                  f"Available: {', '.join(config.CHANNEL_PLATFORMS)}")
-            sys.exit(1)
-        bad = [c.strip() for c in args.channel.split(",") if c.strip() and c.strip() not in known]
-        if bad:
-            print(f"\n❌ Unknown channel(s) for '{args.platform}': {', '.join(bad)}")
-            print(f"   Available: {', '.join(known)}")
-            sys.exit(1)
-        # --universe pins a set of COMMITS. Issues and comments are not commits, so the flag
-        # cannot bound them at mine time; the pinned universe constrains them at linkage instead.
-        if args.universe and args.platform.lower() != "git":
-            print(f"\n❌ --universe applies only to the git commit channel.")
-            print(f"   Issues, pull requests and comments are not commits, so a commit SHA")
-            print(f"   cannot bound them. The pinned universe still constrains them, but at")
-            print(f"   linkage: a record whose reference falls outside it never joins the ledger.")
-            sys.exit(1)
-    elif args.platform or args.channel:
-        _reject("--platform/--channel", ["channel"])
-
-    # G3  --version XOR --universe (both scope the ledger/refm walk)
-    if args.version and args.universe:
-        print("\n❌ CLI CONFLICT: --version and --universe are mutually exclusive.")
-        print("   --version pins the walk to ONE commit; --universe walks the grid. Pick one.")
-        sys.exit(1)
-    # G4  --version XOR --sample (single point vs multi-snapshot CK run)
-    if args.version and args.sample:
-        print("\n❌ CLI CONFLICT: --version and --sample are mutually exclusive.")
-        print("   --version mines ONE commit; --sample mines a set of snapshots. Pick one.")
-        sys.exit(1)
-
-    # existence pre-check for file-valued flags
-    from pathlib import Path as _P
-    def _find(fname):
-        p = _P(fname)
-        if p.parent != _P("."):
-            return p if p.exists() else None
-        for base in (config.GRID_PATH, config.OUTPUTS_PATH, config.VERSIONS_PATH):
-            if (base / p.name).exists():
-                return base / p.name
-        return None
-    if args.universe and _find(args.universe) is None:
-        print(f"\n❌ --universe file not found: {args.universe}")
-        print(f"   Looked in {config.GRID_PATH}, {config.OUTPUTS_PATH}.")
-        print(f"   Omit --universe to mine the full repository (--all).")
-        sys.exit(1)
-    if args.sample and _find(args.sample) is None:
-        print(f"\n❌ --sample file not found: {args.sample}")
-        print(f"   Looked in {config.VERSIONS_PATH}.")
-        sys.exit(1)
-
-
-    print("🚀 Starting Smell-Ranker Pipeline")
-    print(f"📂 Configuration Loaded. Workspace: {config.WORKSPACE_ROOT.name}")
-
-    # --- 1. TOOLCHAIN VERIFICATION ---
+def main() -> int:
     try:
-        print("\n--- 🛠️ Verifying Toolchain ---")
-        allocate_tools.provision()
-    # Catch specific errors for cleaner setup, fallback to crash on others
-    except (RuntimeError, OSError) as e:
-        print(f"❌ CRITICAL: Tool provisioning failed. Cannot proceed.\n   Error: {e}")
-        sys.exit(1)
+        plan = StageValidator().enforce(CliParser().parse())
+    except CliError as e:
+        e.report()
+        return 1
 
-    # --- 2. REPOSITORY ACQUISITION (FACADE) ---
+    plan.announce()
+
     try:
-        target_repo = RepositoryLoader.ensure_local_copy(args.repo, args.version)
-    # [FIX] Distinguish between User Errors (NotFound) and System Errors (Security/Git)
-    except FileNotFoundError as e:
-        print(f"\n❌ REPOSITORY ERROR:\n   {e}")
-        sys.exit(1)
-    except (ValueError, RuntimeError) as e:
-        print(f"\n❌ CRITICAL ERROR:\n   {e}")
-        sys.exit(1)
+        repo = Workspace.prepare(plan)
+    except WorkspaceError as e:
+        print(f"\n❌ {e}")
+        return 1
 
-    print(f"🎯 Target Repository: {target_repo.name}")
-    print(f"🎯 Target Stage: {args.stage.upper()}")
-    if args.stage in ["ledger", "refm", "ck", "channel"]:
-        print(f"🎯 Batch Limit: {'unlimited' if args.batch <= 0 else args.batch}")
-    if walks_commits:
-        print(f"🎯 Commit Universe: "
-              f"{'PINNED (' + args.universe + ')' if args.universe else 'FULL (--all) — NOT FROZEN'}")
-    if args.stage == "channel":
-        print(f"🎯 Channels: {args.platform} -> {args.channel}")
-    if args.version:
-        print("\n--- 🔖 Repo Revision (Trace) ---")
-        adapter_subprocess.run_command(["git", "describe", "--tags", "--always"], cwd=str(target_repo))
-        adapter_subprocess.run_command(["git", "rev-parse", "--short", "HEAD"], cwd=str(target_repo))
-
-    # --- 3. Initial Setup (Phase 0) ---
-    # if args.stage not in ["heuristics"]:
-    print("\n--- Step 1: Repository Verification ---")
-
-    # Fetch AND fast-forward the local branch onto origin. The previous version here ran
-    # `git fetch --all --tags` then `git checkout -f <branch>`, which looks correct and is not:
-    # fetch moves refs/remotes/origin/*, never refs/heads/*, so the checkout landed on a LOCAL
-    # branch that could be months behind. The objects were present but HEAD pointed into the
-    # past, and every adapter walking HEAD mined a truncated history without erroring.
-    default_branch = RepositoryLoader.sync_to_remote(target_repo, pinned_version=args.version)
-
-    if args.version:
-        # Force checkout the specific version/tag to ensure the workspace matches the study target
-        adapter_subprocess.run_command(["git", "checkout", "-f", args.version], cwd=str(target_repo))
-
-    # NOTE: the old Phase-0 "Repository Mining" baseline was removed here. It re-walked the
-    # entire git history on every run to print a summary -- a second, redundant mine on top of
-    # the metadata/ledger adapters. The universe summary is now a READ-ONLY post-mining stage
-    # ("report", see below and --stage report) that reads what the adapters produced.
-
-    # --- 4. Command Configuration ---
-    commands: List[IPipelineCommand] = []
-
-    # [NEW] Handle Sampling Logic
-    sampled_shas = None
-    if args.sample:
-        print(f"🎯 Sampling Mode: ON (Reading target tags from {args.sample})")
-        try:
-            sampler = Sampler(target_repo, args.sample)
-            sampled_shas = sampler.get_priority_shas()
-        except Exception as e:
-            print(e)
-            sys.exit(1)
-
-    # Phase 0: Metadata Mining (Git Lineage)
-    # Required for: 'history' (visualizing lineage)
-    if args.stage == "meta":
-        commands.append(RunToolCommand(MetadataAdapter(target_repo)))
-
-    # Universe Report (read-only). Its own stage, run after mining.
-    run_report_stage = args.stage == "report"
-
-    # Mining stage: one of refm / ck / ledger, or the channel stage (which may return several
-    # adapters, one per requested channel).
-    if args.stage in ["refm", "ck", "ledger", "channel"]:
-        mining_adapters = ToolFactory.create_adapters(args.stage, target_repo, args.batch,
-                                                      universe_path=args.universe,
-                                                      platform=args.platform,
-                                                      channels=args.channel)
-
-        for adapter in mining_adapters:
-            # [CLEAN] Polymorphic call.
-            # If the adapter supports it, it configures itself.
-            # If not, it safely ignores the call.
-            if sampled_shas:
-                adapter.set_sampling_filter(sampled_shas)
-            commands.append(RunToolCommand(adapter))
-
-    # Phase 4: Heuristic Analysis
-    # if args.stage in ["heuristics", "all"]:
-    #     # Use Public API for encapsulation
-    #     available_strategies = set(HeuristicFactory.get_available_strategies())
-    #
-    #     # Map User Input -> Factory Names
-    #     strategy_map = {
-    #         "A": ["Complexity"],
-    #         "B": ["AST_Proximity"],
-    #         "C": ["Criticality"],
-    #         "all": ["Complexity", "AST_Proximity", "Criticality"]
-    #     }
-    #
-    #     requested = strategy_map.get(args.heuristic, [])
-    #     valid_strategies = [s for s in requested if s in available_strategies]
-    #
-    #     if valid_strategies:
-    #         print(f"\n--- 🧠 Phase 4: Heuristic Correlation (Strategies: {valid_strategies}) ---")
-    #         commands.append(RunHeuristicsCommand(target_repo.name, strategies=valid_strategies))
-    #
-    #     elif args.stage == "heuristics":
-    #         # Fail Fast if user explicitly asked for heuristics but none exist
-    #         print(f"❌ Fatal: No valid strategies found for request '{args.heuristic}'.")
-    #         sys.exit(1)
-
-    # --- 5. Execution Loop (Circuit Breaker Pattern) ---
-    execution_results = {}
-    pipeline_healthy = True
-
-    for command in commands:
-        tool_name = command.get_tool_name()
-
-        # Dependency Guard: The Heuristic Engine is a CONSUMER.
-        # It must fail if the upstream pipeline is unhealthy.
-        # if isinstance(command, RunHeuristicsCommand):
-        #     if not pipeline_healthy:
-        #         print(f"\n⛔ Skipping {tool_name} due to upstream mining failures.")
-        #         execution_results[tool_name] = False
-        #         continue  # Skips to execute() call below
-
-        # Execute the tool
-        success = command.execute()
-        execution_results[tool_name] = success
-
-        if not success:
-            print(f"⚠️ {tool_name} failed or was interrupted. Marking pipeline as UNHEALTHY.")
-            pipeline_healthy = False
-            # [CRITICAL]: We DO NOT exit here -- an adapter may run multiple commands
-            # and we let independent ones save state before the run exits with error.
-
-    # --- 6. Finalization ---
-    # We exit with error if ANY tool failed, ensuring CI/CD knows this run was partial.
-    if not pipeline_healthy:
-        print("\n❌ Pipeline completed with errors. Ground Truth was NOT generated.")
-        print("Execution Summary:", execution_results)
-        sys.exit(1)
-
-    # Only run Metrics if the pipeline was completely healthy
-    print("\n--- 🏁 Pipeline Completion Report ---\n")
-
-    if run_report_stage:
-        try:
-            ReportMetrics(target_repo).run_report()
-        except Exception as e:
-            print(f"⚠️ Universe Report Error: {e}")
-
-    if args.stage == "refm":
-        try:
-            RefmMetrics(target_repo).run_report()
-        except Exception as e:
-            print(f"⚠️ Metrics Calc Error (RefM): {e}")
-
-    # [FIX] Removed unreachable 'if all()' check.
-    # Since we passed the 'if not pipeline_healthy' check above, success is guaranteed.
-    print("\n✅ SUCCESS: Pipeline finished successfully.")
+    commands = PipelineFactory.create_commands(plan, repo)
+    return PipelineRunner(commands).run()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,10 +1,15 @@
 from abc import abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterator, Optional
 
 from pipeline.platforms.github_client import GitHubClient, GitHubRateLimited
 from pipeline.channels.i_sources import IChannelSource, RateLimitExhausted, blank_record
+
+
+def _iso(epoch: int) -> str:
+    """Epoch seconds -> the RFC 3339 form GitHub's `since` parameter expects."""
+    return datetime.fromtimestamp(int(epoch), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _epoch(iso: Optional[str]) -> Optional[int]:
@@ -54,6 +59,10 @@ class _GitHubSource(IChannelSource):
         records were never persisted, silently skipped on resume.
     """
 
+    # Whether the endpoint accepts a `since` filter. Only endpoints that do can be walked past
+    # a pagination cap; /pulls does not offer one.
+    SUPPORTS_SINCE = False
+
     def __init__(self, repo_path: Path, client: Optional[GitHubClient] = None):
         self.repo_path = Path(repo_path)
         self.client = client or GitHubClient(self.repo_path)
@@ -87,20 +96,82 @@ class _GitHubSource(IChannelSource):
         return None
 
     def fetch(self, state=None) -> Iterator[Dict]:
-        start = state.next_page() if state is not None else 1
-        try:
-            for page, items in self.client.paginate(self.endpoint, self.params, start_page=start):
-                for item in items:
-                    rec = self.to_record(item)
-                    if rec is not None:
+        """
+        Walk the endpoint, continuing past a pagination cap where the endpoint allows it.
+
+        WHY A SINGLE WALK IS NOT ENOUGH
+
+            Endpoints stop paginating in different ways, and one of them is silent.
+            /issues refuses page 101 with HTTP 422 -- loud, and solved by following the Link
+            header's cursor. /issues/comments simply stops offering rel="next" at 30,000 items
+            and returns as though the collection ended. On checkstyle that truncated the channel
+            at 2020 while the repository was active into 2026, with no error raised.
+
+            Where the endpoint accepts a `since` filter, the walk is therefore restarted with
+            `since` set to the newest record already seen, and repeated until a window produces
+            nothing newer. Each window is a fresh query, so its own pagination limit resets.
+
+        WHY `since` CANNOT MISS A RECORD
+
+            `since` filters on UPDATE time while the walk is ordered by CREATION time. A record
+            created after the window boundary must have been updated at or after its creation,
+            so it is always returned. The reverse -- an old record edited recently -- is also
+            returned, and is discarded as already processed. Overlap is wasteful, never lossy.
+        """
+        seen_max = self._since_epoch(state)
+
+        while True:
+            start_page = state.next_page() if state is not None else 1
+            start_url = state.next_url() if state is not None else None
+            params = dict(self.params)
+            if seen_max and self.SUPPORTS_SINCE:
+                params["since"] = _iso(seen_max)
+
+            window_max = seen_max
+            produced = False
+
+            try:
+                for page, items, next_url in self.client.paginate(
+                        self.endpoint, params, start_page=start_page, start_url=start_url):
+                    for item in items:
+                        rec = self.to_record(item)
+                        if rec is None:
+                            continue
+                        produced = True
+                        ts = rec.get("timestamp")
+                        if ts and (window_max is None or ts > window_max):
+                            window_max = ts
                         yield rec
-                if state is not None:
-                    state.mark_page_done(page)
-        except GitHubRateLimited as e:
-            # Transport exhaustion becomes the contract's exception here. The client stays free
-            # of any dependency on the channel contract, and the adapter catches one exception
-            # whichever platform raised it.
-            raise RateLimitExhausted(e.reset_epoch) from None
+                    # Recorded only after every record on the page has been yielded, so a page
+                    # can never be marked done before its contents are persisted.
+                    if state is not None:
+                        state.mark_page_done(page, next_url=next_url)
+            except GitHubRateLimited as e:
+                # Transport exhaustion becomes the contract's exception here. The client stays
+                # free of any dependency on the channel contract, and the adapter catches one
+                # exception whichever platform raised it.
+                raise RateLimitExhausted(e.reset_epoch) from None
+
+            if not self.SUPPORTS_SINCE:
+                return
+            # Terminate when a window yields nothing, or nothing NEWER than the last. The second
+            # condition is what guarantees progress: without it, a window returning only
+            # already-seen records would loop forever.
+            if not produced or window_max is None or window_max == seen_max:
+                return
+
+            seen_max = window_max
+            if state is not None:
+                state.advance_window(_iso(seen_max))
+            print(f"\n   ↻ endpoint stopped paginating; continuing from "
+                  f"{_iso(seen_max)[:10]}")
+
+    @staticmethod
+    def _since_epoch(state) -> Optional[int]:
+        """The window a resumed run is already inside, as epoch seconds."""
+        if state is None:
+            return None
+        return _epoch(state.window_since())
 
 
 class GitHubIssueSource(_GitHubSource):
@@ -119,6 +190,8 @@ class GitHubIssueSource(_GitHubSource):
     message refers to the number. Using anything else would break the join the channel exists
     to support.
     """
+
+    SUPPORTS_SINCE = True   # /issues accepts since
 
     @property
     def endpoint(self) -> str:
@@ -160,6 +233,8 @@ class GitHubPullRequestSource(_GitHubSource):
         nothing; `merged_at` distinguishes the two, so both are recorded and the decision is
         left downstream.
     """
+
+    SUPPORTS_SINCE = False   # /pulls offers no since parameter
 
     @property
     def endpoint(self) -> str:
@@ -206,6 +281,8 @@ class GitHubReviewCommentSource(_GitHubSource):
     without re-mining. `file_path` is stored; the filter is applied downstream for free.
     """
 
+    SUPPORTS_SINCE = True   # /pulls/comments accepts since
+
     @property
     def endpoint(self) -> str:
         return "pulls/comments"
@@ -251,6 +328,8 @@ class GitHubIssueCommentSource(_GitHubSource):
     NO STATE FILTER EXISTS for comments, so comments on open issues arrive too. They are dropped
     at linkage, when their parent turns out not to be among the mined (closed) items.
     """
+
+    SUPPORTS_SINCE = True   # /issues/comments accepts since
 
     @property
     def endpoint(self) -> str:

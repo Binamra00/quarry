@@ -79,6 +79,8 @@ class ChannelStateManager:
             "channel": self.channel,
             "processed_ids": [],
             "last_page_done": 0,       # 0 = nothing fetched yet; pages are 1-indexed
+            "next_url": None,          # exact resume point, cursor included (see next_page)
+            "window_since": None,      # ISO 8601; set when a walk is continued past a cap
             "is_complete": False,
             "rate_limit_reset": None,  # epoch seconds; set when quota is exhausted
             "records_written": 0,
@@ -104,20 +106,57 @@ class ChannelStateManager:
         """The page to request next. 1 on a fresh run."""
         return int(self.state.get("last_page_done", 0)) + 1
 
-    def mark_page_done(self, page: int, flush: bool = True) -> None:
+    def next_url(self) -> Optional[str]:
         """
-        Record a page as fully processed. Flushed by default: a page is a meaningful unit of
-        work, and losing one to an unflushed crash costs an API request that need not be spent
-        twice.
+        The exact URL to resume from, or None to start from next_page().
+
+        Preferred over a page number wherever it exists, because it carries the platform's own
+        cursor. Some endpoints cap offset pagination -- GitHub's /issues refuses anything past
+        the 10,000th item -- so beyond that depth a page number cannot express where to resume
+        and only the cursor can.
+        """
+        return self.state.get("next_url")
+
+    def mark_page_done(self, page: int, next_url: Optional[str] = None,
+                       flush: bool = True) -> None:
+        """
+        Record a page as fully processed, along with where to continue.
+
+        Flushed by default: a page is a meaningful unit of work, and losing one to an unflushed
+        crash costs an API request that need not be spent twice.
         """
         self.state["last_page_done"] = max(int(self.state.get("last_page_done", 0)), int(page))
+        self.state["next_url"] = next_url
         if flush:
             self.flush()
+
+    def window_since(self) -> Optional[str]:
+        """
+        The `since` value the current walk is filtered by, or None for the first window.
+
+        Some endpoints stop paginating well before the collection ends -- GitHub's
+        /issues/comments simply stops offering rel="next" at 30,000 items. Continuing past that
+        means restarting the walk filtered to records newer than the newest one already seen.
+        This records which window is in progress so a resumed run does not start from the
+        beginning of time.
+        """
+        return self.state.get("window_since")
+
+    def advance_window(self, since: str) -> None:
+        """
+        Begin a new time window. Page position resets, because the new walk is a new query.
+        """
+        self.state["window_since"] = since
+        self.state["last_page_done"] = 0
+        self.state["next_url"] = None
+        self.flush()
 
     def mark_complete(self) -> None:
         """The remote collection was paginated to its end."""
         self.state["is_complete"] = True
         self.state["rate_limit_reset"] = None
+        self.state["next_url"] = None
+        self.state["window_since"] = None
         self.flush()
 
     @property
@@ -162,26 +201,61 @@ class ChannelStateManager:
 
     # ------------------------------------------------------------------ persistence
 
+    # Windows denies a rename while ANY process holds the destination open -- an antivirus
+    # scanner or search indexer opening the file microseconds after it is written is enough.
+    # The lock is transient, so a short retry succeeds where a single attempt fails.
+    RENAME_ATTEMPTS = 5
+    RENAME_BACKOFF = 0.15
+
     def flush(self) -> bool:
         """
         Atomic write: build a temp file, then rename over the target. A crash before the rename
         leaves the previous state intact; a crash after leaves the new one. There is no window
         in which the file is half written.
+
+        On Windows the rename can fail with PermissionError (WinError 5) even though nothing is
+        wrong with the data: os.replace is atomic on POSIX, but Windows refuses it while another
+        process has the destination file open, and background scanners routinely do. Retrying
+        briefly clears it. Failing here does not lose mined records -- those are already in the
+        JSONL -- but it does lose the record of how far pagination got, which costs API quota on
+        the next run.
         """
         temp_path = self.state_file.with_suffix(".tmp")
         try:
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(self.state, f, indent=2)
-            os.replace(temp_path, self.state_file)
-            return True
         except Exception as e:
-            print(f"   ⚠️  Failed to save channel state: {e}")
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except OSError as cleanup_err:
-                    print(f"      (could not remove temp file {temp_path.name}: {cleanup_err})")
+            print(f"   ⚠️  Could not write channel state: {e}")
+            self._remove_temp(temp_path)
             return False
+
+        last_err = None
+        for attempt in range(self.RENAME_ATTEMPTS):
+            try:
+                os.replace(temp_path, self.state_file)
+                return True
+            except PermissionError as e:          # Windows: destination held open elsewhere
+                last_err = e
+                time.sleep(self.RENAME_BACKOFF * (attempt + 1))
+            except OSError as e:
+                last_err = e
+                break
+
+        print(f"   ⚠️  Could not save channel state after {self.RENAME_ATTEMPTS} attempts: "
+              f"{last_err}")
+        print(f"      Mined records are safe in the JSONL; only pagination progress was lost, "
+              f"which costs quota on the next run.")
+        self._remove_temp(temp_path)
+        return False
+
+    @staticmethod
+    def _remove_temp(temp_path: Path) -> None:
+        """Best-effort cleanup. A leftover .tmp is harmless; failing to remove it is not fatal."""
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ reporting
 
@@ -196,7 +270,10 @@ class ChannelStateManager:
         page = self.state.get("last_page_done", 0)
         n = len(self.processed_ids)
         if page:
-            return (f"{self.platform}/{self.channel} resuming from page {page + 1}; "
+            via = "cursor" if self.state.get("next_url") else f"page {page + 1}"
+            win = self.state.get("window_since")
+            window = f" (window from {win[:10]})" if win else ""
+            return (f"{self.platform}/{self.channel} resuming from {via}{window}; "
                     f"{n} records so far")
         if n:
             # A source that does not paginate leaves last_page_done at 0, so records already

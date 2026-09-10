@@ -91,18 +91,31 @@ class Sampler:
         return list(self.entries)
 
     # ------------------------------------------------------------------
-    def _verify_commit(self, sha: str) -> bool:
-        """True iff sha resolves to a commit object in the target repo."""
-        r = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-                           cwd=str(self.target_repo), capture_output=True)
-        return r.returncode == 0
+    def _resolve_commit(self, sha: str) -> str:
+        """The commit `sha` denotes, or "" if it does not resolve.
+
+        `^{commit}` peels, so an annotated tag OBJECT sha passes a yes/no check
+        and is then kept unchanged. Consumers intersect it with `git rev-list`
+        output, which is commit SHAs, so it matches nothing and the snapshot is
+        dropped with no checkout, no error record and no log line. Returning the
+        peeled sha means what leaves this class is always a commit.
+        """
+        r = subprocess.run(["git", "rev-parse", f"{sha}^{{commit}}"],
+                           cwd=str(self.target_repo), capture_output=True, text=True)
+        out = r.stdout.strip()
+        return out if r.returncode == 0 and len(out) == 40 else ""
 
     def _shas_from_manifest(self) -> Set[str]:
         sampled, missing = set(), []
+        peeled = 0
         for e in self.entries:
-            if self._verify_commit(e["sha"]):
-                sampled.add(e["sha"])
-                self.sha_to_tag[e["sha"]] = e["tag"]
+            raw = e.get("snapshot_sha") or e.get("sha")
+            commit = self._resolve_commit(raw)
+            if commit:
+                peeled += (commit != raw)
+                e["sha"] = commit
+                sampled.add(commit)
+                self.sha_to_tag.setdefault(commit, e["tag"])
             else:
                 missing.append(e["tag"])
         if missing:
@@ -113,6 +126,11 @@ class Sampler:
                 f"(e.g. {missing[:3]}). Re-clone full history or regenerate the manifest.")
         print(f"   ✅ {len(sampled)} snapshot SHAs loaded directly from manifest "
               f"({self.entries[0]['tag']} → {self.entries[-1]['tag']}); all verified in repo.")
+        if peeled:
+            print(f"   🔁 Peeled {peeled} tag object(s) to their commit SHA.")
+        if len(sampled) < len(self.entries):
+            print(f"   ⚠️  {len(self.entries) - len(sampled)} entries share a commit with "
+                  f"another; {len(sampled)} distinct snapshots.")
         return sampled
 
     # ------------------------------------------------------------------
