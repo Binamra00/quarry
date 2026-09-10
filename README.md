@@ -1,246 +1,401 @@
-# Smell-Ranker: Automated Software Repository Mining Engine
+# Quarry
 
-**Project:** Automated Code Smell and Refactoring Extraction Pipeline  
-**Version:** 1.0.0 (Core Mining Engine)  
-**Status:** Stable / Data Acquisition Phase
+**A release-level mining pipeline for refactoring trigger analysis.**
 
----
+Version 0.1.0 · Python 3.9+ · Windows, Linux, macOS
 
-## 1. System Overview
+Quarry reconstructs what happened to a Java codebase between releases: which commits changed
+it, which refactorings were applied, what its structure looked like at each release, and what
+developers were saying in the issues, pull requests and reviews around those changes. It
+produces one linked corpus from five separate evidence streams so that questions about *what
+triggers a refactoring* can be asked empirically.
 
-**Smell-Ranker** is an automated, resilient pipeline designed to systematically mine software repositories. It reconstructs the historical evolution of a codebase by extracting objective developer actions (refactorings) and evaluating structural decay (code smells) across the entire Git lineage. 
-
-By automating the orchestration of advanced static analysis tools and version control graph traversal, Smell-Ranker generates the high-fidelity, unified event streams required for downstream machine learning and predictive software engineering research.
-
-### Key Features
-
-#### ⏳ Time-Travel Static Analysis
-Unlike traditional tools that only evaluate the *current* state of a repository, Smell-Ranker physically checks out historical commits to snapshot code quality metrics over time, creating a complete evolutionary timeline of architectural technical debt.
-
-#### 📡 Streaming Event Architecture
-Scans Git object history and streams detected refactorings and code smells directly to unified append-only logs (`.jsonl`). This prevents the inode exhaustion and memory bloating commonly associated with analyzing large, multi-year repositories.
-
-#### 🛡️ Resilience & Self-Healing
-- **Lazarus Protocol:** Automatically tracks execution state commit-by-commit. If a batch job crashes or the host reboots, the pipeline detects the interrupted state, archives corrupt files, and seamlessly resumes from the last valid commit.
-- **Poison Pill Defense:** Automatically identifies and quarantines corrupt Git commits or malformed ASTs to prevent infinite retry loops or hanging subprocesses.
+It is mining infrastructure. It does not rank, score, or predict anything — those are
+downstream analyses that consume its output.
 
 ---
 
-## 2. File Structure & Organization
+## 1. Quick start
 
-### A. Source Code (`smell-ranker/`)
+```bash
+git clone https://github.com/Binamra00/quarry.git
+cd quarry
 
-This is the source of truth for all code, strictly adhering to object-oriented design patterns and separation of concerns.
+python -m venv venv
+venv\Scripts\activate          # Windows
+source venv/bin/activate       # Linux / macOS
 
-```text
-smell-ranker/
-├── tests/ # Testing Harness (Pytest Pyramid)
-│   ├── conftest.py # Global Fixtures (Mocked Config)
-│   ├── unit/ # Layer 1: Logic Verification (BVA)
-│   │   ├── batch_state_test.py
-│   │   └── metrics_test.py
-│   └── integration/ # Layer 2: Mocked Toolchain
-│       └── adapters_test.py
-│    
-├── pipeline/ # The main Python Application Package
-│   ├── adapters/ # Tool Adapters Package (Adapter Pattern)
-│   │   ├── init.py # Exposes adapters to the main pipeline
-│   │   ├── i_adapter.py # Interface for all adapters  
-│   │   ├── refm_adapt.py # Wrapper for RefactoringMiner CLI logic
-│   │   ├── pmd_adapt.py # Standard PMD Adapter (Snapshot)
-│   │   ├── pmd_history_adapt.py # Stateful Adapter for Time-Travel Analysis
-│   │   └── metadata_adapt.py # Adapter for extracting Git lineage
-│   │
-│   ├── bin/ # Executable Shell Scripts (Entry Points)
-│   │   └── exec_pipeline.sh # MASTER SCRIPT: Single command to run the experiment
-│   │
-│   ├── commands/ # CLI Command Templates for adapters (Command Pattern)
-│   │   ├── init.py # Exposes command templates to adapters
-│   │   ├── i_commands.py # Interface for all command templates 
-│   │   └── adapter_cmd.py # CLI commands for external tools like refm and pmd
-│   │
-│   ├── factories/ # Factory classes to create adapter instances (Factory Pattern)
-│   │   ├── init.py # Exposes factories to the main pipeline
-│   │   └── adapter_fact.py # Factory to create adapters based on tool name
-│   │
-│   ├── metrics/ # Metrics classes to generate analysis from adapters output
-│   │   ├── init.py # Exposes metrics to the main pipeline
-│   │   ├── refm_mets.py # Metrics to analyze refm output (Purity, Signal)
-│   │   ├── repo_mets.py # Base metrics for all repos (Churn, Bus Factor)
-│   │   ├── pmd_mets.py # Metrics to analyze PMD output (Density, Hotspots)
-│   │   └── temp_mets.py # Template Method pattern for reporting lifecycle
-│   │
-│   ├── rulesets/
-│   │   └── pmd_rules_00.xml # PMD Ruleset Configuration
-│   │ 
-│   ├── utils/ # Python Utility Package
-│   │   ├── init.py # Exposes utilities to the app
-│   │   ├── adapter_subprocess.py # Subprocess for running shell commands safely
-│   │   ├── ui_strategy.py # Universal Console output formatting (Strategy Pattern)
-│   │   ├── batch_state.py # Stateful Manager for resumable batch processing
-│   │   └── allocate_tools.py # Auto-provisions external tools (PMD/RefM)
-│   │
-│   ├── main.py # FACADE: Main Python entry point
-│   └── config.py # CONFIG: Dynamic path resolution and settings
-│ 
-├── .env
-├── .gitignore
-├── requirements.txt
-└── README.md
+python -m pip install -e .
+quarry --help
 ```
-## 3. The Execution Pipeline
 
-The pipeline consists of four sequential data-acquisition phases:
+Then mine a small project end to end:
 
-| Phase | Component | Responsibility | Output |
-| :--- | :--- | :--- | :--- |
-| **0** | **Metadata Miner** | Extracts Git Lineage (Parent-Child Graph). | `commit_lineage.jsonl` |
-| **1** | **RefactoringMiner** | Extracts historical refactoring operations. | `refactorings.jsonl` |
-| **2** | **PMD History** | "Time Travels" to commits to snapshot code quality. | `pmd_history.jsonl` |
-| **3** | **Metrics Engine** | Aggregates raw data into density/purity metrics. | `repo_metrics.json` |
+```bash
+quarry --repo https://github.com/danilofes/refactoring-toy-example.git --stage meta
+quarry --repo <folder-it-cloned-into> --stage refm   --full
+quarry --repo <folder-it-cloned-into> --stage ck
+quarry --repo <folder-it-cloned-into> --stage report
+```
 
-The `main.py` facade coordinates the analysis modules sequentially:
-
-### Phase 0: Metadata & Verification
-- **Lineage Mining:** `MetadataAdapter` extracts the full Git commit graph (`commit_lineage.jsonl`) to map the evolutionary topology of the repository.
-- **Baseline Metrics:** `repo_mets.py` calculates global denominators (Total Commits, Age, Churn) to normalize downstream scores.
-- **Dynamic Branch Detection:** Automatically identifies `main` vs. `master` to force the repository into a consistent state before mining.
-
-### Phase 1: History Mining (RefactoringMiner)
-- **Scanning:** `RefactoringMinerAdapter` scans the full Git object history to identify architectural changes and developer refactoring intents without requiring physical file checkouts.
-- **Resilience:** Uses Explicit File I/O and JSONL streaming to separate data streams from control logs, preventing parser corruption.
-
-### Phase 2: Stateful Candidate Generation (PMD)
-- **Time-Travel Strategy:** `PMDHistoryAdapter` physically checks out target commits in history to execute headless static analysis evaluations.
-- **Atomic JSONL Streaming:** Results are streamed to a unified `.jsonl` log rather than fragmented XML files.
-- **Crash Recovery:** The `BatchStateManager` persists progress atomically, allowing the execution pipeline to resume exactly where it left off in the event of an interruption.
-
-### Phase 3: Metrics Aggregation
-- **Consolidation:** `pmd_mets.py` and `refm_mets.py` read the raw event streams to calculate high-level structural indicators like "Smell Density" and "Refactoring Purity".
-- **Normalization:** Converts raw pipeline counts into standardized, comparable metrics (e.g., Smells per KLOC) for cross-project evaluation.
-
----
-
-## 4. Key Data Artifacts
-
-All results are routed to the dynamically configured `workspace_data/outputs` directory.
-
-### 📂 Generated Artifacts
-
-| Artifact | Format | Description |
-|--------|--------|-------------|
-| **`commit_lineage_[repo].jsonl`** | **JSONL** | Git Commit Graph (Parent-Child relationships). |
-| `repo_metrics_[repo].json` | JSON | Project metadata (Age, Churn, Languages). |
-| `refactorings_[repo].jsonl` | JSONL | Stream of all refactoring operations detected in history. |
-| `pmd_history_[repo].jsonl` | JSONL | Unified Event Stream containing structural rule violations. |
-| `pmd_metrics_[repo].json` | JSON | Aggregated density and structural hotspot analysis. |
-| `batch_status_[tool]_[repo].json` | JSON | State File. Tracks the last successfully processed commit index for the "Lazarus" resume capability. |
-| `*_execution_[repo].log` | Text | Diagnostic Log. Records critical failures (checkouts, crashes, timeouts). |
-
----
-
-## 5. Local Installation & Usage (Windows / Linux / macOS)
-
-The system is strictly OS-Agnostic and automatically detects Windows (`.bat`) vs Unix (`.sh`) tool binaries.
+If `quarry` is not found after installing, see [Troubleshooting](#11-troubleshooting) — it is
+almost always a PATH issue and there is an invocation that always works.
 
 ### Prerequisites
-- **Python 3.10+**
-- **Java 21** (Required for PMD 7.x). Verify with `java -version`.
-- **Git** installed and accessible in the system `PATH`.
 
-### 1. Clone the Repository
+| | |
+| :--- | :--- |
+| **Python** | 3.9 or newer |
+| **Java** | 17 or newer. RefactoringMiner 3.x and CK both run on the JVM. Verify with `java -version`. |
+| **Git** | on `PATH`. Quarry shells out to the `git` CLI for history walking and checkouts. |
+| **GitHub token** | only for the `github` channels. Put `GITHUB_TOKEN` in `.env`. |
+
+Analysis tools are downloaded on first use into `workspace_data/tools/`; you do not install
+them yourself.
+
+---
+
+## 2. How to use it
+
+Five decisions, in order. Only the first two are always needed.
+
+| | decision | flag |
+| :--- | :--- | :--- |
+| 1 | which repository | `--repo <folder-name \| github-url>` |
+| 2 | which miner | `--stage meta\|ledger\|refm\|ck\|channel\|report` |
+| 3 | which scope | `--full` · `--universe FILE` · `--version TAG` · `--sample FILE` |
+| 4 | *(channel only)* which platform | `--platform git\|github` |
+| 5 | *(channel only)* which channels | `--channel commits\|issues,prs\|all` |
+
+**One miner per run.** There is no `all` stage. Each miner writes its own output and keeps its
+own progress, so they run one at a time and, after `meta`, in any order.
+
+**Every miner resumes.** Re-run the identical command and it continues where it stopped —
+after an interrupt, a crash, or an exhausted API quota. Nothing is mined twice.
+
+`quarry --help` prints the full flag matrix, the available channels, and worked examples. That
+help text is generated from the same table the validator enforces, so it cannot describe a
+combination the tool would reject.
+
+---
+
+## 3. The stages
+
+| stage | what it does | run it |
+| :--- | :--- | :--- |
+| `meta` | Git lineage and repository metadata. Establishes the commit universe everything else joins on. | first |
+| `ledger` | Per-commit evolutionary features: churn, authorship, co-change. | after `meta` |
+| `refm` | RefactoringMiner — refactoring operations per commit. Emits its own completion report. | after `meta` |
+| `ck` | CK structural metrics at each snapshot. The heaviest miner by far; pair with `--sample`. | after `meta` |
+| `channel` | Trigger channels — commits, issues, pull requests, review comments, issue comments. | any time |
+| `report` | Read-only summary of what the miners produced. Mines nothing. | last |
+
+### Scope, and why it is not optional
+
+`ledger`, `refm` and the git commit channel walk git history, so they **must** be told which
+commits. There is no default:
+
+- `--universe adapter_universe_<repo>.json` — the pinned study grid. **Use this for anything
+  a study depends on.** It is the only way to guarantee every miner walked the same commits.
+- `--full` — every commit reachable in the clone. Not frozen: two runs on different days walk
+  different histories, and the output will not join a pinned run. Verification and exploration
+  only; the tool prints a warning.
+
+An unstated universe is how outputs silently stop joining — the run succeeds, the records look
+fine, and they simply never match. Hence the hard requirement rather than a default.
+
+`ck` is scoped differently, by `--sample rel_hist_<repo>.json`, because it measures snapshots
+rather than walking commits.
+
+---
+
+## 4. Trigger channels
+
+A channel is one source of developer discourse. Each is mined into its own file with its own
+resumable state, so one failing leaves the others intact.
+
+| platform | channels | needs |
+| :--- | :--- | :--- |
+| `git` | `commits` | nothing — reads the local clone |
+| `github` | `issues`, `prs`, `pr_reviews`, `comments` | `GITHUB_TOKEN` in `.env` |
+
 ```bash
-git clone [https://github.com/Binamra00/smell-ranker.git](https://github.com/Binamra00/smell-ranker.git)
-cd smell-ranker
+quarry --repo checkstyle --stage channel --platform github --channel issues,prs
+quarry --repo checkstyle --stage channel --platform github --channel all --batch 200
+quarry --repo checkstyle --stage channel --platform git --channel commits \
+       --universe adapter_universe_checkstyle.json
 ```
 
-### 2. Setup Python Environment
-```bash
-# 1. Create the venv
-python -m venv venv
+**Only closed issues and pull requests are mined.** An open issue has no resolving commit, so
+it cannot reach a file and would be discarded at linkage anyway.
 
-# 2. Allow script execution (Windows only, if blocked)
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+`--universe` applies only to the git channel. Issues and comments are not commits, so a commit
+SHA cannot bound them; the pinned universe still constrains them, but at **linkage** — a record
+whose reference falls outside it never joins the ledger.
 
-# 3. Activate:
-source venv/bin/activate  # Linux/Mac
-.\venv\Scripts\activate   # Windows
+### Two API failure modes worth knowing about
 
-# 4. Install dependencies
-pip install -r requirements.txt
+Both are handled, and neither is obvious:
+
+- `/issues` refuses offset pagination past the 10,000th item with HTTP 422. Quarry follows the
+  `Link` header's cursor rather than constructing `page=N`, which bypasses the cap.
+- `/issues/comments` **silently** stops offering `rel="next"` at 30,000 items and returns as
+  though the collection ended. On one project that truncated the channel at 2020 while the
+  repository was active into 2026, with no error raised. Quarry detects the stall and restarts
+  the walk with `since` set to the newest record already seen, repeating until a window
+  produces nothing newer.
+
+Listings are always requested `sort=created&direction=asc`. Sorting by update time would
+reorder items whenever anything is edited, so a resumed run could skip records it never saw.
+Page-based resumption is only sound under ascending creation order.
+
+---
+
+## 5. Output
+
+Everything lands in `workspace_data/outputs/`, except grid artifacts, which live in
+`workspace_data/versions/`.
+
+| artifact | format | contents |
+| :--- | :--- | :--- |
+| `ck_metrics_<repo>.jsonl` | JSONL | One record per snapshot: status, timestamp, class and method counts, nested CK metrics. |
+| `channel_<platform>_<channel>_<repo>.jsonl` | JSONL | One record per mined channel item, in a unified shape across platforms. |
+| `channel_status_<platform>_<channel>_<repo>.json` | JSON | Pagination cursor, time window, quota reset. Channels only — see §6. |
+| `adapter_universe_<repo>.json` | JSON | The pinned commit universe. Produced by the release-tag mining notebook, **not** by any stage. |
+| `rel_hist_<repo>.json` | JSON | The frozen snapshot grid: the study's observation points. |
+| `<repo>_release_manifest.json` | JSON | Admission thresholds, rejected tags, SHA aliases, grid rule. |
+| `*_execution_<repo>.log` | text | Per-run diagnostics: failures, timeouts, empty outputs, checkout errors. |
+
+`quarry --repo <name> --stage report` reads these back and summarises what is present.
+
+### CK records a status for every snapshot
+
+A snapshot that crashed, timed out, produced no CSV, or could not be checked out still gets a
+record. That is what makes a partial grid visible instead of silently short:
+
+| status | meaning | re-mined? |
+| :--- | :--- | :--- |
+| `success` | classes and methods parsed | no |
+| `empty_methods` | classes parsed, no methods — CK ran and answered | no |
+| `empty_output` | CK exited 0 and wrote a parseable file containing nothing | no |
+| `missing_output` | CK exited 0 and wrote no file | **yes** |
+| `crash` / `timeout` | CK failed | **yes** |
+| `checkout_failed` | the commit could not be checked out | **yes** |
+
+The last three describe the **run**, not the snapshot, so they are re-attempted on the next
+invocation. A re-attempt appends a second record for the same SHA: **the last record for a SHA
+is the current one.** Any consumer must group by `sha` and take the final occurrence — counting
+lines over-counts once a retry has happened.
+
+Each run ends with a tally (`success=399 | empty_output=143`) so a partial grid is visible
+without reading the log.
+
+---
+
+## 6. How resumption works
+
+Two mechanisms, and the difference between them is a difference in kind.
+
+**Miners reconstruct progress from their own output** (`OutputDerivedState`). A unit appears in
+the JSONL if and only if it was completed, so there is no second record to disagree with the
+first. The failure this avoids is specific: a miner writes a record, is killed before a state
+file is flushed, and the next run re-processes work already on disk — appending a duplicate.
+Flushing on interrupt narrows that window but cannot close it, because `SIGKILL`, an OOM kill
+and a power loss do not run handlers.
+
+**Channels need a state file** (`ChannelStateManager`) because their progress involves things
+the output cannot hold: how far pagination got, which time window is in progress, and when an
+API quota resets. Those exist nowhere in the mined records. State is written atomically
+(temp file + rename), with a short retry for the Windows case where a background scanner holds
+the destination open.
+
+When a GitHub quota runs out, the run stops cleanly, reports when it returns, and the next
+invocation continues from the stored cursor.
+
+---
+
+## 7. Project layout
+
+```text
+quarry/
+├── pyproject.toml               packaging + the `quarry` entry point
+├── requirements.txt             checkout-and-run alternative to pip install -e .
+├── .env                         GITHUB_TOKEN, QUARRY_HOME, tool version overrides
+│
+├── scripts/
+│   └── smoke_test.py            runs every command combination the CLI accepts
+│
+├── tests/                       pytest suite
+│
+└── pipeline/
+    ├── __init__.py              forces UTF-8 streams before anything prints
+    ├── __main__.py              enables `python -m pipeline`
+    ├── main.py                  entry point: six steps, no decisions
+    ├── config.py                paths, tool versions, channel platforms
+    │
+    ├── cli/                     the command line
+    │   ├── spec.py              STAGES — the stage/flag table, as data
+    │   ├── plan.py              RunPlan — one invocation, as a value
+    │   ├── validate.py          enforces the table; reports every violation at once
+    │   └── parser.py            argparse -> RunPlan
+    │
+    ├── runtime/
+    │   ├── workspace.py         provision, acquire, sync, pin
+    │   └── runner.py            executes commands; circuit breaker; exit code
+    │
+    ├── adapters/                one per tool (metadata, ledger, refm, ck, channel)
+    ├── channels/                source strategies per platform + the channel contract
+    ├── platforms/               github_client.py — auth, pagination, quota, backoff
+    ├── commands/                Command wrappers for miners and reports
+    ├── factories/               adapter_fact.py — (plan, repo) -> commands
+    ├── metrics/                 report generation
+    ├── state/                   output_state.py — output-derived progress
+    ├── scope.py                 release-grid sampling
+    ├── acquisition.py           repository acquisition and sync
+    └── utils/                   subprocess, console output, tool provisioning
 ```
 
-### 3. Provision Analysis Tools
-You must manually trigger the tool downloader once. This script fetches the correct versions of PMD and RefactoringMiner and configures executable permissions automatically.
+`main.py` is genuinely a facade now:
+
+```python
+plan = StageValidator().enforce(CliParser().parse())
+plan.announce()
+repo = Workspace.prepare(plan)
+commands = PipelineFactory.create_commands(plan, repo)
+return PipelineRunner(commands).run()
+```
+
+---
+
+## 8. Design
+
+| pattern | where | why |
+| :--- | :--- | :--- |
+| **Specification** | `cli/spec.py` | The stage/flag matrix is data the validator reads and the help renders, so the two cannot drift apart. |
+| **Value Object** | `cli/plan.py` | `RunPlan` decouples the pipeline from argparse — it can be driven from a notebook. |
+| **Facade** | `runtime/workspace.py`, `main.py` | A fixed setup sequence with no decisions in it. |
+| **Command** | `commands/` | Miners and reports queue identically; the runner needs no special cases. |
+| **Composite / Invoker** | `runtime/runner.py` | Circuit breaker rather than fail-fast: one failing channel does not deny the others their progress. |
+| **Factory Method** | `factories/adapter_fact.py` | One construction site for every stage, with lazy imports so a channel run never loads CK. |
+| **Adapter** | `adapters/` | `IAdapter` standardises tools as different as a JAR, a Python library and an HTTP API. |
+| **Strategy** | `channels/`, `utils/ui_strategy.py` | A channel source knows how to reach one platform; the adapter is identical across all of them. |
+| **Template Method** | `metrics/temp_mets.py` | `BaseMetrics` defines the report lifecycle. |
+
+Two rules the code holds to throughout: **failures are recorded, not swallowed**, and
+**recording a failure is not the same as completing the work**.
+
+---
+
+## 9. Toolchain
+
+| tool | version | role |
+| :--- | :--- | :--- |
+| **RefactoringMiner** | 3.1.3 | Refactoring operations per commit |
+| **CK** | 0.7.0 | Class- and method-level structural metrics per snapshot |
+| **Git CLI** | any | History walking, checkout, universe resolution |
+| **GitHub REST API** | 2022-11-28 | Issues, pull requests, reviews, comments |
+
+Versions are overridable in `.env` (`CK_VERSION`, `RM_VERSION`), as are the download URLs and
+expected SHA-256 digests. Provisioning happens automatically before the first run; to trigger
+it by hand:
+
 ```bash
 python -m pipeline.utils.allocate_tools
 ```
-*A new `workspace_data` folder will be generated in your project root to sandbox all operations.*
 
-### 4. Repository Setup
-The pipeline includes a smart `RepositoryLoader` that handles acquisition automatically. 
-- **URL Mode (Auto-Clone):** Pass a GitHub URL. The system will automatically clone it into `workspace_data/repos/`.
-- **Local Mode:** Pass a folder name if the repository already exists in `workspace_data/repos/`.
+---
 
-### 5. Run the Pipeline
-Execute the orchestrator using the main facade.
+## 10. Testing
+
+### Command matrix
+
+`scripts/smoke_test.py` runs every command Quarry accepts and every command it must refuse —
+43 cases across three tiers.
+
 ```bash
-python -m pipeline.main --repo <URL_OR_NAME> --stage <STAGE> [OPTIONS]
+python scripts/smoke_test.py --list                     # show every command
+python scripts/smoke_test.py --tier local --tier reject # offline, safe any time
+python scripts/smoke_test.py --tier github              # needs GITHUB_TOKEN
+python scripts/smoke_test.py --dry-run                  # print, run nothing
 ```
-**Available Stages:** `all`, `meta`, `refm`, `pmd`, `pmd_history`
 
----
+- **local** — every stage against the clone, across `--full`, `--universe`, `--version`,
+  `--sample` and three batch sizes.
+- **github** — each of the four GitHub sources separately (they fail in different ways, so one
+  combined case would hide which broke), plus `all` and a resumption pass.
+- **reject** — 16 invalid combinations. A validator that quietly stops rejecting something is a
+  silent regression, so the refusals are tested as rigorously as the acceptances.
 
-## 6. Design Principles & Patterns
+Cases needing a manifest that does not exist are reported as `SKIP`, not `FAIL`: a repository
+the release-grid notebook has never been run against has no pinned universe, and that is not a
+bug.
 
-The architecture adheres strictly to software engineering best practices.
+The script prefers the installed `quarry` command when it is on `PATH`, and falls back to
+`python -m pipeline.main`. Running it after `pip install -e .` therefore verifies the packaging
+as well as the code.
 
-| Principle | Implementation |
-|---------|----------------|
-| **Idempotency** | `BatchStateManager` allows the pipeline to resume safely after crashes without data duplication. |
-| **Separation of Concerns** | Logic `pipeline/`, config `config.py`, and adapters `pipeline/adapters/` are strictly distinct and decoupled. |
-| **Command Pattern** | `main.py` (Invoker) executes encapsulated `RunToolCommand` objects, treating all mining tools interchangeably. |
-| **Adapter Pattern** | `IAdapter` interface standardizes the execution of diverse external CLI tools (PMD, RefactoringMiner, Git). |
-| **Factory Method** | `ToolFactory` encapsulates adapter instantiation logic, keeping the orchestrator clean. |
-| **Template Method** | `BaseMetrics` defines the skeleton algorithm for generating end-of-run diagnostic reports. |
-| **Strategy Pattern** | `ui_strategy.py` allows universal and dynamic console output formatting. |
-| **Pipe and Filter** | Independent mining adapters generate distinct data streams designed for downstream fusion. |
+### Unit and integration tests
 
----
-
-## 7. Toolchain Configuration
-
-### RefactoringMiner
-- **Version**: 3.0.12
-- **Build Requirement**: Java 17+
-- **Role**: Phase 1 – History & Intent Mining
-
-### PMD
-- **Version**: 7.19.0
-- **Role**: Phase 2 – Structural Decay & Code Smell Detection
-- **Configured Ruleset**: `pmd_rules_00.xml`
-
----
-
-## 8. Verification & QA (The "Zero-Touch" Pipeline)
-
-The reliability of Smell-Ranker is guaranteed by a **3-Layer Testing Pyramid**. 
-
-### Layer 1: Logic Verification (Unit)
-- **Math Safety**: Validates that density/purity formulas handle mathematical edge cases (e.g., `total_commits=0`) without crashing (Boundary Value Analysis).
-- **State Resilience**: Verifies the "Lazarus Protocol" — ensuring the system correctly identifies corrupt state files, archives them, and self-heals without user intervention.
-- **Idempotency**: Proves that processing the same commit multiple times does not append duplicate JSONL records or skew aggregation metrics.
-
-### Layer 2: Tool Orchestration (Integration)
-- **Poison Pill Defense**: Verifies that if an external tool (PMD) hangs indefinitely on a complex AST, the pipeline catches the subprocess timeout, logs the failure, and continues mining.
-- **Exit Code Semantics**: Confirms that PMD `Exit Code 4` is correctly mapped to "Violations Found" (Success), preventing false-positive system failures.
-
-### Layer 3: Environment Safety Nets
-- **State Reversion**: Verifies that the repository working tree always reverts to the target default branch (`main` / `master`) even if the Python process is abruptly terminated mid-checkout.
-
-**Run the suite locally:**
 ```bash
 pytest tests/ -v
-# Run only unit tests
 pytest tests/unit/
 ```
+
+---
+
+## 11. Troubleshooting
+
+**`'quarry' is not recognized`** after a successful install.
+Read pip's own warnings — it names the directory it put `quarry.exe` in. This usually means the
+virtual environment was not actually active (pip will have said *"Defaulting to user
+installation"*). Check with:
+
+```bash
+python -c "import sys; print(sys.executable); print(sys.prefix == sys.base_prefix)"
+```
+
+`True` means no venv is active. Activate it, then `python -m pip install -e .` — using
+`python -m pip` guarantees the pip belonging to the interpreter you just checked.
+
+**The invocation that always works**, with no install and no PATH changes:
+
+```bash
+python -m pipeline.main --help
+```
+
+**`UnicodeEncodeError` on Windows.** Fixed in `pipeline/__init__.py`, which forces UTF-8 on
+stdout and stderr before anything prints. Windows uses the ANSI code page when output is piped
+rather than written to a console, and cp1252 cannot encode the emoji in the status lines — so
+the tool worked by hand and died under `quarry ... > run.log`.
+
+**GitHub runs are slow or fail.** Without `GITHUB_TOKEN` the API allows 60 requests an hour
+against 5,000 authenticated. Quarry warns loudly at startup when it is unauthenticated.
+
+**`ledger` fails with a pydriller import error.** `pip install pydriller`, or reinstall the
+package — it is a declared dependency and the only miner with a third-party runtime
+requirement.
+
+---
+
+## 12. Configuration
+
+`.env` at the project root:
+
+```ini
+GITHUB_TOKEN=ghp_...
+QUARRY_HOME=E:\quarry_workspace     # optional; defaults to ./workspace_data
+CK_VERSION=0.7.0
+RM_VERSION=3.1.3
+CK_TIMEOUT=3600                     # seconds per snapshot
+JAVA_XMX=4g                         # CK heap; large repositories need headroom
+```
+
+---
+
+## 13. Status
+
+Active development. The mining stages are complete and in use on a five-repository Java corpus;
+the linkage and analysis layers built on top of this output live in separate notebooks.
+
+Quarry is the mining infrastructure extracted from a thesis project on refactoring
+prioritisation. The two are versioned and released separately.
