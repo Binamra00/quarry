@@ -4,7 +4,7 @@ from typing import Set
 
 class IAdapter(ABC):
     """
-    The Universal Interface for all analysis tools (RefactoringMiner, PMD, SonarQube, etc.).
+    The Universal Interface for all analysis tools (RefactoringMiner, CK, etc.).
     Follows the Open/Closed Principle: Open for new tools, Closed for modification of main.py.
     """
 
@@ -40,7 +40,7 @@ class IAdapter(ABC):
         Returns the path where the raw execution log should be saved.
         Default: A .log file next to the output .json file.
         """
-        # Example: outputs/pmd_candidates.json -> outputs/pmd_candidates.log
+        # Example: outputs/ck_metrics.json -> outputs/ck_metrics.log
         return self.get_output_path().with_suffix(".log")
 
     def set_sampling_filter(self, sampled_shas: Set[str]):
@@ -48,7 +48,7 @@ class IAdapter(ABC):
         [HOOK] Optional configuration for adapters that support sampling.
 
         Default implementation does nothing (No-Op).
-        Concrete classes (like PMDHistoryAdapter) can override this to
+        Concrete classes can override this to
         apply the filter logic.
         """
         pass

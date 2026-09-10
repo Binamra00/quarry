@@ -1,5 +1,16 @@
-pydriller
-python-dotenv
-pytest
-pytest-mock
-polars
+# Runtime dependencies for a source checkout.
+#
+# `pip install -e .` reads pyproject.toml and does not need this file; it exists for the
+# checkout-and-run workflow that predates the package, and for anyone who prefers it.
+#
+# pyproject.toml is the authoritative list. If the two disagree, pyproject wins -- and they
+# disagreeing is a bug, because only one of them is what an installed copy actually gets.
+
+python-dotenv>=1.0
+pydriller>=2.5
+
+# Notebooks only (release-grid mining, linkage audits, corpus integrity).
+# Equivalent to: pip install -e ".[analysis]"
+# pandas>=2.0
+# numpy>=1.24
+# matplotlib>=3.7

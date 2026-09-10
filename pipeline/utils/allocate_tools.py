@@ -10,6 +10,13 @@ from typing import Set
 from pipeline import config
 
 
+def prettify_tool_name(path: Path) -> str:
+    """Cleans up folder/file names for better logging (e.g., 'RefactoringMiner-3.1.3' -> 'RefactoringMiner')"""
+    name = path.name
+    # Strip versions or common suffixes
+    return name.split('-')[0].split('.')[0]
+
+
 def report(msg: str):
     print(f"   [Toolchain] {msg}")
 
@@ -162,16 +169,55 @@ def make_executable(tool_path: Path):
         report(f"⚠️ Binary not found for permission fix: {tool_path}")
 
 
+def download_single_file(url: str, target_folder_name: str, file_name: str, expected_hash: str) -> bool:
+    """Securely downloads a single file (like a .jar) without zip extraction."""
+    dest_dir = config.TOOLS_PATH / target_folder_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    final_path = dest_dir / file_name
+
+    if final_path.exists():
+        report(f"✅ Found version: {target_folder_name}/{file_name}. Skipping download.")
+        return True
+
+    report(f"⬇️ Downloading {file_name} from {url}...")
+    try:
+        urllib.request.urlretrieve(url, final_path)
+    except Exception as e:
+        report(f"❌ Download failed: {e}")
+        return False
+
+    if not verify_checksum(final_path, expected_hash):
+        report(f"⛔ Aborting installation of '{file_name}' due to security risk.")
+        final_path.unlink(missing_ok=True)
+        return False
+
+    report(f"✅ Installed: {final_path.name}")
+    return True
+
+
 def provision():
     print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
     print(f"Target Directory: {config.TOOLS_PATH}")
+    print(f"Structural Engine: {config.STRUCTURAL_TOOL.upper()}")
 
-    success_pmd = download_and_extract(config.PMD_URL, config.PMD_VERSION, config.PMD_SHA256)
-    success_rm = download_and_extract(config.RM_URL, config.RM_VERSION, config.RM_SHA256)
+    # 1. Always download RefactoringMiner
+    rm_folder_name = f"RefactoringMiner-{config.RM_VERSION}"
+    success_rm = download_and_extract(config.RM_URL, rm_folder_name, config.RM_SHA256)
+    if success_rm:
+        report(f"✅ Provisioned: {prettify_tool_name(Path(rm_folder_name))}")
 
-    if success_pmd and success_rm:
-        make_executable(config.PMD_PATH)
-        make_executable(config.RM_PATH)
+    # 2. Conditionally download the structural tool
+    # CK is the structural tool (PMD removed).
+    success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
+    if success_struct:
+        report(f"✅ Provisioned: CK Metrics Engine")
+
+    # 3. Apply execution permissions
+    if success_rm and success_struct:
+        if os.name != "nt":
+            make_executable(config.RM_PATH)
+
+        # CK is a Java JAR -- no chmod needed.
         print("--- Toolchain Ready ---\n")
     else:
         raise RuntimeError("Toolchain provisioning failed due to download or security errors.")

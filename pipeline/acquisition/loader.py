@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from pipeline import config
 from pipeline.utils import adapter_subprocess
-from pipeline.utils.git_manager import GitManager
+from pipeline.platforms.git_client import GitClient
 
 
 class RepositoryLoader:
@@ -51,6 +51,69 @@ class RepositoryLoader:
             RepositoryLoader._checkout_version(target_path, version)
 
         return target_path
+
+    @staticmethod
+    def sync_to_remote(target_path: Path, pinned_version: str = None) -> str:
+        """
+        Bring an existing clone up to origin's current state. Returns the default branch name.
+
+        WHY THIS IS NOT JUST `git fetch`:
+            `git fetch` updates remote-tracking refs (refs/remotes/origin/*). It does NOT move
+            the local branch pointer (refs/heads/*). A subsequent `git checkout -f master`
+            therefore lands on the LOCAL master, which may be months behind origin -- the
+            objects are on disk, but HEAD points into the past. Every adapter that walks HEAD
+            then mines a truncated history and reports success. Observed on checkstyle:
+            `git rev-list --count HEAD` gave 16383 while origin was at 17133, with no error.
+
+            The local branch must be RESET onto its remote counterpart. These are read-only
+            mining clones with no local work to preserve, so `reset --hard` is safe here.
+        """
+        print(f"   \U0001f504 Syncing '{target_path.name}' with origin...")
+        ok, out = adapter_subprocess.run_command(
+            ["git", "-C", str(target_path), "fetch", "--all", "--tags", "--force", "--prune"],
+            verbose=False)
+        if not ok:
+            print(f"   \u26a0\ufe0f  Fetch failed; continuing with the on-disk clone, which may be stale.\n{out}")
+
+        default_branch = RepositoryLoader._detect_default_branch(target_path)
+
+        if pinned_version:
+            print(f"   \U0001f4cc Version pin active ({pinned_version}); skipping default-branch sync.")
+            return default_branch
+
+        ok, _ = adapter_subprocess.run_command(
+            ["git", "-C", str(target_path), "checkout", "-f", default_branch], verbose=False)
+        if not ok:
+            print(f"   \u26a0\ufe0f  Could not checkout '{default_branch}'; proceeding anyway.")
+            return default_branch
+
+        # THE line that actually advances history. Without it the fetch above is cosmetic.
+        ok, out = adapter_subprocess.run_command(
+            ["git", "-C", str(target_path), "reset", "--hard", f"origin/{default_branch}"],
+            verbose=False)
+        if ok:
+            _, n = adapter_subprocess.run_command(
+                ["git", "-C", str(target_path), "rev-list", "--count", "HEAD"], verbose=False)
+            print(f"   \u2705 '{default_branch}' reset onto origin/{default_branch} "
+                  f"({n.strip()} commits reachable from HEAD).")
+        else:
+            print(f"   \u26a0\ufe0f  Could not reset onto origin/{default_branch}; "
+                  f"the local branch may be stale.\n{out}")
+        return default_branch
+
+    @staticmethod
+    def _detect_default_branch(target_path: Path) -> str:
+        """origin/HEAD if the remote publishes it, else master if it exists, else main."""
+        ok, out = adapter_subprocess.run_command(
+            ["git", "-C", str(target_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            verbose=False)
+        if ok and out and out.strip():
+            branch = out.strip().split('/')[-1]
+            if branch:
+                return branch
+        ok, _ = adapter_subprocess.run_command(
+            ["git", "-C", str(target_path), "rev-parse", "--verify", "master"], verbose=False)
+        return "master" if ok else "main"
 
     @staticmethod
     def _checkout_version(target_path: Path, version: str):
@@ -122,13 +185,14 @@ class RepositoryLoader:
         repo_name = RepositoryLoader._extract_name_from_url(url)
         target_path = config.REPOS_PATH / repo_name
 
-        # Idempotency Check: Don't clone if it exists
+        # Idempotency: skip the CLONE if it exists -- but never skip the SYNC. An existing
+        # clone is not a current clone, and a silently stale one is worse than a missing one.
         if target_path.exists():
             print(f"   🔍 Repo '{repo_name}' found locally. Skipping clone.")
             return target_path
 
-        # Let the GitManager handle the clone and stream the live progress bar
-        success = GitManager.clone_with_progress(url, target_path)
+        # Let the GitClient handle the clone and stream the live progress bar
+        success = GitClient.clone_with_progress(url, target_path)
 
         if not success:
             raise RuntimeError(f"❌ Failed to clone repository: {url}")

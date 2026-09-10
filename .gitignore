@@ -1,20 +1,117 @@
-.idea/
+# ============================================================================
+# secrets & environment
+# ============================================================================
 .env
-venv/
-workspace_data/
+# example.env IS tracked -- it documents the variables without their values.
+
+
+# ============================================================================
+# python
+# ============================================================================
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+build/
+dist/
+*.egg-info/
+
+
+# ============================================================================
+# tooling caches
+# ============================================================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+
+# ============================================================================
+# editors & os
+# ============================================================================
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+venv library root/
+
+
+# ============================================================================
+# pipeline workspace -- regenerable, and far too large to version
+# ============================================================================
+#   workspace_data/repos/      subject system clones
+#   workspace_data/tools/      CK and RefactoringMiner jars
+#   workspace_data/outputs/    mined JSONL, logs, channel state
+#   workspace_data/versions/   release grid: rel_hist, manifests, adapter universes
+workspace_data/
+
+# Mined artefacts, in case a run ever writes outside the workspace
+*.jsonl
+commit_lineage_*.json
+ledger_history_*.json
+refactorings_*.json
+ck_metrics_*.json
+ck_sampled_metrics_*.json
+channel_*.json
+channel_status_*.json
+*_execution_*.log
+
+# Archives written when a state file fails to parse
+*.corrupt_*.json
+
+# CK writes these into the repository root when its output directory is refused
+/class.csv
+/method.csv
+/field.csv
+/variable.csv
+
+
+# ============================================================================
+# scratch & superseded work
+# ============================================================================
 thesis_evidence_candidates.csv
 debug_heuristic.py
-.pytest_cache/
-validation/
-venv library root/
-temp_generate_plots.
+heuristic_analysis.py
+temp_generate_plots.py
 pipeline/temp_test.py
 sampling/
-analyzer/
 analysis/
-docs/
+pipeline/analyzer/
 pipeline/heuristics/
 pipeline/heuristic_seeds.json
-heuristic_analysis.py
 pipeline/commands/heuristic_cmd.py
+docs/
+
+# NOTE: 'validation/' was previously ignored here and has been REMOVED.
+# The corpus and trigger validation notebooks are a deliverable of this study,
+# not scratch work, and must be tracked. If a scratch directory is needed,
+# give it a name that cannot be confused with them -- e.g. scratch/.
+
+
+# ============================================================================
+# accidental shell-redirect artefacts
+# ============================================================================
+# Type annotations occasionally land on disk as files when a `->` in a pasted
+# command is read as a redirect. They are mistakes, not artefacts to keep, so
+# delete them rather than relying on this rule -- it is a safety net only.
+/str
+/int
+/bool
+/float
+/Path
+/List*
+/Dict*
+/Optional*
+/Set*
+/Tuple*
+
+
+scripts/

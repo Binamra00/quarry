@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quarry-msr"
+version = "0.1.0"
+description = "Quarry -- a release-level mining pipeline for refactoring trigger analysis"
+readme = "README.md"
+requires-python = ">=3.9"   # pydriller/GitPython set the practical floor
+license = { text = "MIT" }
+authors = [{ name = "Binamra Aryal" }]
+keywords = ["msr", "mining-software-repositories", "refactoring", "code-smells", "empirical-software-engineering"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# Deliberately thin, but not empty.
+#
+#   python-dotenv   reads GITHUB_TOKEN and the tool-version overrides from .env
+#   pydriller       the ledger adapter's commit walker. The ONLY miner with a third-party
+#                   runtime dependency: RefactoringMiner and CK are JARs that allocate_tools
+#                   downloads, metadata and the git channel shell out to git, and the github
+#                   channels use urllib. Leaving it out installs a package whose `ledger` stage
+#                   fails on import while every other stage works -- which is exactly how the
+#                   smoke test found it.
+#
+# Nothing here needs a compiler. A tool a reviewer has to build wheels for is a tool a reviewer
+# does not install.
+dependencies = [
+    "python-dotenv>=1.0",
+    "pydriller>=2.5",
+]
+
+[project.optional-dependencies]
+# Only needed for the notebooks that build the release grid and audit linkage.
+analysis = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
+dev = [
+    "pytest>=7.4",
+    "build>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Binamra00/quarry"
+Issues = "https://github.com/Binamra00/quarry/issues"
+
+# THE ENTRY POINT.
+#
+# This one line is what makes `quarry --help` work on Windows, Linux and macOS alike: pip
+# generates a launcher (quarry.exe on Windows, a shim script elsewhere) on the PATH of whatever
+# environment it was installed into. No packaging step, no per-OS build, no installer.
+#
+# CliParser reads argv[0] to decide what to print in its examples, so the help text says
+# `quarry ...` after an install and `python -m pipeline.main ...` from a source checkout.
+[project.scripts]
+quarry = "pipeline.main:main"
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
+
+[tool.setuptools.package-data]
+pipeline = ["*.json", "*.txt"]
