@@ -1,21 +1,73 @@
 # Quarry
 
-**A release-level mining pipeline for refactoring trigger analysis.**
+**A release-level mining pipeline for software repository analysis.**
 
-Version 0.1.0 · Python 3.9+ · Windows, Linux, macOS
+Quarry extracts a linked, reproducible dataset from a Java repository's history: the commits
+that changed it, the refactorings developers applied, the structural shape of the code at each
+release, and the discussion surrounding those changes in issues, pull requests and reviews.
 
-Quarry reconstructs what happened to a Java codebase between releases: which commits changed
-it, which refactorings were applied, what its structure looked like at each release, and what
-developers were saying in the issues, pull requests and reviews around those changes. It
-produces one linked corpus from five separate evidence streams so that questions about *what
-triggers a refactoring* can be asked empirically.
-
-It is mining infrastructure. It does not rank, score, or predict anything — those are
-downstream analyses that consume its output.
+Five independent evidence streams, mined into one corpus that can be joined on commit, file and
+release.
 
 ---
 
-## 1. Quick start
+## Contents
+
+1. [What Quarry is for](#what-quarry-is-for)
+2. [Installation](#installation)
+3. [Getting started](#getting-started)
+4. [How it works](#how-it-works)
+5. [The stages](#the-stages)
+6. [Scope: choosing which commits](#scope-choosing-which-commits)
+7. [Trigger channels](#trigger-channels)
+8. [Output](#output)
+9. [Reliability](#reliability)
+10. [Architecture](#architecture)
+11. [Configuration](#configuration)
+12. [Troubleshooting](#troubleshooting)
+13. [License and citation](#license-and-citation)
+
+---
+
+## What Quarry is for
+
+Most repository-mining work begins the same way: assemble a corpus, run three or four tools
+over it, and discover weeks later that their outputs do not line up. One tool walked the main
+branch, another walked every branch. One was interrupted and silently resumed short. A GitHub
+channel stopped at 30,000 records without reporting an error. The analysis that follows is
+built on a dataset nobody can fully account for.
+
+Quarry exists to make that dataset accountable. It coordinates the tools, pins them all to the
+same set of commits, records every failure as data rather than discarding it, and resumes
+exactly where it stopped after any interruption.
+
+**Use it to:**
+
+- Build a longitudinal dataset of refactoring activity across a project's releases.
+- Measure how a codebase's structure changed between versions, at class and method level.
+- Link code changes to the issues, pull requests and review comments that surrounded them.
+- Assemble a multi-project corpus where every project was mined identically.
+- Reproduce someone else's mining run, or your own, months later and get the same result.
+
+**It is mining infrastructure.** Quarry produces data. It does not model, score, or predict —
+those are analyses you build on top of its output.
+
+---
+
+## Installation
+
+### Requirements
+
+| | |
+| :--- | :--- |
+| **Python** | 3.9 or newer |
+| **Java** | 17 or newer — RefactoringMiner and CK both run on the JVM. Verify with `java -version`. |
+| **Git** | available on `PATH` |
+| **GitHub token** | only for GitHub channels. Set `GITHUB_TOKEN` in `.env`. |
+
+Analysis tools are downloaded automatically on first use. You do not install them yourself.
+
+### Install
 
 ```bash
 git clone https://github.com/Binamra00/quarry.git
@@ -29,357 +81,247 @@ python -m pip install -e .
 quarry --help
 ```
 
-Then mine a small project end to end:
+If `quarry` is not found afterwards, see [Troubleshooting](#troubleshooting).
+
+---
+
+## Getting started
+
+Mine a small project end to end:
 
 ```bash
+# 1. Establish the commit universe. A URL is cloned into the workspace on first use.
 quarry --repo https://github.com/danilofes/refactoring-toy-example.git --stage meta
-quarry --repo <folder-it-cloned-into> --stage refm   --full
-quarry --repo <folder-it-cloned-into> --stage ck
-quarry --repo <folder-it-cloned-into> --stage report
+
+# 2. Extract refactorings and structural metrics.
+quarry --repo <project> --stage refm --full
+quarry --repo <project> --stage ck
+
+# 3. Read back what was produced.
+quarry --repo <project> --stage report
 ```
 
-If `quarry` is not found after installing, see [Troubleshooting](#11-troubleshooting) — it is
-almost always a PATH issue and there is an invocation that always works.
+After the first run, refer to the project by the folder name it was cloned into.
 
-### Prerequisites
-
-| | |
-| :--- | :--- |
-| **Python** | 3.9 or newer |
-| **Java** | 17 or newer. RefactoringMiner 3.x and CK both run on the JVM. Verify with `java -version`. |
-| **Git** | on `PATH`. Quarry shells out to the `git` CLI for history walking and checkouts. |
-| **GitHub token** | only for the `github` channels. Put `GITHUB_TOKEN` in `.env`. |
-
-Analysis tools are downloaded on first use into `workspace_data/tools/`; you do not install
-them yourself.
+`quarry --help` prints the complete flag matrix, the available channels, and worked examples.
+That help is generated from the same specification the tool validates against, so it can never
+describe a combination the tool would reject.
 
 ---
 
-## 2. How to use it
+## How it works
 
-Five decisions, in order. Only the first two are always needed.
+A Quarry run is five decisions, in order. Only the first two are always required.
 
-| | decision | flag |
+| | Decision | Flag |
 | :--- | :--- | :--- |
-| 1 | which repository | `--repo <folder-name \| github-url>` |
-| 2 | which miner | `--stage meta\|ledger\|refm\|ck\|channel\|report` |
-| 3 | which scope | `--full` · `--universe FILE` · `--version TAG` · `--sample FILE` |
-| 4 | *(channel only)* which platform | `--platform git\|github` |
-| 5 | *(channel only)* which channels | `--channel commits\|issues,prs\|all` |
+| 1 | Which repository | `--repo <folder-name \| github-url>` |
+| 2 | Which miner | `--stage meta\|ledger\|refm\|ck\|channel\|report` |
+| 3 | Which scope | `--full` · `--universe FILE` · `--version TAG` · `--sample FILE` |
+| 4 | *(channels only)* Which platform | `--platform git\|github` |
+| 5 | *(channels only)* Which channels | `--channel commits\|issues,prs\|all` |
 
-**One miner per run.** There is no `all` stage. Each miner writes its own output and keeps its
-own progress, so they run one at a time and, after `meta`, in any order.
+**One miner per run.** There is no combined stage. Each miner writes its own output and tracks
+its own progress, so they run independently and — after `meta` — in any order. A failure in one
+never costs you the others.
 
-**Every miner resumes.** Re-run the identical command and it continues where it stopped —
-after an interrupt, a crash, or an exhausted API quota. Nothing is mined twice.
+**Every miner resumes.** Re-run the identical command and it continues from where it stopped:
+after an interrupt, a crash, a reboot, or an exhausted API quota. Nothing is mined twice.
 
-`quarry --help` prints the full flag matrix, the available channels, and worked examples. That
-help text is generated from the same table the validator enforces, so it cannot describe a
-combination the tool would reject.
+**Invalid commands fail immediately.** Flag combinations are checked against a declared
+specification before any repository is touched, and every problem in a command is reported at
+once rather than one run at a time.
 
 ---
 
-## 3. The stages
+## The stages
 
-| stage | what it does | run it |
+| Stage | Extracts | Notes |
 | :--- | :--- | :--- |
-| `meta` | Git lineage and repository metadata. Establishes the commit universe everything else joins on. | first |
-| `ledger` | Per-commit evolutionary features: churn, authorship, co-change. | after `meta` |
-| `refm` | RefactoringMiner — refactoring operations per commit. Emits its own completion report. | after `meta` |
-| `ck` | CK structural metrics at each snapshot. The heaviest miner by far; pair with `--sample`. | after `meta` |
-| `channel` | Trigger channels — commits, issues, pull requests, review comments, issue comments. | any time |
-| `report` | Read-only summary of what the miners produced. Mines nothing. | last |
-
-### Scope, and why it is not optional
-
-`ledger`, `refm` and the git commit channel walk git history, so they **must** be told which
-commits. There is no default:
-
-- `--universe adapter_universe_<repo>.json` — the pinned study grid. **Use this for anything
-  a study depends on.** It is the only way to guarantee every miner walked the same commits.
-- `--full` — every commit reachable in the clone. Not frozen: two runs on different days walk
-  different histories, and the output will not join a pinned run. Verification and exploration
-  only; the tool prints a warning.
-
-An unstated universe is how outputs silently stop joining — the run succeeds, the records look
-fine, and they simply never match. Hence the hard requirement rather than a default.
-
-`ck` is scoped differently, by `--sample rel_hist_<repo>.json`, because it measures snapshots
-rather than walking commits.
+| `meta` | Git lineage and repository metadata | Run first — it establishes the commit universe every other stage joins on |
+| `ledger` | Per-commit evolutionary features: churn, authorship, co-change | |
+| `refm` | Refactoring operations per commit, via RefactoringMiner | Produces a completion report automatically |
+| `ck` | Class- and method-level structural metrics per snapshot, via CK | The heaviest stage; pair with `--sample` |
+| `channel` | Commits, issues, pull requests, review comments, issue comments | Requires `--platform` and `--channel` |
+| `report` | Nothing — summarises what the other stages produced | Read-only |
 
 ---
 
-## 4. Trigger channels
+## Scope: choosing which commits
 
-A channel is one source of developer discourse. Each is mined into its own file with its own
-resumable state, so one failing leaves the others intact.
+`ledger`, `refm` and the git commit channel walk history, so they must be told which commits to
+walk. There is no default, deliberately.
 
-| platform | channels | needs |
+**`--universe adapter_universe_<project>.json`** — a pinned set of commits. Use this for any
+dataset you intend to analyse or publish. It is the only way to guarantee that every stage
+walked the same history, which is what makes their outputs joinable.
+
+**`--full`** — every commit reachable in the clone. Not frozen: two runs on different days walk
+different histories, and the result will not align with anything mined against a pinned
+universe. Intended for verification and exploration; the tool prints a warning.
+
+**`--version <tag>`** — check out a single tag or commit and mine only that point.
+
+`ck` is scoped differently. Because it measures snapshots rather than walking commits, it takes
+**`--sample rel_hist_<project>.json`** to restrict it to a release grid.
+
+The requirement is strict because the failure it prevents is silent. An unpinned run succeeds,
+its records look correct, and they simply never match the ones mined against the grid — no
+error, no warning, just a join that quietly loses rows.
+
+---
+
+## Trigger channels
+
+A channel is a single source of developer discourse. Each is mined into its own file with its
+own progress state, so one failing leaves the rest untouched.
+
+| Platform | Channels | Requires |
 | :--- | :--- | :--- |
-| `git` | `commits` | nothing — reads the local clone |
-| `github` | `issues`, `prs`, `pr_reviews`, `comments` | `GITHUB_TOKEN` in `.env` |
+| `git` | `commits` | Nothing — reads the local clone |
+| `github` | `issues`, `prs`, `pr_reviews`, `comments` | `GITHUB_TOKEN` |
 
 ```bash
-quarry --repo checkstyle --stage channel --platform github --channel issues,prs
-quarry --repo checkstyle --stage channel --platform github --channel all --batch 200
-quarry --repo checkstyle --stage channel --platform git --channel commits \
-       --universe adapter_universe_checkstyle.json
+quarry --repo myproject --stage channel --platform github --channel issues,prs
+quarry --repo myproject --stage channel --platform github --channel all --batch 200
+quarry --repo myproject --stage channel --platform git --channel commits \
+       --universe adapter_universe_myproject.json
 ```
 
-**Only closed issues and pull requests are mined.** An open issue has no resolving commit, so
-it cannot reach a file and would be discarded at linkage anyway.
+Only **closed** issues and pull requests are mined. An open issue has no resolving commit, so it
+cannot be linked to code.
 
-`--universe` applies only to the git channel. Issues and comments are not commits, so a commit
-SHA cannot bound them; the pinned universe still constrains them, but at **linkage** — a record
-whose reference falls outside it never joins the ledger.
+Review comments are the only text channel with native file linkage: the API reports the file
+and line a comment was written against, so it reaches code without any reference resolution at
+all.
 
-### Two API failure modes worth knowing about
+### Two API limits Quarry handles for you
 
-Both are handled, and neither is obvious:
+Neither is documented prominently by GitHub, and one fails silently.
 
-- `/issues` refuses offset pagination past the 10,000th item with HTTP 422. Quarry follows the
-  `Link` header's cursor rather than constructing `page=N`, which bypasses the cap.
-- `/issues/comments` **silently** stops offering `rel="next"` at 30,000 items and returns as
-  though the collection ended. On one project that truncated the channel at 2020 while the
-  repository was active into 2026, with no error raised. Quarry detects the stall and restarts
-  the walk with `since` set to the newest record already seen, repeating until a window
-  produces nothing newer.
+- **`/issues` refuses offset pagination past the 10,000th item** with HTTP 422. Quarry follows
+  the cursor in the response's `Link` header rather than constructing page numbers, which
+  bypasses the limit entirely.
+- **`/issues/comments` stops paginating at 30,000 items without reporting anything.** It simply
+  returns as though the collection ended. On one large project this truncated the channel six
+  years early with no error raised. Quarry detects the stall and restarts the walk filtered to
+  records newer than the last one seen, repeating until a window yields nothing new.
 
-Listings are always requested `sort=created&direction=asc`. Sorting by update time would
-reorder items whenever anything is edited, so a resumed run could skip records it never saw.
-Page-based resumption is only sound under ascending creation order.
+Listings are always retrieved in ascending creation order. Sorting by update time would reorder
+items whenever anything is edited, so a run resumed the next day could skip records it had
+never seen.
 
 ---
 
-## 5. Output
+## Output
 
-Everything lands in `workspace_data/outputs/`, except grid artifacts, which live in
+Results are written to `workspace_data/outputs/`; release-grid definitions live in
 `workspace_data/versions/`.
 
-| artifact | format | contents |
+| Artifact | Format | Contents |
 | :--- | :--- | :--- |
-| `ck_metrics_<repo>.jsonl` | JSONL | One record per snapshot: status, timestamp, class and method counts, nested CK metrics. |
-| `channel_<platform>_<channel>_<repo>.jsonl` | JSONL | One record per mined channel item, in a unified shape across platforms. |
-| `channel_status_<platform>_<channel>_<repo>.json` | JSON | Pagination cursor, time window, quota reset. Channels only — see §6. |
-| `adapter_universe_<repo>.json` | JSON | The pinned commit universe. Produced by the release-tag mining notebook, **not** by any stage. |
-| `rel_hist_<repo>.json` | JSON | The frozen snapshot grid: the study's observation points. |
-| `<repo>_release_manifest.json` | JSON | Admission thresholds, rejected tags, SHA aliases, grid rule. |
-| `*_execution_<repo>.log` | text | Per-run diagnostics: failures, timeouts, empty outputs, checkout errors. |
+| `ck_metrics_<project>.jsonl` | JSONL | One record per snapshot: status, timestamp, class and method counts, nested metrics |
+| `channel_<platform>_<channel>_<project>.jsonl` | JSONL | One record per channel item, in a unified shape across platforms |
+| `adapter_universe_<project>.json` | JSON | The pinned commit universe |
+| `rel_hist_<project>.json` | JSON | The frozen snapshot grid — the release points to be measured |
+| `<project>_release_manifest.json` | JSON | Admission thresholds, rejected tags, SHA aliases |
+| `*_execution_<project>.log` | Text | Per-run diagnostics: failures, timeouts, empty results |
 
-`quarry --repo <name> --stage report` reads these back and summarises what is present.
+All record streams are append-only JSONL, so a run can be interrupted at any point without
+corrupting what came before, and large projects never require holding a dataset in memory.
 
-### CK records a status for every snapshot
+Run `quarry --repo <project> --stage report` to summarise what is present.
 
-A snapshot that crashed, timed out, produced no CSV, or could not be checked out still gets a
-record. That is what makes a partial grid visible instead of silently short:
+### Failures are data
 
-| status | meaning | re-mined? |
+A snapshot that crashed, timed out, produced nothing, or could not be checked out still
+receives a record. This is what makes an incomplete dataset visible rather than merely short.
+
+| Status | Meaning | Retried on next run |
 | :--- | :--- | :--- |
-| `success` | classes and methods parsed | no |
-| `empty_methods` | classes parsed, no methods — CK ran and answered | no |
-| `empty_output` | CK exited 0 and wrote a parseable file containing nothing | no |
-| `missing_output` | CK exited 0 and wrote no file | **yes** |
-| `crash` / `timeout` | CK failed | **yes** |
-| `checkout_failed` | the commit could not be checked out | **yes** |
+| `success` | Classes and methods extracted | No |
+| `empty_methods` | Classes extracted, no methods — the tool ran and answered | No |
+| `empty_output` | The tool succeeded and produced an empty result | No |
+| `missing_output` | The tool succeeded but wrote no file | Yes |
+| `crash` / `timeout` | The tool failed | Yes |
+| `checkout_failed` | The commit could not be checked out | Yes |
 
-The last three describe the **run**, not the snapshot, so they are re-attempted on the next
-invocation. A re-attempt appends a second record for the same SHA: **the last record for a SHA
-is the current one.** Any consumer must group by `sha` and take the final occurrence — counting
-lines over-counts once a retry has happened.
+The first three describe the *snapshot* and are final. The last three describe the *run* and are
+re-attempted automatically. A re-attempt appends a new record for the same commit, so **the last
+record for a commit is the current one** — group by commit and take the final occurrence.
 
-Each run ends with a tally (`success=399 | empty_output=143`) so a partial grid is visible
-without reading the log.
-
----
-
-## 6. How resumption works
-
-Two mechanisms, and the difference between them is a difference in kind.
-
-**Miners reconstruct progress from their own output** (`OutputDerivedState`). A unit appears in
-the JSONL if and only if it was completed, so there is no second record to disagree with the
-first. The failure this avoids is specific: a miner writes a record, is killed before a state
-file is flushed, and the next run re-processes work already on disk — appending a duplicate.
-Flushing on interrupt narrows that window but cannot close it, because `SIGKILL`, an OOM kill
-and a power loss do not run handlers.
-
-**Channels need a state file** (`ChannelStateManager`) because their progress involves things
-the output cannot hold: how far pagination got, which time window is in progress, and when an
-API quota resets. Those exist nowhere in the mined records. State is written atomically
-(temp file + rename), with a short retry for the Windows case where a background scanner holds
-the destination open.
-
-When a GitHub quota runs out, the run stops cleanly, reports when it returns, and the next
-invocation continues from the stored cursor.
+Every run ends with a summary line (`success=399 | empty_output=143`), so an incomplete dataset
+is visible without reading a log file.
 
 ---
 
-## 7. Project layout
+## Reliability
 
-```text
-quarry/
-├── pyproject.toml               packaging + the `quarry` entry point
-├── requirements.txt             checkout-and-run alternative to pip install -e .
-├── .env                         GITHUB_TOKEN, QUARRY_HOME, tool version overrides
-│
-├── scripts/
-│   └── smoke_test.py            runs every command combination the CLI accepts
-│
-├── tests/                       pytest suite
-│
-└── pipeline/
-    ├── __init__.py              forces UTF-8 streams before anything prints
-    ├── __main__.py              enables `python -m pipeline`
-    ├── main.py                  entry point: six steps, no decisions
-    ├── config.py                paths, tool versions, channel platforms
-    │
-    ├── cli/                     the command line
-    │   ├── spec.py              STAGES — the stage/flag table, as data
-    │   ├── plan.py              RunPlan — one invocation, as a value
-    │   ├── validate.py          enforces the table; reports every violation at once
-    │   └── parser.py            argparse -> RunPlan
-    │
-    ├── runtime/
-    │   ├── workspace.py         provision, acquire, sync, pin
-    │   └── runner.py            executes commands; circuit breaker; exit code
-    │
-    ├── adapters/                one per tool (metadata, ledger, refm, ck, channel)
-    ├── channels/                source strategies per platform + the channel contract
-    ├── platforms/               github_client.py — auth, pagination, quota, backoff
-    ├── commands/                Command wrappers for miners and reports
-    ├── factories/               adapter_fact.py — (plan, repo) -> commands
-    ├── metrics/                 report generation
-    ├── state/                   output_state.py — output-derived progress
-    ├── scope.py                 release-grid sampling
-    ├── acquisition.py           repository acquisition and sync
-    └── utils/                   subprocess, console output, tool provisioning
-```
+Long mining runs are interrupted. Quarry is built on the assumption that they will be.
 
-`main.py` is genuinely a facade now:
+**Progress is derived from output, not tracked separately.** Most of the pipeline reconstructs
+what it has done by reading its own results: a unit appears in the output if and only if it was
+completed. There is no separate progress file that can disagree with the data, and therefore no
+window in which a process killed between writing a record and saving its progress causes that
+work to be repeated and duplicated.
 
-```python
-plan = StageValidator().enforce(CliParser().parse())
-plan.announce()
-repo = Workspace.prepare(plan)
-commands = PipelineFactory.create_commands(plan, repo)
-return PipelineRunner(commands).run()
-```
+**Where a separate state file is unavoidable, it is written atomically.** Channels are the
+exception: their position in a paginated API, the time window in progress, and the moment a
+quota resets exist nowhere in the mined records. That state is written to a temporary file and
+renamed over the target, so an interrupted write cannot corrupt progress already earned.
+
+**API quotas pause rather than fail.** When a GitHub quota is exhausted, the run stops cleanly,
+reports when the quota returns, and the next invocation continues from the stored cursor.
+
+**Transient failures are retried; real ones are reported.** Dropped connections, timeouts and
+server errors are retried with backoff. Burst throttling is waited out rather than treated as
+an error. Authentication failures and missing repositories stop the run with a message naming
+the cause.
+
+**The workspace is always restored.** Stages that check out historical commits return the
+repository to its original state on exit, including after a crash.
 
 ---
 
-## 8. Design
+## Architecture
 
-| pattern | where | why |
+Quarry is built as a set of interchangeable components behind stable interfaces. This is not
+incidental: the reason a new data source can be added without touching the execution machinery,
+and the reason a validation rule cannot drift out of step with the documentation, are both
+consequences of the structure below.
+
+| Pattern | Applied to | Effect |
 | :--- | :--- | :--- |
-| **Specification** | `cli/spec.py` | The stage/flag matrix is data the validator reads and the help renders, so the two cannot drift apart. |
-| **Value Object** | `cli/plan.py` | `RunPlan` decouples the pipeline from argparse — it can be driven from a notebook. |
-| **Facade** | `runtime/workspace.py`, `main.py` | A fixed setup sequence with no decisions in it. |
-| **Command** | `commands/` | Miners and reports queue identically; the runner needs no special cases. |
-| **Composite / Invoker** | `runtime/runner.py` | Circuit breaker rather than fail-fast: one failing channel does not deny the others their progress. |
-| **Factory Method** | `factories/adapter_fact.py` | One construction site for every stage, with lazy imports so a channel run never loads CK. |
-| **Adapter** | `adapters/` | `IAdapter` standardises tools as different as a JAR, a Python library and an HTTP API. |
-| **Strategy** | `channels/`, `utils/ui_strategy.py` | A channel source knows how to reach one platform; the adapter is identical across all of them. |
-| **Template Method** | `metrics/temp_mets.py` | `BaseMetrics` defines the report lifecycle. |
+| **Specification** | The stage/flag matrix | Valid flag combinations are declared as data. The validator enforces that data and `--help` renders it, so the documentation and the behaviour cannot disagree. |
+| **Adapter** | External tools | A JVM tool, a Python library and an HTTP API are driven through one interface, so the pipeline treats them identically. |
+| **Strategy** | Channel sources | A source knows how to reach one platform and nothing else. Adding a platform adds a source; nothing else changes. |
+| **Factory Method** | Stage construction | One place assembles the work a stage implies, with lazy loading — a channel run never loads the structural-metrics tool. |
+| **Command** | Units of work | Miners and reports are queued and executed identically, so the runner needs no special cases. |
+| **Composite** | Execution | Several units run under one invocation with a circuit breaker: a failure marks the run unhealthy without denying independent work its chance to progress. |
+| **Facade** | Environment setup | Provisioning, acquisition, synchronisation and revision pinning are a single call. |
+| **Template Method** | Reporting | The report lifecycle is defined once and specialised per data source. |
+| **Value Object** | Run configuration | A run is an immutable value rather than a bag of command-line arguments, so the pipeline can be driven from a script or notebook as easily as a terminal. |
 
-Two rules the code holds to throughout: **failures are recorded, not swallowed**, and
-**recording a failure is not the same as completing the work**.
+Two principles run through the whole system: **failures are recorded rather than swallowed**,
+and **recording a failure is not the same as completing the work**. Together they mean an
+incomplete dataset announces itself, and re-running the command repairs it.
 
----
+### Tools
 
-## 9. Toolchain
-
-| tool | version | role |
+| Tool | Version | Role |
 | :--- | :--- | :--- |
-| **RefactoringMiner** | 3.1.3 | Refactoring operations per commit |
-| **CK** | 0.7.0 | Class- and method-level structural metrics per snapshot |
-| **Git CLI** | any | History walking, checkout, universe resolution |
-| **GitHub REST API** | 2022-11-28 | Issues, pull requests, reviews, comments |
+| RefactoringMiner | 3.1.3 | Refactoring operations per commit |
+| CK | 0.7.0 | Class- and method-level structural metrics |
+| Git CLI | any | History traversal, checkout, universe resolution |
+| GitHub REST API | 2022-11-28 | Issues, pull requests, reviews, comments |
 
-Versions are overridable in `.env` (`CK_VERSION`, `RM_VERSION`), as are the download URLs and
-expected SHA-256 digests. Provisioning happens automatically before the first run; to trigger
-it by hand:
-
-```bash
-python -m pipeline.utils.allocate_tools
-```
+Versions, download URLs and expected checksums are all configurable.
 
 ---
 
-## 10. Testing
+## Configuration
 
-### Command matrix
-
-`scripts/smoke_test.py` runs every command Quarry accepts and every command it must refuse —
-43 cases across three tiers.
-
-```bash
-python scripts/smoke_test.py --list                     # show every command
-python scripts/smoke_test.py --tier local --tier reject # offline, safe any time
-python scripts/smoke_test.py --tier github              # needs GITHUB_TOKEN
-python scripts/smoke_test.py --dry-run                  # print, run nothing
-```
-
-- **local** — every stage against the clone, across `--full`, `--universe`, `--version`,
-  `--sample` and three batch sizes.
-- **github** — each of the four GitHub sources separately (they fail in different ways, so one
-  combined case would hide which broke), plus `all` and a resumption pass.
-- **reject** — 16 invalid combinations. A validator that quietly stops rejecting something is a
-  silent regression, so the refusals are tested as rigorously as the acceptances.
-
-Cases needing a manifest that does not exist are reported as `SKIP`, not `FAIL`: a repository
-the release-grid notebook has never been run against has no pinned universe, and that is not a
-bug.
-
-The script prefers the installed `quarry` command when it is on `PATH`, and falls back to
-`python -m pipeline.main`. Running it after `pip install -e .` therefore verifies the packaging
-as well as the code.
-
-### Unit and integration tests
-
-```bash
-pytest tests/ -v
-pytest tests/unit/
-```
-
----
-
-## 11. Troubleshooting
-
-**`'quarry' is not recognized`** after a successful install.
-Read pip's own warnings — it names the directory it put `quarry.exe` in. This usually means the
-virtual environment was not actually active (pip will have said *"Defaulting to user
-installation"*). Check with:
-
-```bash
-python -c "import sys; print(sys.executable); print(sys.prefix == sys.base_prefix)"
-```
-
-`True` means no venv is active. Activate it, then `python -m pip install -e .` — using
-`python -m pip` guarantees the pip belonging to the interpreter you just checked.
-
-**The invocation that always works**, with no install and no PATH changes:
-
-```bash
-python -m pipeline.main --help
-```
-
-**`UnicodeEncodeError` on Windows.** Fixed in `pipeline/__init__.py`, which forces UTF-8 on
-stdout and stderr before anything prints. Windows uses the ANSI code page when output is piped
-rather than written to a console, and cp1252 cannot encode the emoji in the status lines — so
-the tool worked by hand and died under `quarry ... > run.log`.
-
-**GitHub runs are slow or fail.** Without `GITHUB_TOKEN` the API allows 60 requests an hour
-against 5,000 authenticated. Quarry warns loudly at startup when it is unauthenticated.
-
-**`ledger` fails with a pydriller import error.** `pip install pydriller`, or reinstall the
-package — it is a declared dependency and the only miner with a third-party runtime
-requirement.
-
----
-
-## 12. Configuration
-
-`.env` at the project root:
+Create a `.env` file in the project root:
 
 ```ini
 GITHUB_TOKEN=ghp_...
@@ -387,15 +329,53 @@ QUARRY_HOME=E:\quarry_workspace     # optional; defaults to ./workspace_data
 CK_VERSION=0.7.0
 RM_VERSION=3.1.3
 CK_TIMEOUT=3600                     # seconds per snapshot
-JAVA_XMX=4g                         # CK heap; large repositories need headroom
+JAVA_XMX=4g                         # heap for structural analysis; large projects need headroom
 ```
+
+`QUARRY_HOME` relocates the entire workspace — clones, downloaded tools, outputs and logs — which
+is useful when the project lives on one drive and the data belongs on another.
+
+### Controlling run length
+
+`--batch N` stops a stage after N records and exits cleanly; the next run resumes. It is the
+practical way to try a GitHub channel against a few hundred real records without spending an
+hour of quota, or to run a long extraction in sessions. `--batch 0` removes the limit.
 
 ---
 
-## 13. Status
+## Troubleshooting
 
-Active development. The mining stages are complete and in use on a five-repository Java corpus;
-the linkage and analysis layers built on top of this output live in separate notebooks.
+**`'quarry' is not recognized` after a successful install.**
+Read pip's warnings — it names the directory it installed the command into. This usually means
+the virtual environment was not active, in which case pip will also have said *"Defaulting to
+user installation"*. Confirm with:
 
-Quarry is the mining infrastructure extracted from a thesis project on refactoring
-prioritisation. The two are versioned and released separately.
+```bash
+python -c "import sys; print(sys.prefix == sys.base_prefix)"
+```
+
+`True` means no environment is active. Activate it and reinstall with `python -m pip install -e .`
+— using `python -m pip` guarantees you are using the pip belonging to that interpreter.
+
+**An invocation that always works**, with no installation and no changes to `PATH`:
+
+```bash
+python -m pipeline.main --help
+```
+
+**GitHub mining is slow or fails.** Without a token the API allows 60 requests an hour, against
+5,000 authenticated. Quarry warns at startup when it is running unauthenticated.
+
+**A stage reports a missing Python package.** Reinstall with `python -m pip install -e .`, which
+resolves all runtime dependencies.
+
+**Structural analysis fails on a large project.** Increase `JAVA_XMX` and, if snapshots are
+timing out, `CK_TIMEOUT`.
+
+---
+
+## License and citation
+
+Released under the MIT License.
+
+If you use Quarry in published work, please cite the release archive for the version you used.
