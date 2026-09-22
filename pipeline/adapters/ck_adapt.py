@@ -20,7 +20,7 @@ from pipeline.adapters.i_adapters import IAdapter
 #   empty_output   CK exited 0 and wrote a parseable file containing nothing
 #
 # empty_output is terminal ON PURPOSE, and it is the debatable one. A snapshot with no
-# compilable Java genuinely has no metrics, so re-mining it every run would never converge.
+# compilable Java genuinely has no report, so re-mining it every run would never converge.
 # But an empty file is also what a systematic CK parse failure looks like, so while such a
 # cause is under investigation, pass terminal_statuses without it and those snapshots come
 # back on the next run.
@@ -358,7 +358,7 @@ class CkAdapter(IAdapter):
                                 "n_classes": 0,
                                 "n_methods": 0,
                                 "csv_source": None,
-                                "metrics": []
+                                "report": []
                             }
                             with open(self.jsonl_output_path, "a", encoding="utf-8") as jsonl_file:
                                 jsonl_file.write(json.dumps(status_record) + "\n")
@@ -367,7 +367,7 @@ class CkAdapter(IAdapter):
 
                         status_tally["checkout_failed"] += 1
                         # done=False: a checkout failure says nothing about the snapshot's
-                        # metrics, so it must not close the snapshot out.
+                        # report, so it must not close the snapshot out.
                         self.state.mark_processed(commit_hash, done=False)
                         continue
 
@@ -474,7 +474,7 @@ class CkAdapter(IAdapter):
                                 elif not methods_data:
                                     # Classes parsed, methods did not. Every class then gets an
                                     # empty `methods` list and the snapshot looks structurally
-                                    # complete while carrying no method-level metrics at all --
+                                    # complete while carrying no method-level report at all --
                                     # which is the level RQ2 and RQ4 rank at.
                                     #
                                     # The snapshot IS measured, so this is terminal rather than
@@ -529,8 +529,8 @@ class CkAdapter(IAdapter):
                         except Exception as e:
                             # The merge loop may already have appended to merged_classes before
                             # the exception fired. A record marked "crash" must not also carry
-                            # half a snapshot's metrics -- a downstream reader filtering on
-                            # status would drop it, but one filtering on `metrics` being
+                            # half a snapshot's report -- a downstream reader filtering on
+                            # status would drop it, but one filtering on `report` being
                             # non-empty would silently accept a truncated class list.
                             merged_classes = []
                             classes_data, methods_data = [], []
@@ -582,7 +582,7 @@ class CkAdapter(IAdapter):
 
                     # 6. Stream to JSONL (Atomic Append)
                     #
-                    # n_classes / n_methods are stored alongside the metrics so the integrity
+                    # n_classes / n_methods are stored alongside the report so the integrity
                     # check is a scan of scalars rather than a parse of every nested class list.
                     record = {
                         "sha": resolved_commit_hash,
@@ -591,7 +591,7 @@ class CkAdapter(IAdapter):
                         "n_classes": len(classes_data),
                         "n_methods": len(methods_data),
                         "csv_source": csv_source,  # 'temp' | 'repo_root' | 'absent' | None
-                        "metrics": merged_classes
+                        "report": merged_classes
                     }
 
                     written = True
@@ -647,9 +647,9 @@ class CkAdapter(IAdapter):
         remaining = max(0, total_commits - total_processed_so_far)
         print(f"✅ Batch Complete. Scanned {total_processed_so_far}/{total_commits} | Remaining: {remaining}")
 
-        # Only print the new metrics line if we actually did work
+        # Only print the new report line if we actually did work
         if success_count > 0:
-            print(f"   📈 Extracted new metrics for {success_count} commits.")
+            print(f"   📈 Extracted new report for {success_count} commits.")
 
         # Every snapshot in one line. A run that reports only its successes cannot tell you it
         # produced a partial grid -- which is the whole reason the statuses are recorded.

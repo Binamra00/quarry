@@ -11,12 +11,13 @@ WHICH ARTIFACTS EXIST IS DERIVED, NOT LISTED TWICE
     full one. Globbing reports whatever is actually on disk instead of asserting what should be.
 """
 
+import csv
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from pipeline import config
-from pipeline.metrics.i_reports import ArtifactCoverage, IArtifactProbe
+from pipeline.report.i_reports import ArtifactCoverage, IArtifactProbe
 
 # Statuses that mean the unit was measured. Anything else describes a failed RUN and will be
 # re-attempted, so it is counted as outstanding work rather than as coverage.
@@ -165,6 +166,42 @@ class ChannelProbe(IArtifactProbe):
             return None
 
 
+class CsvProbe(IArtifactProbe):
+    """
+    Counts a CSV artifact.
+
+    THE LINK STAGE DOES NOT WRITE JSONL, and reporting it with JsonlProbe would report every
+    line as unparseable. It is a table rather than a record stream -- an edge list, one row per
+    link -- so it is counted as rows, and a header-only file is zero rows rather than one.
+
+    A CSV has no status column and no retry semantics, so ok/failed/empty stay None: the file
+    either exists with N rows or it does not.
+    """
+
+    def __init__(self, stage: str, path: Path, unit: str = "row"):
+        self.stage = stage
+        self.path = Path(path)
+        self.unit = unit
+
+    def inspect(self) -> ArtifactCoverage:
+        cov = ArtifactCoverage(stage=self.stage, artifact=self.path.name,
+                               present=self.path.exists())
+        if not cov.present:
+            cov.note = "not derived yet"
+            return cov
+        try:
+            with open(self.path, "r", encoding="utf-8", newline="") as f:
+                rows = sum(1 for _ in csv.reader(f))
+        except OSError as e:
+            cov.note = f"unreadable: {e}"
+            return cov
+        cov.records = max(0, rows - 1)      # the header is not a record
+        cov.units = cov.records
+        if cov.records == 0:
+            cov.note = "no rows -- nothing linked"
+        return cov
+
+
 def probes_for(repo_name: str) -> List[IArtifactProbe]:
     """
     Every artifact the report should account for, in pipeline order.
@@ -187,6 +224,9 @@ def probes_for(repo_name: str) -> List[IArtifactProbe]:
         probes += [JsonlProbe("ck", p, id_field="sha") for p in ck_files]
     else:
         probes.append(JsonlProbe("ck", out / f"ck_metrics_{repo_name}.jsonl", id_field="sha"))
+
+    # Linkage is a derivation over the above, so it is reported after them.
+    probes.append(CsvProbe("link", out / f"links_{repo_name}.csv"))
 
     for platform, channels in config.CHANNEL_PLATFORMS.items():
         for channel in channels:

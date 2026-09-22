@@ -49,17 +49,21 @@ HOW TO USE IT
   Five decisions, in order. Only the first two are always needed.
 
     1. WHICH REPOSITORY   --repo <folder-name | github-url>
-    2. WHICH MINER        --stage meta|ledger|refm|ck|channel|report
+    2. WHICH STAGE        --stage meta|ledger|refm|ck|channel|link|report
     3. WHICH SCOPE        --full | --universe FILE | --version TAG | --sample FILE
     4. only for channel   --platform git|github
     5. only for channel   --channel commits|issues,prs|all
 
-  ONE MINER PER RUN. There is no 'all' stage: each miner writes its own output and
-  keeps its own progress, so they are run one at a time and in any order after meta.
+  ONE STAGE PER RUN. There is no 'all' stage: each writes its own output and keeps
+  its own progress, so they are run one at a time and in any order after meta.
 
   EVERY MINER RESUMES. Re-run the exact same command and it picks up where it
   stopped -- after an interrupt, a crash, or an exhausted API quota. Nothing is
   mined twice.
+
+  'link' IS THE EXCEPTION. It mines nothing -- it joins what the other stages
+  wrote -- so re-running it OVERWRITES its output instead of resuming. That is
+  what you want: it is a whole-corpus join that finishes in seconds.
 """
 
 
@@ -110,7 +114,10 @@ EXAMPLES
   {q} --repo checkstyle --stage channel --platform github --channel issues,prs
   {q} --repo checkstyle --stage channel --platform github --channel all --batch 200
 
-  # 5. read back what the miners produced
+  # 5. resolve the discourse to the commits it refers to
+  {q} --repo checkstyle --stage link
+
+  # 6. read back what every stage produced
   {q} --repo checkstyle --stage report
 
   # first time on a new machine: a URL clones the repository into the workspace.

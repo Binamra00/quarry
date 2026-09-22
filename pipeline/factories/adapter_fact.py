@@ -57,14 +57,28 @@ class PipelineFactory:
             return [RunToolCommand(
                 LedgerAdapter(repo, batch, universe_path=universe))]
 
-        # RefactoringMiner -- history walker, plus its own completion report.
+        # RefactoringMiner -- history walker.
+        #
+        # It used to queue a second command generating refactoring type counts and file
+        # hotspots. Those are analyses of the corpus, not part of producing it, and they now
+        # live with the analysis that consumes them. Coverage of this stage is reported by
+        # `--stage report` alongside every other stage.
         if stage == "refm":
             from pipeline.adapters.refm_adapt import RefactoringMinerAdapter
-            from pipeline.metrics.refm_mets import RefmMetrics
-            return [
-                RunToolCommand(RefactoringMinerAdapter(repo, universe_path=universe)),
-                RunReportCommand(RefmMetrics(repo)),
-            ]
+            return [RunToolCommand(
+                RefactoringMinerAdapter(repo, batch, universe_path=universe))]
+
+        # Diffs -- history walker, same universe as ledger and refm so the three join.
+        #
+        # It shapes rather than merely extracts: hunk headers and context lines are dropped and
+        # the +/- prefixes become explicit <ADDED>/<REMOVED> markers, because the distinction
+        # between an insertion and a deletion is signal a downstream model needs. What it does
+        # NOT do is decide which commits are worth reading -- merges are recorded and flagged,
+        # not dropped, so the consumer filters.
+        if stage == "diff":
+            from pipeline.adapters.diff_adapt import DiffAdapter
+            return [RunToolCommand(
+                DiffAdapter(repo, batch, universe_path=universe))]
 
         # CK -- structural metrics, optionally restricted to a release grid.
         if stage == "ck":
@@ -85,10 +99,16 @@ class PipelineFactory:
                     ChannelAdapter(repo, plan.platform_key, name, source, batch_size=batch)))
             return commands
 
-        # Universe report -- read-only, run after mining.
+        # Channel linkage -- a derivation. Joins the mined files into an edge list; reaches
+        # no network and walks no history, which is why it takes no scope flags.
+        if stage == "link":
+            from pipeline.adapters.link_adapt import LinkAdapter
+            return [RunToolCommand(LinkAdapter(repo))]
+
+        # Coverage report -- read-only, run after mining.
         if stage == "report":
-            from pipeline.metrics.report_mets import ReportMetrics
-            return [RunReportCommand(ReportMetrics(repo))]
+            from pipeline.report.coverage import CoverageReport
+            return [RunReportCommand(CoverageReport(repo))]
 
         raise ValueError(f"No commands defined for stage '{stage}'.")
 

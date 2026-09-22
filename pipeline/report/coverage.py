@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import List
 
 from pipeline import config
-from pipeline.metrics.i_reports import ArtifactCoverage, IReport
-from pipeline.metrics.probes import probes_for
+from pipeline.report.i_reports import ArtifactCoverage, IReport
+from pipeline.report.probes import probes_for
 
 CSV_COLUMNS = ("stage", "artifact", "present", "records", "units",
                "ok", "empty", "failed", "duplicates", "statuses", "note")

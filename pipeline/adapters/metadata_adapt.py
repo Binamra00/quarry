@@ -18,6 +18,15 @@ class MetadataAdapter(IAdapter):
     Output field is `parent_shas` (a list): [] for a root, [p] for a normal commit,
     [p1, p2, ...] for a merge.
     Output: commit_lineage_<repo>.jsonl
+
+    THE COMMIT IDENTIFIER IS `sha`, NOT `commit_sha`.
+        Every other miner keys a commit as `sha`; this adapter used to write `commit_sha`, so
+        anything reading both had to know which file used which name. That is a trap rather
+        than a difference -- the same concept under two names, with nothing to distinguish
+        them -- and it was fixed here rather than absorbed by each consumer.
+
+        Anything that read the old name must be re-pointed. Re-running this stage costs
+        seconds and rewrites the file in place.
     """
 
     def get_tool_name(self) -> str:
@@ -72,7 +81,7 @@ class MetadataAdapter(IAdapter):
                         print(f"   ⚠️  Skipping malformed lineage line: {line[:60]}")
                         continue
 
-                    commit_sha = fields[0].strip()
+                    sha = fields[0].strip()
                     parent_shas = fields[1].split()   # [] root, [p] normal, [p1, p2, ...] merge
                     timestamp = fields[2].strip() or None
 
@@ -82,7 +91,7 @@ class MetadataAdapter(IAdapter):
                         merge_count += 1
 
                     record = {
-                        "commit_sha": commit_sha,
+                        "sha": sha,
                         "parent_shas": parent_shas,   # LIST -- all parents, not just the first
                         "timestamp": timestamp,
                     }

@@ -86,6 +86,13 @@ STAGES: Dict[str, StageSpec] = {
         allows=frozenset({VERSION, UNIVERSE, FULL, BATCH}),
         walks_commits=True,
     ),
+    "diff": StageSpec(
+        name="diff",
+        summary="per-commit diffs, shaped for language-model input: the commit\n"
+                "message and, per changed file, the added and removed lines.",
+        allows=frozenset({VERSION, UNIVERSE, FULL, BATCH}),
+        walks_commits=True,
+    ),
     "ck": StageSpec(
         name="ck",
         summary="CK structural metrics at each snapshot. The heaviest miner by far;\n"
@@ -100,6 +107,13 @@ STAGES: Dict[str, StageSpec] = {
         requires=frozenset({PLATFORM, CHANNEL}),
         walks_commits_on_git=True,
         flag_notes={VERSION: "no effect"},
+    ),
+    "link": StageSpec(
+        name="link",
+        summary="resolve mined issues, pull requests and comments to the commits\n"
+                "they refer to. Reads what the other stages wrote; mines nothing.\n"
+                "Re-running OVERWRITES its output.",
+        allows=frozenset(),
     ),
     "report": StageSpec(
         name="report",

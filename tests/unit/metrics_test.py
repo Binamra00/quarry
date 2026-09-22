@@ -1,9 +1,9 @@
 import json
 from unittest.mock import patch, mock_open
 from pathlib import Path
-from pipeline.metrics.formulas import StandardRefactoringLogic, StandardStaticLogic
-from pipeline.metrics.pmd_mets import PMDMetrics
-from pipeline.metrics.refm_mets import RefmMetrics
+from pipeline.report.formulas import StandardRefactoringLogic, StandardStaticLogic
+from pipeline.report.pmd_mets import PMDMetrics
+from pipeline.report.refm_mets import RefmMetrics
 
 
 # ==========================================

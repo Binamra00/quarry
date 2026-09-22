@@ -75,7 +75,7 @@ class LinkIndex:
         self.all_commits = self._load_universe(out / f"commit_lineage_{repo_name}.jsonl")
         self.ledger = self._optional_shas(out / f"ledger_history_{repo_name}.jsonl", "sha")
         self.refm = self._optional_shas(out / f"refactorings_{repo_name}.jsonl", "sha1")
-        self.ck = self._optional_shas(out / f"ck_metrics_{repo_name}.jsonl", "sha")
+        self.ck = self._optional_shas(out / f"ck_sampled_metrics_{repo_name}.jsonl", "sha")
 
         self.prs = _stream(config.channel_file("github", "prs", repo_name))
         self.issues = _stream(config.channel_file("github", "issues", repo_name),

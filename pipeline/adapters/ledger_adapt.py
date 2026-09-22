@@ -245,7 +245,7 @@ class LedgerAdapter(IAdapter):
                                     })
                             except Exception:
                                 # PyDriller AST parsing can occasionally fail on malformed historical code.
-                                # Catch silently to preserve the file-level metrics.
+                                # Catch silently to preserve the file-level report.
                                 pass
 
                             record["modifications"].append(mod_record)

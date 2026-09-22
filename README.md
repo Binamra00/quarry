@@ -20,12 +20,13 @@ release.
 5. [The stages](#the-stages)
 6. [Scope: choosing which commits](#scope-choosing-which-commits)
 7. [Trigger channels](#trigger-channels)
-8. [Output](#output)
-9. [Reliability](#reliability)
-10. [Architecture](#architecture)
-11. [Configuration](#configuration)
-12. [Troubleshooting](#troubleshooting)
-13. [License and citation](#license-and-citation)
+8. [Linkage](#linkage)
+9. [Output](#output)
+10. [Reliability](#reliability)
+11. [Architecture](#architecture)
+12. [Configuration](#configuration)
+13. [Troubleshooting](#troubleshooting)
+14. [License and citation](#license-and-citation)
 
 ---
 
@@ -45,7 +46,8 @@ exactly where it stopped after any interruption.
 
 - Build a longitudinal dataset of refactoring activity across a project's releases.
 - Measure how a codebase's structure changed between versions, at class and method level.
-- Link code changes to the issues, pull requests and review comments that surrounded them.
+- Link code changes to the issues, pull requests and review comments that surrounded them,
+  as an edge list you can filter and join.
 - Assemble a multi-project corpus where every project was mined identically.
 - Reproduce someone else's mining run, or your own, months later and get the same result.
 
@@ -97,7 +99,8 @@ quarry --repo https://github.com/danilofes/refactoring-toy-example.git --stage m
 quarry --repo <project> --stage refm --full
 quarry --repo <project> --stage ck
 
-# 3. Read back what was produced.
+# 3. Resolve discourse to commits, then read back what was produced.
+quarry --repo <project> --stage link
 quarry --repo <project> --stage report
 ```
 
@@ -116,17 +119,20 @@ A Quarry run is five decisions, in order. Only the first two are always required
 | | Decision | Flag |
 | :--- | :--- | :--- |
 | 1 | Which repository | `--repo <folder-name \| github-url>` |
-| 2 | Which miner | `--stage meta\|ledger\|refm\|ck\|channel\|report` |
+| 2 | Which stage | `--stage meta\|ledger\|refm\|ck\|channel\|link\|report` |
 | 3 | Which scope | `--full` · `--universe FILE` · `--version TAG` · `--sample FILE` |
 | 4 | *(channels only)* Which platform | `--platform git\|github` |
 | 5 | *(channels only)* Which channels | `--channel commits\|issues,prs\|all` |
 
-**One miner per run.** There is no combined stage. Each miner writes its own output and tracks
-its own progress, so they run independently and — after `meta` — in any order. A failure in one
-never costs you the others.
+**One stage per run.** There is no combined stage. Each writes its own output and tracks its own
+progress, so they run independently and — after `meta` — in any order. A failure in one never
+costs you the others.
 
 **Every miner resumes.** Re-run the identical command and it continues from where it stopped:
 after an interrupt, a crash, a reboot, or an exhausted API quota. Nothing is mined twice.
+
+**`link` is the exception.** It mines nothing, so re-running it **overwrites** rather than
+resumes. See [Linkage](#linkage).
 
 **Invalid commands fail immediately.** Flag combinations are checked against a declared
 specification before any repository is touched, and every problem in a command is reported at
@@ -143,6 +149,7 @@ once rather than one run at a time.
 | `refm` | Refactoring operations per commit, via RefactoringMiner | Produces a completion report automatically |
 | `ck` | Class- and method-level structural metrics per snapshot, via CK | The heaviest stage; pair with `--sample` |
 | `channel` | Commits, issues, pull requests, review comments, issue comments | Requires `--platform` and `--channel` |
+| `link` | Resolves mined discourse to the commits it refers to | Derives rather than mines; **overwrites** on re-run |
 | `report` | Nothing — summarises what the other stages produced | Read-only |
 
 ---
@@ -213,6 +220,95 @@ never seen.
 
 ---
 
+## Linkage
+
+```bash
+quarry --repo myproject --stage link
+```
+
+Mined discourse is only useful once it reaches code. The `link` stage resolves every issue,
+pull request, review comment and issue comment to the commits it refers to, and writes the
+result as an edge list.
+
+It mines nothing. It joins files the other stages already wrote, which has one consequence
+worth stating plainly:
+
+> **Re-running `link` overwrites its output.** Every other stage appends and resumes, because
+> mining is slow and interruptible. Linkage is a whole-corpus join that finishes in seconds and
+> is deterministic, so a partial result has no value — and appending would double every edge.
+> The files are written to a temporary path and renamed over the target, so an interrupted run
+> leaves the previous edge list intact rather than a half-written one.
+
+### One record, many commits
+
+An issue referenced by three commits produces **three links**, not one. Nothing is discarded to
+force a single answer, and nothing depends on which route was checked first, so the output is
+reproducible by construction.
+
+This makes coverage two different figures, and both are reported:
+
+- **reached** — records with at least one link
+- **edges** — the links themselves
+
+One issue with three commits is one reached record and three edges. They will not agree, and
+neither is wrong.
+
+### The five routes
+
+| `route` | How the link was found | Strength |
+| :--- | :--- | :--- |
+| `merge_commit_sha` | The API stated which commit a merged pull request produced | exact |
+| `parent_pr_merge` | A review comment's pull request merged | exact |
+| `issue_pr_merge` | A pull request body references the issue, and that pull request merged | inferred |
+| `commit_message` | A commit message references the number | inferred |
+| `parent_number` | A comment inherits the links of the issue or pull request it belongs to | inherited |
+
+`issue_pr_merge` is the route that matters in **squash-merge** projects, where the merge tool
+writes the commit message and it frequently references nothing. There the issue reference
+survives only in the pull request body, and a strategy that reads commit messages alone badly
+undercounts those projects while looking healthy on projects that merge normally.
+
+Each link also records **how** the reference was written: `api` (the platform said so),
+`closes` (`Fixes #500`), or `mentions` (a bare `#500`). All three are kept and labelled rather
+than merged or filtered, because `Fixes #500` and an offhand `#500` are not the same evidence
+and the distinction belongs to whatever consumes the links.
+
+### Links point at the whole repository
+
+A link targets any commit in the clone, as recorded by `meta` — not the pinned study universe.
+Membership is carried as columns instead:
+
+| Column | Meaning |
+| :--- | :--- |
+| `in_ledger` | the commit is in the ledger's universe |
+| `in_refm` | RefactoringMiner analysed it |
+| `in_ck` | it is a CK snapshot |
+
+Narrowing the evidence to any of those is a filter over the file rather than a different run. A
+**blank** flag means that stage has not been run, which is not the same as `0` — the stage ran
+and the commit is not in it.
+
+### Output
+
+`links_<project>.csv`, one row per link:
+
+```
+source_channel,source_id,resolved_via,target_sha,route,ref_kind,exact,in_ledger,in_refm,in_ck
+github.issue,4821,4821,a3f9...,issue_pr_merge,closes,0,1,1,0
+```
+
+`source_id` is the `record_id` in the mined channel file, so the text, author and labels are one
+join away. They are deliberately **not** copied here: duplicating them would multiply the
+dataset and go stale the moment a channel is re-mined.
+
+`linkage_summary_<project>.csv` gives one row per channel — mined, reached, unreached, edges,
+the split by reference kind, and how many edges land in each downstream artifact.
+
+`link` requires `meta` to have run, and reads whichever channels are present. It is worth
+running after any channel is re-mined.
+
+---
+
 ## Output
 
 Results are written to `workspace_data/outputs/`; release-grid definitions live in
@@ -222,6 +318,8 @@ Results are written to `workspace_data/outputs/`; release-grid definitions live 
 | :--- | :--- | :--- |
 | `ck_metrics_<project>.jsonl` | JSONL | One record per snapshot: status, timestamp, class and method counts, nested metrics |
 | `channel_<platform>_<channel>_<project>.jsonl` | JSONL | One record per channel item, in a unified shape across platforms |
+| `links_<project>.csv` | CSV | One row per link: which record reaches which commit, by which route |
+| `linkage_summary_<project>.csv` | CSV | Per-channel coverage: mined, reached, edges, membership |
 | `adapter_universe_<project>.json` | JSON | The pinned commit universe |
 | `rel_hist_<project>.json` | JSON | The frozen snapshot grid — the release points to be measured |
 | `<project>_release_manifest.json` | JSON | Admission thresholds, rejected tags, SHA aliases |
@@ -294,7 +392,7 @@ consequences of the structure below.
 | :--- | :--- | :--- |
 | **Specification** | The stage/flag matrix | Valid flag combinations are declared as data. The validator enforces that data and `--help` renders it, so the documentation and the behaviour cannot disagree. |
 | **Adapter** | External tools | A JVM tool, a Python library and an HTTP API are driven through one interface, so the pipeline treats them identically. |
-| **Strategy** | Channel sources | A source knows how to reach one platform and nothing else. Adding a platform adds a source; nothing else changes. |
+| **Strategy** | Channel sources, linkage routes | A source knows how to reach one platform and nothing else; a link producer knows one route to a commit. Adding either adds a class, and nothing else changes. |
 | **Factory Method** | Stage construction | One place assembles the work a stage implies, with lazy loading — a channel run never loads the structural-metrics tool. |
 | **Command** | Units of work | Miners and reports are queued and executed identically, so the runner needs no special cases. |
 | **Composite** | Execution | Several units run under one invocation with a circuit breaker: a failure marks the run unhealthy without denying independent work its chance to progress. |

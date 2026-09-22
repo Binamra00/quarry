@@ -1,10 +1,10 @@
 from pipeline.commands.i_commands import IPipelineCommand
-from pipeline.metrics.temp_mets import BaseMetrics
+from pipeline.report.i_reports import IReport
 
 
 class RunReportCommand(IPipelineCommand):
     """
-    Concrete Command wrapping a BaseMetrics report (the Receiver).
+    Concrete Command wrapping a report (the Receiver).
 
     WHY A REPORT IS A COMMAND
 
@@ -29,7 +29,7 @@ class RunReportCommand(IPipelineCommand):
         exited 0, which meant a broken report was invisible to anything scripted.
     """
 
-    def __init__(self, metrics: BaseMetrics):
+    def __init__(self, metrics: IReport):
         self._metrics = metrics
 
     @property
@@ -40,9 +40,9 @@ class RunReportCommand(IPipelineCommand):
         name = self.get_tool_name()
         print(f"\n📊 COMMAND: Generating {name}...")
         try:
-            # run_report() is a Template Method returning None; success is the absence of an
-            # exception. It handles "no input data" itself by printing and returning early,
-            # which is a legitimate outcome rather than a failure.
+            # run_report() returns None; success is the absence of an exception. A report
+            # over artifacts that do not exist yet is not a failure -- "nothing mined" is a
+            # legitimate finding and the report says so in its own output.
             self._metrics.run_report()
         except Exception as e:
             print(f"❌ COMMAND: {name} failed: {type(e).__name__}: {e}")
