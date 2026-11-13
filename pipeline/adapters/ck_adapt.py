@@ -38,9 +38,11 @@ CK_TERMINAL_STATUSES = frozenset({"success", "empty_methods", "empty_output"})
 # are unusual Java by design -- that is what they test -- and they are not what the study
 # measures, so they are removed rather than worked around.
 #
-# THESE MUST MATCH THE ANALYSIS. The notebook that joins CK to RefactoringMiner excludes files
-# by the same four rules. If the two ever differ, "production file" means one thing in the
-# miner and another in the analysis.
+"""
+Excluded before CK runs. These are Quarry’s own rules; a study may define production code differently, as Notebook 0 of the replication package does with approved source roots.
+"""
+
+
 NON_PRODUCTION = {
     "test source root":       re.compile(r"(?:^|/)src/(?:test|tests|testinputs|it)/"),
     "test module dir":        re.compile(r"(?:^|/)(?:test|tests)/"),
