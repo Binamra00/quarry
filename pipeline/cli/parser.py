@@ -8,10 +8,17 @@ skip this module entirely.
 
 THE HELP TEXT IS PARTLY GENERATED
 
-    The stage list and the flag matrix come from spec.STAGES, the channel list from
+    The stage lists and the flag matrix come from spec.STAGES, the channel list from
     config.CHANNEL_PLATFORMS, and the command name from how the process was actually started.
     Documentation that is typed out by hand goes stale the first time someone adds a channel
     and forgets; documentation that is rendered cannot.
+
+TWO LEVELS OF HELP
+
+    `--help` (and `quarry` with no arguments) prints one screen: the stages, the commands of a
+    typical study, and where to read more. `--help-all` prints the full reference: every flag,
+    the flag matrix and every example. A newcomer needs the first; the second is for the
+    combinations nobody remembers.
 """
 
 import argparse
@@ -49,7 +56,7 @@ HOW TO USE IT
   Five decisions, in order. Only the first two are always needed.
 
     1. WHICH REPOSITORY   --repo <folder-name | github-url>
-    2. WHICH STAGE        --stage meta|ledger|refm|ck|channel|link|report
+    2. WHICH STAGE        --stage {'|'.join(spec.STAGES)}
     3. WHICH SCOPE        --full | --universe FILE | --version TAG | --sample FILE
     4. only for channel   --platform git|github
     5. only for channel   --channel commits|issues,prs|all
@@ -104,6 +111,7 @@ EXAMPLES
   # 2. commit walkers, pinned to the study grid
   {q} --repo checkstyle --stage ledger --universe adapter_universe_checkstyle.json
   {q} --repo checkstyle --stage refm   --universe adapter_universe_checkstyle.json
+  {q} --repo checkstyle --stage diff   --universe adapter_universe_checkstyle.json
 
   # 3. CK, at the release snapshots only (it is far too slow to run per commit)
   {q} --repo checkstyle --stage ck --sample rel_hist_checkstyle.json
@@ -133,6 +141,53 @@ BEFORE A GITHUB RUN
 """
 
 
+def short_help() -> str:
+    """One screen: what Quarry is, the stages, a typical study, and where to read more."""
+    q = PROG
+    return f"""\
+usage: {q} --repo NAME|URL --stage STAGE [scope] [options]
+
+{TOOL_NAME} mines a Java repository's history, one stage per run. Re-run the same command to
+continue a stage that stopped.
+
+STAGES, in the usual order
+{spec.brief_help()}
+
+A TYPICAL RUN, FOR ONE PROJECT
+  {q} --repo https://github.com/checkstyle/checkstyle.git --stage meta
+  {q} --repo checkstyle --stage refm --universe adapter_universe_checkstyle.json --batch 0
+      (ledger and diff take the same flags as refm)
+  {q} --repo checkstyle --stage channel --platform github --channel all --batch 0
+  {q} --repo checkstyle --stage link
+
+  {commit_walkers_sentence()}
+  adapter_universe_<project>.json is not made by Quarry: see README, 'Mining a study'.
+  Most stages stop after {DEFAULT_BATCH} records unless given --batch 0; the next run continues.
+
+TRY IT FIRST on a small project
+  {q} --repo https://github.com/danilofes/refactoring-toy-example.git --stage meta
+
+MORE
+  {(q + ' --help-all').ljust(len(q) + 14)}every flag, which flags go with which stage, and more examples
+  {'README.md'.ljust(len(q) + 14)}the full guide, including how to build adapter_universe_<project>.json
+"""
+
+
+def commit_walkers_sentence() -> str:
+    return f"Stages {spec.commit_walkers()} need --universe FILE (or --full)."
+
+
+class _ShortHelp(argparse.Action):
+    """-h/--help: print the one-screen help and exit."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(short_help())
+        parser.exit()
+
+
 class CliParser:
     """Builds a RunPlan from argv."""
 
@@ -149,11 +204,11 @@ class CliParser:
         g_target = parser.add_argument_group("1. TARGET -- what to mine")
         g_target.add_argument("--repo",
                               metavar="NAME|URL",
-                              # [UX] Default kept for backward compatibility with old scripts.
-                              default="toy_project",
+                              # Required: a forgotten --repo used to mine a default toy project
+                              # without saying so.
+                              required=True,
                               help="A folder name under the workspace, or a GitHub URL.\n"
-                                   "A URL is cloned on first use and reused after that.\n"
-                                   "(default: toy_project)\n ")
+                                   "A URL is cloned on first use and reused after that.\n ")
 
         # ------------------------------------------------------------ 2. stage
         g_stage = parser.add_argument_group(
@@ -167,7 +222,7 @@ class CliParser:
         # ------------------------------------------------------------ 3. scope
         g_scope = parser.add_argument_group(
             "3. SCOPE -- which commits or snapshots\n"
-            "               (ledger, refm and the git channel MUST be given "
+            f"               ({spec.commit_walkers()} MUST be given "
             "--universe or --full)")
         g_scope.add_argument("--universe",
                              metavar="FILE",
@@ -175,7 +230,9 @@ class CliParser:
                              help="Mine only the pinned study grid in FILE, e.g.\n"
                                   "adapter_universe_checkstyle.json. USE THIS for anything\n"
                                   "the study depends on: it is the only way every miner is\n"
-                                  "guaranteed to have walked the same commits.\n ")
+                                  "guaranteed to have walked the same commits. Quarry does\n"
+                                  "not make this file: a release-mining step does (README,\n"
+                                  "'Mining a study'). Looked up in workspace_data/versions/.\n ")
         g_scope.add_argument("--full",
                              action="store_true",
                              help="Mine every commit the clone can reach (git --all).\n"
@@ -225,12 +282,19 @@ class CliParser:
                                  f"hundred real records without spending an hour of quota.\n"
                                  f"0 = unlimited. (default: {DEFAULT_BATCH})\n ")
         g_exec.add_argument("-h", "--help",
+                            action=_ShortHelp,
+                            help="Show the one-screen help and exit.")
+        g_exec.add_argument("--help-all",
                             action="help",
-                            help="Show this message and exit.")
+                            help="Show this full reference and exit.")
 
         return parser
 
     def parse(self, argv: Optional[Sequence[str]] = None) -> RunPlan:
+        argv = sys.argv[1:] if argv is None else list(argv)
+        if not argv:                                   # `quarry` on its own: show how to use it
+            print(short_help())
+            raise SystemExit(0)
         args = self.build().parse_args(argv)
         return RunPlan(
             repo=args.repo,

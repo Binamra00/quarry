@@ -3,11 +3,18 @@
 **A release-level mining pipeline for software repository analysis.**
 
 Quarry extracts a linked, reproducible dataset from a Java repository's history: the commits
-that changed it, the refactorings developers applied, the structural shape of the code at each
-release, and the discussion surrounding those changes in issues, pull requests and reviews.
+that changed it, the refactorings developers applied, the lines each commit changed, the
+structural shape of the code at each release, and the discussion surrounding those changes in
+issues, pull requests and reviews.
 
-Five independent evidence streams, mined into one corpus that can be joined on commit, file and
+Independent evidence streams, mined into one corpus that can be joined on commit, file and
 release.
+
+**Used in:** *Code, Commit History and Issue/PR Discourse for Forecasting Refactoring*. Its mined
+inputs ([10.5281/zenodo.24182007](https://doi.org/10.5281/zenodo.24182007)), its dataset
+([10.5281/zenodo.24117444](https://doi.org/10.5281/zenodo.24117444)) and its notebooks
+([refactoring-forecast-replication](https://github.com/Binamra00/refactoring-forecast-replication))
+show a complete study built on Quarry. See [Mining a study](#mining-a-study).
 
 ---
 
@@ -19,14 +26,15 @@ release.
 4. [How it works](#how-it-works)
 5. [The stages](#the-stages)
 6. [Scope: choosing which commits](#scope-choosing-which-commits)
-7. [Trigger channels](#trigger-channels)
-8. [Linkage](#linkage)
-9. [Output](#output)
-10. [Reliability](#reliability)
-11. [Architecture](#architecture)
-12. [Configuration](#configuration)
-13. [Troubleshooting](#troubleshooting)
-14. [License and citation](#license-and-citation)
+7. [Mining a study](#mining-a-study)
+8. [Trigger channels](#trigger-channels)
+9. [Linkage](#linkage)
+10. [Output](#output)
+11. [Reliability](#reliability)
+12. [Architecture](#architecture)
+13. [Configuration](#configuration)
+14. [Troubleshooting](#troubleshooting)
+15. [License and citation](#license-and-citation)
 
 ---
 
@@ -95,8 +103,9 @@ Mine a small project end to end:
 # 1. Establish the commit universe. A URL is cloned into the workspace on first use.
 quarry --repo https://github.com/danilofes/refactoring-toy-example.git --stage meta
 
-# 2. Extract refactorings and structural metrics.
+# 2. Extract refactorings, changed lines and structural metrics.
 quarry --repo <project> --stage refm --full
+quarry --repo <project> --stage diff --full
 quarry --repo <project> --stage ck
 
 # 3. Resolve discourse to commits, then read back what was produced.
@@ -106,9 +115,14 @@ quarry --repo <project> --stage report
 
 After the first run, refer to the project by the folder name it was cloned into.
 
-`quarry --help` prints the complete flag matrix, the available channels, and worked examples.
-That help is generated from the same specification the tool validates against, so it can never
-describe a combination the tool would reject.
+Most stages stop after 50 records by default and resume on the next run. That keeps a first try
+short. To run a stage to completion in one go, add `--batch 0`.
+
+`quarry --help` (or `quarry` on its own) prints one screen: the stages, a typical run and where
+to read more. `quarry --help-all` prints the full reference: every flag, which flags go with
+which stage, the available channels and worked examples. Both are generated from the same
+specification the tool validates against, so they can never describe a combination the tool
+would reject.
 
 ---
 
@@ -118,8 +132,8 @@ A Quarry run is five decisions, in order. Only the first two are always required
 
 | | Decision | Flag |
 | :--- | :--- | :--- |
-| 1 | Which repository | `--repo <folder-name \| github-url>` |
-| 2 | Which stage | `--stage meta\|ledger\|refm\|ck\|channel\|link\|report` |
+| 1 | Which repository | `--repo <folder-name \| github-url>` (required) |
+| 2 | Which stage | `--stage meta\|ledger\|refm\|diff\|ck\|channel\|link\|report` |
 | 3 | Which scope | `--full` · `--universe FILE` · `--version TAG` · `--sample FILE` |
 | 4 | *(channels only)* Which platform | `--platform git\|github` |
 | 5 | *(channels only)* Which channels | `--channel commits\|issues,prs\|all` |
@@ -147,6 +161,7 @@ once rather than one run at a time.
 | `meta` | Git lineage and repository metadata | Run first — it establishes the commit universe every other stage joins on |
 | `ledger` | Per-commit evolutionary features: churn, authorship, co-change | |
 | `refm` | Refactoring operations per commit, via RefactoringMiner | Produces a completion report automatically |
+| `diff` | Per commit: the message and, per changed file, the removed and added lines | Against the first parent, with no context lines and no rename detection |
 | `ck` | Class- and method-level structural metrics per snapshot, via CK | The heaviest stage; pair with `--sample` |
 | `channel` | Commits, issues, pull requests, review comments, issue comments | Requires `--platform` and `--channel` |
 | `link` | Resolves mined discourse to the commits it refers to | Derives rather than mines; **overwrites** on re-run |
@@ -156,12 +171,15 @@ once rather than one run at a time.
 
 ## Scope: choosing which commits
 
-`ledger`, `refm` and the git commit channel walk history, so they must be told which commits to
-walk. There is no default, deliberately.
+`ledger`, `refm`, `diff` and the git commit channel walk history, so they must be told which
+commits to walk. There is no default, deliberately.
 
-**`--universe adapter_universe_<project>.json`** — a pinned set of commits. Use this for any
+**`--universe adapter_universe_<project>.json`** — a pinned set of commits: the `head_sha` the
+grid was mined from, plus the release commits that never merged back into it. Use this for any
 dataset you intend to analyse or publish. It is the only way to guarantee that every stage
-walked the same history, which is what makes their outputs joinable.
+walked the same history, which is what makes their outputs joinable. The file comes from a
+release-mining step (see [Mining a study](#mining-a-study)) and lives in
+`workspace_data/versions/`.
 
 **`--full`** — every commit reachable in the clone. Not frozen: two runs on different days walk
 different histories, and the result will not align with anything mined against a pinned
@@ -175,6 +193,103 @@ universe. Intended for verification and exploration; the tool prints a warning.
 The requirement is strict because the failure it prevents is silent. An unpinned run succeeds,
 its records look correct, and they simply never match the ones mined against the grid — no
 error, no warning, just a join that quietly loses rows.
+
+### Which commits the Java stages see
+
+`ledger` records every commit in the universe. `refm`, `diff` and the git commit channel list
+their commits with `git log <universe> -- '*.java'`, and git simplifies that history by default:
+at a merge whose Java files match one parent, it follows only that parent and skips the commits
+on the other side. Those commits are in the ledger but have no refactoring, diff or message
+record. In the five repos of the study above this was 89 commits, 65 of them in dubbo, such as a
+merge of master into a development branch and its revert. Analyses that join the ledger to the
+other stages should expect it.
+
+---
+
+## Mining a study
+
+A study needs two things before Quarry runs: the releases to observe and the commits to walk.
+Both come from a release-mining step that lists every tag, keeps the general-availability
+releases tagged on or before a freeze date, and writes three files per project to
+`workspace_data/versions/`:
+
+| File | Holds | Used by |
+| :--- | :--- | :--- |
+| `rel_hist_<project>.json` | the release grid: each release's tag and commit | `ck --sample`, and the analysis |
+| `adapter_universe_<project>.json` | the commit universe: the pinned HEAD and the unmerged release commits | `--universe` |
+| `<project>_release_manifest.json` | every tag, and why it was kept or left out | the record of the grid |
+
+Quarry does not make these files: which releases count is a decision of the study, not of the
+miner. The release-mining notebook of the refactoring-forecast study is one way to make them
+(`release_mining/rel_tag_mining_v4.ipynb` in
+[refactoring-forecast-replication](https://github.com/Binamra00/refactoring-forecast-replication)).
+It can be adapted to other projects by editing its list of repositories and their tag patterns.
+
+### Making the files for your own projects
+
+Any script can make them, as long as it follows two principles and writes the two formats below.
+
+1. **A frozen grid.** Pick the releases by a rule you can state (for example, every
+   general-availability tag dated on or before a freeze date), and record each one's commit.
+   Never derive the grid from "today": two runs on different days would give different grids.
+2. **A pinned universe.** Record the HEAD commit the grid was taken from, and every release commit
+   that HEAD cannot reach (a release on a branch that was never merged back). Quarry walks
+   HEAD's history plus those commits, so every stage sees the same commits and every release's
+   history is complete.
+
+`adapter_universe_<project>.json`, read by `--universe`:
+
+```json
+{
+  "repo": "myproject",
+  "head_sha": "<the 40-character HEAD commit the grid was taken from>",
+  "head_commits": 6229,
+  "near_mainline_shas": ["<release commit HEAD cannot reach>", "..."]
+}
+```
+
+`repo` must match the folder name under `workspace_data/repos/`. `head_commits` (the number of
+commits HEAD reaches) is optional; when given, Quarry warns if the clone disagrees.
+
+`rel_hist_<project>.json`, read by `ck --sample` and by an analysis:
+
+```json
+{
+  "repo": "myproject",
+  "head_sha": "<the same HEAD commit>",
+  "entries": [
+    {"tag": "v1.0.0", "snapshot_sha": "<the release's commit>"},
+    {"tag": "v1.1.0", "snapshot_sha": "<the release's commit>"}
+  ]
+}
+```
+
+Put both in `workspace_data/versions/`, then pass their names as shown below. A tag object's id
+is accepted where a commit is expected; Quarry resolves it to its commit.
+
+Then mine each project, one stage per run, with `--batch 0` so each stage runs to completion.
+These are the stages and the order the study used, for one project:
+
+```bash
+P=checkstyle
+quarry --repo https://github.com/checkstyle/checkstyle.git --stage meta   # clones it
+quarry --repo $P --stage ledger  --universe adapter_universe_$P.json --batch 0
+quarry --repo $P --stage refm    --universe adapter_universe_$P.json --batch 0
+quarry --repo $P --stage diff    --universe adapter_universe_$P.json --batch 0
+quarry --repo $P --stage channel --platform git    --channel commits --universe adapter_universe_$P.json --batch 0
+quarry --repo $P --stage channel --platform github --channel all --batch 0
+quarry --repo $P --stage link
+quarry --repo $P --stage report
+```
+
+Any stage can be stopped and run again with the same command; it continues where it stopped.
+The GitHub channels take the longest, because of the API's hourly quota.
+
+To repeat the refactoring-forecast study itself, follow Path C of the replication package's
+README: it runs its release-mining notebook, then these commands for its five repositories. To
+skip the mining entirely, the study's mined files and a git bundle of each repo are on Zenodo
+([10.5281/zenodo.24182007](https://doi.org/10.5281/zenodo.24182007)), and the replication
+package's notebooks download them.
 
 ---
 
@@ -316,14 +431,18 @@ Results are written to `workspace_data/outputs/`; release-grid definitions live 
 
 | Artifact | Format | Contents |
 | :--- | :--- | :--- |
-| `ck_metrics_<project>.jsonl` | JSONL | One record per snapshot: status, timestamp, class and method counts, nested metrics |
+| `commit_lineage_<project>.jsonl` | JSONL | `meta`: one record per commit in the clone, with all its parents |
+| `ledger_history_<project>.jsonl` | JSONL | `ledger`: one record per commit, with its author, time and every Java file it changed (modified, added, deleted or renamed, with the old name) |
+| `refactorings_<project>.jsonl` | JSONL | `refm`: one record per commit, with every refactoring RefactoringMiner detected and the files on each side |
+| `diffs_<project>.jsonl` | JSONL | `diff`: one record per commit, with its message and, per changed file, the removed and added lines |
+| `ck_metrics_<project>.jsonl` | JSONL | `ck`: one record per snapshot: status, timestamp, class and method counts, nested metrics (`ck_sampled_metrics_<project>.jsonl` with `--sample`) |
 | `channel_<platform>_<channel>_<project>.jsonl` | JSONL | One record per channel item, in a unified shape across platforms |
 | `links_<project>.csv` | CSV | One row per link: which record reaches which commit, by which route |
 | `linkage_summary_<project>.csv` | CSV | Per-channel coverage: mined, reached, edges, membership |
-| `adapter_universe_<project>.json` | JSON | The pinned commit universe |
-| `rel_hist_<project>.json` | JSON | The frozen snapshot grid — the release points to be measured |
-| `<project>_release_manifest.json` | JSON | Admission thresholds, rejected tags, SHA aliases |
-| `*_execution_<project>.log` | Text | Per-run diagnostics: failures, timeouts, empty results |
+| `adapter_universe_<project>.json` | JSON | The pinned commit universe (in `versions/`) |
+| `rel_hist_<project>.json` | JSON | The frozen snapshot grid — the release points to be measured (in `versions/`) |
+| `<project>_release_manifest.json` | JSON | Every tag, and whether and why it was kept (in `versions/`) |
+| `ledger_execution_<project>.log`, `refactorings_<project>.log`, `diffs_<project>.log`, `ck_execution_*_<project>.log` | Text | Per-run diagnostics: failures, timeouts, empty results |
 
 All record streams are append-only JSONL, so a run can be interrupted at any point without
 corrupting what came before, and large projects never require holding a dataset in memory.
@@ -409,7 +528,7 @@ incomplete dataset announces itself, and re-running the command repairs it.
 | Tool | Version | Role |
 | :--- | :--- | :--- |
 | RefactoringMiner | 3.1.3 | Refactoring operations per commit |
-| CK | 0.7.0 | Class- and method-level structural metrics |
+| CK | 0.7.0, or a build from source | Class- and method-level structural metrics. A jar built from source and placed in `tools/ck/` (`ck-*-SNAPSHOT*-jar-with-dependencies.jar`) is used in preference to the release; its SHA-256 is written on every record. It needs Java 17 or newer. |
 | Git CLI | any | History traversal, checkout, universe resolution |
 | GitHub REST API | 2022-11-28 | Issues, pull requests, reviews, comments |
 
@@ -477,3 +596,10 @@ timing out, `CK_TIMEOUT`.
 Released under the MIT License.
 
 If you use Quarry in published work, please cite the release archive for the version you used.
+
+Data mined with Quarry:
+
+- Aryal, B. (2026). *Mined Inputs for the Code, Commit History and Issue/PR Discourse Refactoring
+  Dataset* (1.0). Zenodo. https://doi.org/10.5281/zenodo.24182007
+- Aryal, B. (2026). *Code, Commit History and Issue/PR Discourse for Forecasting Refactoring*
+  (2.1). Zenodo. https://doi.org/10.5281/zenodo.24117444

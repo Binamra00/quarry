@@ -24,6 +24,8 @@ WHAT A STAGE DECLARES
                 unstated universe is how a run silently produces records that never link.
     flag_notes  per-flag annotations shown in the help table, for the one case where a flag
                 is accepted but does nothing.
+    brief       one line for the short help (`--help`). `summary` is the long form shown by
+                `--help-all`.
 """
 
 from dataclasses import dataclass, field
@@ -65,6 +67,7 @@ class StageSpec:
     # not justify one.
     walks_commits_on_git: bool = False
     flag_notes: Dict[str, str] = field(default_factory=dict)
+    brief: str = ""
 
 
 STAGES: Dict[str, StageSpec] = {
@@ -73,18 +76,21 @@ STAGES: Dict[str, StageSpec] = {
         summary="repository metadata and commit lineage. Run this FIRST: it defines\n"
                 "the commit universe every other miner joins on.",
         allows=frozenset({VERSION}),
+        brief="commit lineage. Run this first.",
     ),
     "ledger": StageSpec(
         name="ledger",
         summary="per-commit evolutionary features -- churn, authorship, co-change.",
         allows=frozenset({VERSION, UNIVERSE, FULL, BATCH}),
         walks_commits=True,
+        brief="the Java files each commit changed, and who changed them",
     ),
     "refm": StageSpec(
         name="refm",
         summary="RefactoringMiner: refactoring operations per commit.",
         allows=frozenset({VERSION, UNIVERSE, FULL, BATCH}),
         walks_commits=True,
+        brief="refactorings per commit (RefactoringMiner)",
     ),
     "diff": StageSpec(
         name="diff",
@@ -92,12 +98,14 @@ STAGES: Dict[str, StageSpec] = {
                 "message and, per changed file, the added and removed lines.",
         allows=frozenset({VERSION, UNIVERSE, FULL, BATCH}),
         walks_commits=True,
+        brief="the message and the changed lines of each commit",
     ),
     "ck": StageSpec(
         name="ck",
         summary="CK structural metrics at each snapshot. The heaviest miner by far;\n"
                 "pair it with --sample.",
         allows=frozenset({VERSION, SAMPLE, BATCH}),
+        brief="structural metrics at each release (CK)",
     ),
     "channel": StageSpec(
         name="channel",
@@ -107,6 +115,7 @@ STAGES: Dict[str, StageSpec] = {
         requires=frozenset({PLATFORM, CHANNEL}),
         walks_commits_on_git=True,
         flag_notes={VERSION: "no effect"},
+        brief="commits, issues, pull requests, reviews and comments",
     ),
     "link": StageSpec(
         name="link",
@@ -114,12 +123,14 @@ STAGES: Dict[str, StageSpec] = {
                 "they refer to. Reads what the other stages wrote; mines nothing.\n"
                 "Re-running OVERWRITES its output.",
         allows=frozenset(),
+        brief="ties issues, pull requests and comments to commits",
     ),
     "report": StageSpec(
         name="report",
         summary="read-only summary of what the miners produced. Run this LAST;\n"
                 "it mines nothing.",
         allows=frozenset(),
+        brief="what has been mined so far. Mines nothing.",
     ),
 }
 
@@ -178,6 +189,21 @@ def help_table(indent: str = "    ") -> str:
     for name, spec in STAGES.items():
         lines.append(row([_cell(spec, flags) for _, flags in _COLUMNS], name))
     return "\n".join(lines)
+
+
+def commit_walkers() -> str:
+    """'ledger, refm, diff and the git channel': the stages that must be given a scope."""
+    names = [n for n, s in STAGES.items() if s.walks_commits]
+    names += [f"the {'git ' if s.walks_commits_on_git else ''}{n}" for n, s in STAGES.items()
+              if s.walks_commits_on_git and not s.walks_commits]
+    return ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else "".join(names)
+
+
+def brief_help(indent: str = "  ") -> str:
+    """One line per stage, for the short help."""
+    width = max(len(n) for n in STAGES) + 2
+    return "\n".join(f"{indent}{n.ljust(width)}{s.brief or s.summary.splitlines()[0]}"
+                     for n, s in STAGES.items())
 
 
 def stage_help() -> str:
