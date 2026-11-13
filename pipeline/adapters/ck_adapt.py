@@ -1,5 +1,7 @@
 import csv
+import hashlib
 import json
+import re
 import tempfile
 from collections import Counter
 from datetime import datetime
@@ -25,6 +27,31 @@ from pipeline.adapters.i_adapters import IAdapter
 # cause is under investigation, pass terminal_statuses without it and those snapshots come
 # back on the next run.
 CK_TERMINAL_STATUSES = frozenset({"success", "empty_methods", "empty_output"})
+
+# What is NOT production code. CK is run on production code only, and these are removed from
+# the checkout before it runs.
+#
+# WHY. CK is Eclipse JDT underneath, and JDT's code generator crashes on some constructs --
+# checkstyle 7.5 onward carries a test input with a try inside a switch that throws
+# ArrayIndexOutOfBoundsException in ExceptionLabel.placeEnd. The exception is uncaught, so it
+# kills the whole CK process: 143 checkstyle releases produced no metrics at all. Test inputs
+# are unusual Java by design -- that is what they test -- and they are not what the study
+# measures, so they are removed rather than worked around.
+#
+# THESE MUST MATCH THE ANALYSIS. The notebook that joins CK to RefactoringMiner excludes files
+# by the same four rules. If the two ever differ, "production file" means one thing in the
+# miner and another in the analysis.
+NON_PRODUCTION = {
+    "test source root":       re.compile(r"(?:^|/)src/(?:test|tests|testinputs|it)/"),
+    "test module dir":        re.compile(r"(?:^|/)(?:test|tests)/"),
+    "test class name":        re.compile(r"(?:Test|Tests|IT)\.java$"),
+    "documentation example":  re.compile(r"(?:^|/)src/xdocs-examples/"),
+}
+
+# Recorded on every JSONL line, so a reader can tell a production-only measurement from one
+# taken over the whole repository. The two differ in scope, and must not be mixed in one grid.
+CK_SCOPE = "production"
+
 
 # Everything else -- crash, timeout, missing_output, checkout_failed -- is a statement about
 # the RUN, not about the snapshot. Those records exist so the failure is visible; they must
@@ -245,6 +272,38 @@ class CkAdapter(IAdapter):
             except OSError:
                 pass
 
+    def _strip_non_production(self) -> int:
+        """
+        Delete every non-production .java file from the checkout. Returns how many.
+
+        Safe because the checkout is disposable: the next snapshot's `git checkout -f` restores
+        every tracked file, and the final restore in `finally` returns the clone to where it was.
+        """
+        removed = 0
+        root = self.target_repo_path
+        for path in root.rglob("*.java"):
+            rel = path.relative_to(root).as_posix()
+            if rel.startswith(".git/"):
+                continue
+            if any(rule.search(rel) for rule in NON_PRODUCTION.values()):
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+
+    @staticmethod
+    def _java_major() -> Optional[int]:
+        """The major Java version on PATH, or None if it cannot be read."""
+        import re as _re
+        ok, out = adapter_subprocess.run_command(["java", "-version"], verbose=False, timeout=60)
+        m = _re.search(r'version "(\d+)(?:\.(\d+))?', str(out or ""))
+        if not m:
+            return None
+        major = int(m.group(1))
+        return int(m.group(2)) if major == 1 and m.group(2) else major
+
     @staticmethod
     def _java_available() -> bool:
         """
@@ -265,6 +324,13 @@ class CkAdapter(IAdapter):
             print(f"❌ Error: CK tool not found at {config.CK_PATH}. Please run provisioner.")
             return False
 
+        # Which CK produced these records. Recorded on every line, so a grid measured by two
+        # different builds -- the 0.7.0 release and one built from source, say -- is visible
+        # rather than silently mixed. Hashed, because two jars can share a file name.
+        with open(config.CK_PATH, "rb") as jar:
+            self._jar_sha256 = hashlib.sha256(jar.read()).hexdigest()
+        print(f"   🔖 CK jar {config.CK_PATH.name}  sha256 {self._jar_sha256[:12]}")
+
         if not self._java_available():
             print("❌ Error: `java -version` failed. CK is a JAR and cannot run without a JRE.")
             print("   Refusing to start: without java every snapshot would be recorded as a")
@@ -275,6 +341,14 @@ class CkAdapter(IAdapter):
             total_commits = len(self.sampling_filter)
         else:
             total_commits = self._get_total_commit_count()
+
+        # A CK built from current source bundles Eclipse JDT 3.44, which needs Java 17 or newer to
+        # run. On an older JRE every snapshot would crash; the crashes are now recorded and retried,
+        # but a whole run spent producing them is worth one warning up front.
+        major = self._java_major()
+        if major is not None and major < 17:
+            print(f"   ⚠️  java {major} on PATH. A CK built from source needs Java 17+; the 0.7.0 "
+                  f"release runs on older versions but parses all code as Java 11.")
 
         if total_commits == 0:
             print("❌ No commits found to analyze.")
@@ -371,6 +445,9 @@ class CkAdapter(IAdapter):
                         self.state.mark_processed(commit_hash, done=False)
                         continue
 
+                    # 3b. Production code only. See NON_PRODUCTION.
+                    n_removed = self._strip_non_production()
+
                     # 4. Run CK (Isolated Temp Directory)
                     merged_classes = []
                     run_status = "pending"
@@ -426,7 +503,23 @@ class CkAdapter(IAdapter):
                             root_listing = sorted(p.name for p in
                                                   self.target_repo_path.glob("*.csv"))
 
-                            if class_csv is not None:
+                            if not ck_success:
+                                # A NON-ZERO EXIT IS A FAILED RUN, WHATEVER FILES IT LEFT BEHIND.
+                                #
+                                # This must be checked before the CSV. CK writes class.csv's
+                                # header before it analyses a single file, so a run that crashes
+                                # leaves a header-only file that looks exactly like a snapshot
+                                # with no classes. Checking the file first is what recorded 143
+                                # crashed checkstyle releases as finished measurements -- with an
+                                # empty log, because nothing on that path wrote to it.
+                                run_status = "timeout" if ck_out == "TIMEOUT" else "crash"
+                                log_file.write(
+                                    f"[FAILURE] CK {run_status} on {commit_hash} "
+                                    f"(exit non-zero; class.csv from={class_src}). "
+                                    f"Output tail: {self._tail(ck_out)}\n")
+                                self._cleanup_stray_csvs()
+
+                            elif class_csv is not None:
                                 classes_data = self._parse_csv_to_dicts(class_csv)
                                 methods_data = (self._parse_csv_to_dicts(method_csv)
                                                 if method_csv is not None else [])
@@ -460,11 +553,11 @@ class CkAdapter(IAdapter):
                                     merged_classes.append(cls)
 
                                 if not merged_classes:
-                                    # class.csv existed but carried only a header: CK ran, wrote
-                                    # a file and parsed nothing. Indistinguishable from a snapshot
-                                    # that genuinely has no classes unless it is recorded here -
-                                    # checkstyle 7.5+ produced 143 such snapshots, every one
-                                    # written as "success" with an empty log.
+                                    # CK EXITED 0 and wrote only a header: it ran to completion
+                                    # and found no classes. A crash that leaves the same file no
+                                    # longer reaches here -- it is caught by the exit-code check
+                                    # above. (Before that check existed, checkstyle 7.5+ put 143
+                                    # crashes on this path, recorded as measurements.)
                                     run_status = "empty_output"
                                     self._diagnose_empty(
                                         log_file, commit_hash, ck_out,
@@ -491,7 +584,7 @@ class CkAdapter(IAdapter):
                                     success_count += 1
                                     run_status = "success"
                             else:
-                                if ck_success:
+                                if ck_success:                   # always true here now
                                     run_status = "missing_output"
                                     # [DIAGNOSTIC BLOCK]: Why did CK succeed but produce no output?
                                     try:
@@ -591,6 +684,10 @@ class CkAdapter(IAdapter):
                         "n_classes": len(classes_data),
                         "n_methods": len(methods_data),
                         "csv_source": csv_source,  # 'temp' | 'repo_root' | 'absent' | None
+                        "scope": CK_SCOPE,         # what CK was run on
+                        "ck_jar": config.CK_PATH.name,
+                        "ck_jar_sha256": self._jar_sha256,
+                        "n_removed": n_removed,    # non-production .java files removed first
                         "report": merged_classes
                     }
 
