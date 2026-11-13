@@ -34,7 +34,8 @@ show a complete study built on Quarry. See [Mining a study](#mining-a-study).
 12. [Architecture](#architecture)
 13. [Configuration](#configuration)
 14. [Troubleshooting](#troubleshooting)
-15. [License and citation](#license-and-citation)
+15. [Acknowledgements](#acknowledgements)
+16. [License and citation](#license-and-citation)
 
 ---
 
@@ -588,6 +589,24 @@ resolves all runtime dependencies.
 
 **Structural analysis fails on a large project.** Increase `JAVA_XMX` and, if snapshots are
 timing out, `CK_TIMEOUT`.
+
+---
+
+## Acknowledgements
+
+Quarry runs other people's tools and does not reimplement them. If you publish data mined with it,
+please cite the tools its stages used, too.
+
+- **RefactoringMiner** detects the refactorings in the `refm` stage.
+  - Tsantalis, N., Ketkar, A. and Dig, D. (2022). RefactoringMiner 2.0. *IEEE Transactions on
+    Software Engineering* 48(3), 930–950. https://doi.org/10.1109/TSE.2020.3007722
+  - Tsantalis, N., Mansouri, M., Eshkevari, L. M., Mazinanian, D. and Dig, D. (2018). Accurate and
+    Efficient Refactoring Detection in Commit History. *ICSE 2018*, 483–494.
+    https://doi.org/10.1145/3180155.3180206
+- **CK** computes the class and method metrics in the `ck` stage.
+  - Aniche, M. (2015). *Java code metrics calculator (CK)*. https://github.com/mauricioaniche/ck
+- **Git** walks the history in every stage, and the **GitHub REST API** supplies the issues, pull
+  requests, comments and reviews in the `channel` stage.
 
 ---
 
