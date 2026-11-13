@@ -6,7 +6,7 @@ import urllib.request
 import zipfile
 import hashlib
 from pathlib import Path
-from typing import Set
+from typing import List, Optional, Set
 from pipeline import config
 
 
@@ -176,8 +176,13 @@ def download_single_file(url: str, target_folder_name: str, file_name: str, expe
     final_path = dest_dir / file_name
 
     if final_path.exists():
-        report(f"✅ Found version: {target_folder_name}/{file_name}. Skipping download.")
-        return True
+        # Checked on every run, not only after a download: a copy that has been corrupted or
+        # replaced since it was fetched is removed and fetched again rather than trusted.
+        report(f"✅ Found version: {target_folder_name}/{file_name}. Verifying...")
+        if verify_checksum(final_path, expected_hash):
+            return True
+        report(f"🔁 '{file_name}' does not match the published release. Downloading it again.")
+        final_path.unlink(missing_ok=True)
 
     report(f"⬇️ Downloading {file_name} from {url}...")
     try:
@@ -195,6 +200,66 @@ def download_single_file(url: str, target_folder_name: str, file_name: str, expe
     return True
 
 
+# A CK built from source: `mvn package` names it ck-<version>-SNAPSHOT-jar-with-dependencies.jar.
+# The pattern also matches a copy renamed to carry its commit, e.g. ck-0.7.1-SNAPSHOT-8a1ef91-....
+LOCAL_CK_PATTERN = "ck-*-SNAPSHOT*-jar-with-dependencies.jar"
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 16), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def find_local_ck() -> Optional[Path]:
+    """
+    A CK jar built from source in tools/ck, or None.
+
+    If there are several -- an older build kept alongside a newer one -- the most recently
+    modified is used and all are listed, so the choice is visible rather than silent.
+    """
+    folder = config.TOOLS_PATH / "ck"
+    builds: List[Path] = sorted(folder.glob(LOCAL_CK_PATTERN),
+                                key=lambda p: p.stat().st_mtime, reverse=True) \
+        if folder.is_dir() else []
+    if len(builds) > 1:
+        report(f"⚠️ {len(builds)} locally built CK jars in {folder}; using the most recent:")
+        for b in builds:
+            report(f"      {'->' if b == builds[0] else '  '} {b.name}")
+    return builds[0] if builds else None
+
+
+def use_local_ck(jar: Path) -> bool:
+    """
+    Adopt a locally built CK: compute its checksum, record it, and point the pipeline at it.
+
+    There is no published checksum to verify a build against, so the hash is a RECORD, not a
+    guard. It is written beside the jar as <jar>.sha256, and the CK adapter writes it onto every
+    record it produces -- which is what lets an audit detect a corpus measured by two builds.
+    If the jar differs from the one recorded last time, it has been rebuilt: that is reported,
+    because anything mined before the rebuild was measured by a different analyser.
+    """
+    digest = sha256_of(jar)
+    sidecar = jar.with_name(jar.name + ".sha256")
+    previous = sidecar.read_text(encoding="utf-8").split()[0] if sidecar.is_file() else None
+
+    if previous and previous != digest:
+        report(f"⚠️ {jar.name} has changed since it was last used -- it has been rebuilt.")
+        report(f"   was {previous[:12]}...   now {digest[:12]}...")
+        report(f"   CK output mined before the rebuild came from a different build; re-mine it.")
+    sidecar.write_text(f"{digest}  {jar.name}\n", encoding="utf-8")
+
+    # The CK adapter reads config.CK_PATH when it runs, so this is what makes it use this jar.
+    config.CK_PATH = jar
+    config.CK_JAR_NAME = jar.name
+    config.CK_SHA256_IN_USE = digest
+    report(f"🔨 Using locally built {jar.name}")
+    report(f"🔒 sha256 {digest}  (recorded in {sidecar.name})")
+    return True
+
+
 def provision():
     print(f"\n--- 🛠️ Provisioning Analysis Toolchain ---")
     print(f"Target Directory: {config.TOOLS_PATH}")
@@ -206,11 +271,19 @@ def provision():
     if success_rm:
         report(f"✅ Provisioned: {prettify_tool_name(Path(rm_folder_name))}")
 
-    # 2. Conditionally download the structural tool
-    # CK is the structural tool (PMD removed).
-    success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME, config.CK_SHA256)
+    # 2. The structural tool. A CK built from source in tools/ck takes priority; without one, the
+    # published release is downloaded and verified against its pinned checksum.
+    local = find_local_ck()
+    if local is not None:
+        success_struct = use_local_ck(local)
+    else:
+        success_struct = download_single_file(config.CK_URL, "ck", config.CK_JAR_NAME,
+                                              config.CK_SHA256)
+        if success_struct:
+            config.CK_PATH = config.TOOLS_PATH / "ck" / config.CK_JAR_NAME
+            config.CK_SHA256_IN_USE = config.CK_SHA256
     if success_struct:
-        report(f"✅ Provisioned: CK Metrics Engine")
+        report(f"✅ Provisioned: CK Metrics Engine ({config.CK_PATH.name})")
 
     # 3. Apply execution permissions
     if success_rm and success_struct:
